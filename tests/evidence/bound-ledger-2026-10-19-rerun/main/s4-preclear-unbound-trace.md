@@ -7,7 +7,7 @@
 - Glob: `**/*`
 - Glob: `*`
 - Glob: `**/*`
-- Bash: `test -e /Users/bokiko/.claude/hooks/continuity.off && echo "continuity.off PRESENT" || echo "continuity.off absent"; test -x <helper> && echo "checkpoint executable OK" || echo "checkpoint NOT executable"`
+- Bash: `test -e <home>/.claude/hooks/continuity.off && echo "continuity.off PRESENT" || echo "continuity.off absent"; test -x <helper> && echo "checkpoint executable OK" || echo "checkpoint NOT executable"`
 - Bash: `<helper> status; echo "exit=$?"`
 - Bash: `<helper> show --ledger "<run-b>/ledgers/CONTINUITY_CLAUDE-widget-export.md"; echo "exit=$?"`
 - Read: `<auto-memory-root>/memory/project-widget-export-json-default.md`

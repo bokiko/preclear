@@ -4,7 +4,7 @@
 - Read: `<run-c>/project/.claude/skills/preclear/references/configuration.md`
 - Bash: `pwd -P && git rev-parse --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD HEAD && git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none && echo "--- exec" && ls -la <run-c>/wrapper/checkpoin`
 - Bash: `<run-c>/wrapper/checkpoint status; echo "exit=$?"`
-- Bash: `ls -la /Users/bokiko/.claude/projects/-Users-bokiko-projects-preclear-runs-bound-ledger-20261019c-project/memory/ 2>&1; cat /Users/bokiko/.claude/projects/-Users-bokiko-projects-preclear-runs-bound-ledger-20261019c-project/memory/MEMORY.md `
+- Bash: `ls -la <auto-memory-root>/memory/ 2>&1; cat <auto-memory-root>/memory/MEMORY.md `
 - Bash: `pwd -P && git rev-parse --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD HEAD && git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none && echo "--- exec" && ls -la <run-c>/wrapper/checkpoin`
 - Bash: `env | grep -c '^CLAUDE_CODE_SESSION_ID=' `
 - Bash: `<run-c>/wrapper/checkpoint status`

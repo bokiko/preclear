@@ -1,5 +1,5 @@
 bbda28403d958f61835763170be92aff9e1c72b816ce3ad3fe28954c0fa5179e  .claude/skills/preclear/SKILL.md
 272838d4722d2dd5549c3a50696600ea6f75b2718b1afb102b1fed192d190aaf  .claude/skills/preclear/references/checkpoint-v1.md
 cd0d1103af5d3939b80118738672404e651f1cc54683a5a3ee27ce2478beb015  <helper>
-6259130094ffabc646b021d8512097c3449451bb1836af88241fe69246c3e578  /Users/bokiko/.claude/hooks/dist/checkpoint.mjs
+6259130094ffabc646b021d8512097c3449451bb1836af88241fe69246c3e578  <helper-impl>
 1f7df1049d94d13e7141cb3e38a0797f648a9c4e5e19f833d54e2752bce7a128  <run-c>/wrapper/checkpoint

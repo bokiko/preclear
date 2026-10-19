@@ -16,7 +16,7 @@
 - Bash: `<helper> status`
 - Bash: `<helper> show`
 - Bash: `git rev-parse HEAD && date -u +%Y%m%dT%H%M%SZ`
-- Read: `/Users/bokiko/.claude/projects/-Users-bokiko-projects-preclear-runs-bound-ledger-20261019-project/memory/MEMORY.md`
+- Read: `<auto-memory-root>/memory/MEMORY.md`
 - Edit: `<run>/project/thoughts/plans/2026-10-15-widget-export.md`
 - Write: `<run>/project/.preclear/widget-export/decisions.md`
 - Write: `<run>/project/.preclear/widget-export/blockers.md`

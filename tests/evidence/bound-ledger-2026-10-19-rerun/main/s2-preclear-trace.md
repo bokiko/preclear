@@ -9,11 +9,11 @@
 - Bash: `ls -la <run-b>/project/.claude <run-b>/project/.preclear <run-b>/ledgers <helper>`
 - Bash: `git rev-parse HEAD`
 - Bash: `git status --porcelain --untracked-files=all`
-- Bash: `test -x <helper> && echo "executable ok"; test -f <run-b>/ledgers/CONTINUITY_CLAUDE-widget-export.md && echo "ledger exists"; echo "session=${CLAUDE_CODE_SESSION_ID:-unset}"; test -e /Users/bokiko/.claude/hooks/continuity.off && echo "kill `
+- Bash: `test -x <helper> && echo "executable ok"; test -f <run-b>/ledgers/CONTINUITY_CLAUDE-widget-export.md && echo "ledger exists"; echo "session=${CLAUDE_CODE_SESSION_ID:-unset}"; test -e <home>/.claude/hooks/continuity.off && echo "kill `
 - Bash: `<helper> status`
 - Bash: `shasum -a 256 <run-b>/project/widget_export.py <run-b>/project/thoughts/plans/2026-10-15-widget-export.md; wc -c <run-b>/project/widget_export.py`
 - Glob: `**/*`
-- Bash: `test -x <helper> && echo "executable ok"; test -e /Users/bokiko/.claude/hooks/continuity.off && echo "kill switch ON" || echo "kill switch off"; date -u +%Y-%m-%dT%H:%M:%SZ`
+- Bash: `test -x <helper> && echo "executable ok"; test -e <home>/.claude/hooks/continuity.off && echo "kill switch ON" || echo "kill switch off"; date -u +%Y-%m-%dT%H:%M:%SZ`
 - Bash: `<helper> show`
 - Read: `<auto-memory-root>/memory/MEMORY.md`
 - Edit: `<run-b>/project/thoughts/plans/2026-10-15-widget-export.md`

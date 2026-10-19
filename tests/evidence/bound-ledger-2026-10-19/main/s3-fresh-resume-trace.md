@@ -2,7 +2,7 @@
 
 - Bash: `<helper> status 2>&1; echo "---SHOW---"; <helper> show 2>&1`
 - Bash: `<helper> menu 2>&1; echo "---BIND---"; <helper> bind <run>/ledgers/CONTINUITY_CLAUDE-widget-export.md 2>&1; echo "---SHOW---"; <helper> show 2>&1`
-- Read: `/Users/bokiko/projects/workspace-policy/POLICY.md`
+- Read: `<author-workspace-policy>`
 - Bash: `git status --short && echo "---DIFF---" && git diff && echo "---TREE---" && find . -path ./.git -prune -o -type f -print | sort`
 - Grep: `preclear|widget-export`
 - Read: `<run>/project/widget_export.py`

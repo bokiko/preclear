@@ -19,7 +19,7 @@
 - Bash: `<helper> status`
 - Bash: `shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md CLAUDE.md`
 - Read: `<run-none>/ledgers/CONTINUITY_CLAUDE-widget-export.md`
-- Read: `/Users/bokiko/.claude/projects/-Users-bokiko-projects-preclear-runs-bound-ledger-20261019-none-project/memory/MEMORY.md`
+- Read: `<auto-memory-root>/memory/MEMORY.md`
 - Bash: `git status --short --untracked-files=all`
 - Edit: `<run-none>/project/thoughts/plans/2026-10-15-widget-export.md`
 - Bash: `shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md`

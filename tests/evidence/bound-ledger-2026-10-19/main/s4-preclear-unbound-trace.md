@@ -5,7 +5,7 @@
 - Bash: `pwd -P && git rev-parse --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD HEAD && echo "---STATUS---" && git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none`
 - Bash: `<helper> status 2>&1; echo "---SHOW---"; <helper> show 2>&1`
 - Bash: `ls -l <helper> <run>/ledgers/CONTINUITY_CLAUDE-widget-export.md && readlink -f <run>/ledgers/CONTINUITY_CLAUDE-widget-export.md && cd <run>/project && shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md .preclear/widge`
-- Bash: `ls -la /Users/bokiko/.claude/projects/-Users-bokiko-projects-preclear-runs-bound-ledger-20261019-project/memory/ 2>&1; echo "---INDEX---"; cat /Users/bokiko/.claude/projects/-Users-bokiko-projects-preclear-runs-bound-ledger-20261019-project`
+- Bash: `ls -la <auto-memory-root>/memory/ 2>&1; echo "---INDEX---"; cat <auto-memory-root>`
 - Bash: `pwd -P`
 - Bash: `git rev-parse --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD HEAD`
 - Bash: `git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none`
