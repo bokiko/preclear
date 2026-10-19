@@ -1,0 +1,3 @@
+Step 2 done: `widget_export.py` adds `export_csv` built from four small pure functions (`escape_field`, `format_row`, `widget_row`) over the step 1 columns `id, name`, CSV only per the ledger decision.
+No tests run, nothing committed, step 3 not started.
+Plan checkbox for step 2 left unticked for checkpointing to reconcile.

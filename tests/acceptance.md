@@ -111,3 +111,16 @@ Keep in project-local test evidence, sanitized:
 - [ ] What the fresh session actually read.
 
 Do not claim publication readiness until expanded coverage passes.
+
+## Publication matrix
+
+Twelve failure and environment cases, run after the three layouts are accepted, one
+isolated fixture copy per row, in this order: wrong active binding; two same-section
+conflicts (UNSTABLE); missing executable, denied helper write, unbound with
+`fallback_directory: none`; malformed or conflicting configuration; no memory and disabled
+memory; read-only plan; all destinations denied; non-git, detached HEAD, unborn branch (each
+with a fresh resume); linked worktree beside another checkout; large status with hostile
+filenames and non-Latin text; concurrent plain-file change during capture; frozen handoff
+then refresh. Helper-backed rows use a logging wrapper as the configured executable so
+executed helper calls are recorded separately from attempted ones. Evidence and verdicts:
+`tests/evidence/publication-<date>/`.

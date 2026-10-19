@@ -1,0 +1,5 @@
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit /preclear; setup is a separate user action. Read the ledger file directly, or use show --ledger <repo>/<run>/ledgers/CONTINUITY_CLAUDE-widget-export.md without binding.
+**Resume reading:** cd to the project path above and verify against Identity: branch and full HEAD, then status. On mismatch reconcile before acting. Reads: (1) this ledger block; (2) widget_export.py whole file, check sha256 above; (3) thoughts/plans/2026-10-15-widget-export.md. Execute only Next action within Boundaries; preserve checkpoint and sidecars until /preclear. No file output, binding, or backend write without authorization.
+**Working changes (non-preclear):** staged 0, conflicted 0, submodules 0; unstaged 1: thoughts/plans/2026-10-15-widget-export.md (step 2 ticked); untracked 4: widget_export.py (this task), .claude/skills/preclear/{SKILL.md,references/checkpoint-v1.md,references/configuration.md} (ownership unknown).
+**Preclear artifacts:** .preclear/backend-inputs/*.md (retained inputs, not resume reads).
+**Verification:** none run; binding UNCONFIRMED.

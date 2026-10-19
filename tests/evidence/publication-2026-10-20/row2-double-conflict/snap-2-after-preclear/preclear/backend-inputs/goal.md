@@ -1,0 +1,2 @@
+widget-export in <repo>/<run>/project (git main @ 0cc011a4284088307ec353fab1842c285a0330ff; not a linked worktree). Objective: export widgets (columns id, name). Plan steps 1-2 done: CSV exporter in widget_export.py (untested, uncommitted). Pending: make JSON the default format per D2, keeping CSV for explicit requests. Plan step 3 (empty-input test) not started. untracked-notice: sent (.preclear/).
+- Concurrent fact 1 (second writer, 2026-10-20): CI runner for this project was renamed to ci-02; nothing else changed.

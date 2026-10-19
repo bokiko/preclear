@@ -1,0 +1,1 @@
+- [JSON default export](project-json-default-export.md) — widget-export: JSON default, CSV only on request (since consumer moved to JSON API, wk of 2026-10-12)

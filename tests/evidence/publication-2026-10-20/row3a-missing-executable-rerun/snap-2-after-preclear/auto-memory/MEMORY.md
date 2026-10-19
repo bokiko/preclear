@@ -1,0 +1,1 @@
+- [widget-export JSON default](widget-export-json-default.md) — JSON default, CSV only on request; ledger not yet synced

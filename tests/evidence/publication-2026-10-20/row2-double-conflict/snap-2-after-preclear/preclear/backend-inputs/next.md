@@ -1,0 +1,1 @@
+In <repo>/<run>/project, draft a proposed unified diff to widget_export.py that adds a JSON default (with small pure functions) and keeps CSV behind an explicit option. Show it in the reply only; do not apply it. Done when bokiko has the diff to review.

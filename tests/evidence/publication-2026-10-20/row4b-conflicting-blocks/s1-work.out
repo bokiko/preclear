@@ -1,0 +1,3 @@
+I added `widget_export.py` for plan step 2. It's a CSV-only exporter (JSON is deferred, per the ledger), built from small pure functions over the step-1 columns `id, name`, with standard CSV quoting.
+The repo had no existing code, so I chose Python and a new top-level file; tell me if you want another language or location. I didn't run tests, commit, start step 3, change the plan checkbox or write to the ledger.
+`CLAUDE.md` and `CLAUDE.local.md` disagree on the checkpoint task name (`widget-export` vs `widget-export-v2`) and on the fallback directory; you'll need to settle that before checkpointing.

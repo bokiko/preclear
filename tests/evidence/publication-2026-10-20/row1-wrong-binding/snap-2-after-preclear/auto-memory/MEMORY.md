@@ -1,0 +1,1 @@
+- [widget-export JSON default](widget-export-json-default.md) — JSON default since week of 2026-10-12, CSV opt-in; supersedes ledger CSV-first

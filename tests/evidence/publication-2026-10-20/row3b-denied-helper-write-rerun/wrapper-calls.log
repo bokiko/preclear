@@ -1,0 +1,6 @@
+2026-10-19T23:28:00Z CALL status
+2026-10-19T23:28:00Z EXIT 0
+2026-10-19T23:28:03Z CALL show
+2026-10-19T23:28:03Z EXIT 0
+2026-10-19T23:28:58Z CALL validate --from <repo>/<run>/project/.preclear/backend-inputs/block.md
+2026-10-19T23:28:58Z EXIT 0

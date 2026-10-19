@@ -1,0 +1,6 @@
+bbda28403d958f61835763170be92aff9e1c72b816ce3ad3fe28954c0fa5179e  <repo>/<run>/project/.claude/skills/preclear/SKILL.md
+272838d4722d2dd5549c3a50696600ea6f75b2718b1afb102b1fed192d190aaf  <repo>/<run>/project/.claude/skills/preclear/references/checkpoint-v1.md
+1a85939bbef834f9d7f7f8ffaf6197e2404929d0d0d6c523209fcb7458bfbe74  <repo>/<run>/project/.claude/skills/preclear/references/configuration.md
+cd0d1103af5d3939b80118738672404e651f1cc54683a5a3ee27ce2478beb015  <helper>
+6259130094ffabc646b021d8512097c3449451bb1836af88241fe69246c3e578  <helper-dist>
+cf4a6e69a0a1d708fed871e323117f283a3d89ff8f932d1eaffacf9b98555ef5  <repo>/<run>/wrapper/checkpoint

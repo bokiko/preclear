@@ -1,0 +1,1 @@
+In <repo>/<run>/project, draft a proposed unified diff to widget_export.py making JSON the default export, with CSV kept for explicit requests; show it in the reply only for bokiko's review. Done when the diff is posted; nothing applied.

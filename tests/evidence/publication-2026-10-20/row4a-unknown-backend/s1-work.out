@@ -1,0 +1,3 @@
+I finished step 2 in `widget_export.py`: `export_csv(widgets)` returns CSV text with an `id,name` header, built from small pure helpers (`escape_field`, `format_row`, `widget_values`) that quote values the standard way (RFC 4180).
+It's CSV only and JSON is left out, per the ledger. The project had no existing code, so I chose Python. I ran no tests, made no commit and didn't start step 3.
+The plan checkbox and ledger are unchanged. The `wrapper/checkpoint` file named in CLAUDE.md doesn't exist, so the checkbox may not get reconciled automatically.

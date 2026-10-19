@@ -1,0 +1,3 @@
+session e6a50e0e → <repo>/<run>/ledgers/CONTINUITY_CLAUDE-widget-export.md
+checkpoint updated 2026-10-19T23:27:14.657Z by e6a50e0e
+Next action: Write the CSV exporter (plan step 2).

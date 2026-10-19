@@ -1,0 +1,3 @@
+I wrote the step 2 CSV exporter (columns `id`, `name`) in `widget_export.py`, following the ledger's decision to do CSV first and defer JSON.
+It is four small pure functions: `escape_field`, `format_row`, `widget_values` and `export_csv`; empty input returns just the header line.
+I didn't run any tests or commit, didn't start step 3, and left the plan checkbox and ledger unchanged; I picked Python because the project had no existing code.

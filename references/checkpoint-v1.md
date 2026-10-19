@@ -128,3 +128,15 @@ apply the fallback policy with "ledger not synchronized: <reason>". A validation
 rejection (exit 2 or 4) may be repaired once if the message is understood;
 otherwise fallback. Never edit the ledger directly, never initialise a missing
 block, never change bindings.
+
+After the first denied or unapproved helper mutation, attempt no further helper
+mutation in this run: not another section, note, handoff, bind, create, or init.
+Apply the fallback policy with "ledger not synchronized: helper write denied".
+Read-only checks may verify unchanged state. Do not retry the mutation through
+another command form or executable. A successful `status`, `show` or `validate`
+is not permission to mutate.
+
+Backend failure changes persistence, not ownership. Preserve a pending
+correction in the fallback checkpoint until its established owner can be
+updated; name the owner and the pending synchronization. Memory may hold a
+navigation pointer, not a parallel rationale, when the ledger owns the decision.

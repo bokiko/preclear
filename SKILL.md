@@ -158,15 +158,16 @@ another session's files by guessing.
    now does not prove the earlier test ran against it: say `binding UNCONFIRMED`
    or `stale` without that evidence. Never rerun a suite just to checkpoint.
 3. **Shared files** were reread just before writing and had not changed.
-4. **Reread every artifact.** Headings exact for the format used, caps hold,
-   links resolve, Next action is one step.
-5. **Measure.** UTF-8 bytes of checkpoint (≤4,096), resume line (≤512), and
-   required excerpts plus expected freshness-check output (≤1,392): the minimum
-   resume package, target **6,000 bytes**, about 2,000 tokens at `ceil(bytes/3)`.
-   Auto-loaded instructions are excluded; a memory or plan file counts only if
-   it must be read before acting. Installed tokenizer if present, never install
-   one; denied or unmeasurable bytes are `UNCONFIRMED`, never a passed cap check.
-   A required large file is an exception to report, not to hide.
+4. **Reread artifacts.** Check schema, links and one Next action. Plain files
+   start with `## Identity and state`; no preamble.
+5. **Measure by command.** Count UTF-8 bytes of the final file and each plain
+   section, heading through before the next heading, including newlines. Print
+   actual/cap; fix overruns or report measured exceptions, never claim a pass.
+   Backend blocks use adapter limits. Checkpoint ≤4,096; line ≤512; required
+   excerpts + freshness output ≤1,392; package ≤6,000 (about 2,000 tokens at
+   bytes/3, an estimate). Exclude auto-loaded instructions; count required
+   memory/plan reads. Denied/unavailable measurement is `UNCONFIRMED`; install
+   nothing to measure.
 
 Print the result: artifacts with paths and bytes, package total, snapshot digest
 if any, every `UNCONFIRMED`, `UNSTABLE`, `BLOCKED`, or exception.

@@ -1,0 +1,3 @@
+I added `widget_export.py` with small pure functions (`escape_field`, `format_row`, `widget_values`, `export_csv`). It writes CSV only, using the step-1 columns `id, name`, with standard (RFC 4180) quoting and Windows (CRLF) line endings.
+The project had no code or language yet, so I picked Python. Nothing was run: no tests, no commit.
+I didn't start step 3 or touch the plan checkbox or the ledger; checkpointing will reconcile them.

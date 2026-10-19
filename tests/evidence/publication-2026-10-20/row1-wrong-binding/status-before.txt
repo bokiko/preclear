@@ -1,0 +1,3 @@
+session eace4601 → <repo>/<run>/ledgers/CONTINUITY_CLAUDE-other-task.md
+checkpoint updated 2026-10-19T23:06:03.260Z by eace4601
+Next action: Rename settings_loader.py to config_loader.py.

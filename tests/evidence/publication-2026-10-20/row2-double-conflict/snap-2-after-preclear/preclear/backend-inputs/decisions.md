@@ -1,0 +1,3 @@
+D1 (SUPERSEDED 2026-10-20): CSV first, JSON deferred, because the consumer read only CSV.
+D2 (2026-10-20, from the downstream owner via bokiko): JSON is the default export format; CSV only on explicit request. Reason: the consumer moved to a JSON API in the week of 2026-10-12. Consequence: widget_export.py needs a JSON default; the CSV functions stay as the opt-in path. Also in memory: project-json-default-export.md.
+**Do not redo:** CSV exporter already written (escape_field, format_row, widget_values, export_csv; RFC 4180 quoting, CRLF). Invalidated if the widget_export.py sha256 changes. Columns id,name are fixed by plan step 1.

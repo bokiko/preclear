@@ -1,0 +1,3 @@
+I wrote the CSV exporter for step 2 in `widget_export.py`, following the ledger's decision to do CSV first and leave JSON for later.
+It has two small pure functions: `widget_row` and `export_csv`, which returns the CSV text with an `id,name` header row.
+Not run or tested, nothing committed, step 3 not started, and the plan checkbox is still unticked for checkpointing to reconcile.

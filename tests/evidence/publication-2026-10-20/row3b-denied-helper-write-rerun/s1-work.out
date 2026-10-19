@@ -1,0 +1,3 @@
+I wrote the CSV exporter for step 2 in `widget_export.py`, following the ledger's decision to do CSV now and leave JSON for later. The project had no code yet, so I chose Python.
+It has four small pure functions: `escape_field`, `format_row`, `widget_to_row` and `export_widgets_csv`, which outputs `id,name` plus one line per widget with standard CSV quoting and CRLF line endings.
+I haven't run tests or committed, step 3 isn't started, and the plan checkbox is still unticked for checkpointing to reconcile.

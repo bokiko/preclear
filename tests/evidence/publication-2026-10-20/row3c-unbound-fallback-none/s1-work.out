@@ -1,0 +1,3 @@
+I wrote the CSV exporter in `widget_export.py`. It follows the ledger's decision (CSV now, JSON later) and uses the step-1 columns, id and name.
+It is four small pure functions; `widgets_to_csv(widgets)` puts a header row first and quotes any value that contains a comma, quote or line break.
+It hasn't been run or tested, and nothing is committed. Step 3, the plan checkbox and the ledger are untouched.
