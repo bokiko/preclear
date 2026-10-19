@@ -1,0 +1,3 @@
+Step 2 done: `widget_export.py` adds a pure CSV exporter (header plus one row per widget, RFC-style quoting) using the ledger's CSV-first decision and the step-1 columns id, name.
+Nothing was run, committed, or started for step 3, and the plan checkbox is left for checkpointing.
+Only new file: `<run>/project/widget_export.py`.

@@ -1,0 +1,36 @@
+ledger: <run>/ledgers/CONTINUITY_CLAUDE-widget-export.md
+file-fingerprint: 23e41fa1f3bae6c2c1e9a54790c12d9a988e0367d5ee4733f0c8df5cb1487475
+checkpoint-updated: 2026-10-19T09:39:53.512Z by b5f263b4
+
+## Goal & current state
+section-hash: 41889872531ed7e1f9492b6aca3c849e865f9e358583672d412c384439fa8916
+preclear-schema: 1
+checkpoint-id: widget-export-20261019T093815Z
+Project (physical, main checkout): <run>/project. Task: widget-export. Objective: export widgets; JSON is now the default format, CSV on explicit request.
+Result: plan step 2 done as CSV in widget_export.py (untracked; pure functions; header plus one row per widget; columns id,name); step 2 ticked in the plan 2026-10-19. The JSON-default rework is pending and the implementation is unchanged since the 2026-10-19 correction.
+Branch main @ 544b4384d5bbb5cd8b05ccaa0ae6896c20bbd682. untracked-notice: sent
+
+## Decisions (with reasons)
+section-hash: 9387faec56fc09cbfb51e937127c4fc2ccf77af040885a8770f6ba35398b1c9f
+2026-10-19, supersedes CSV-first: JSON is the default export format; CSV only on explicit request. Reason: the downstream owner confirmed the consumer migrated to a JSON API in the week of 2026-10-12. Applies to future sessions.
+Superseded 2026-10-19: "CSV first, JSON deferred: the downstream consumer only reads CSV" (its basis is gone).
+Do not redo: plan step 2 (CSV exporter) is written in widget_export.py, sha256 5aad43c3…4cc4b9; invalid if that file changes. Columns id,name fixed by plan step 1.
+
+## Blockers & open questions
+section-hash: 18f31eb7e42d4a774d58dd587fd5329943b5ec70ef336aae379f7be83ea3ccb3
+Pending: bokiko's review of the JSON-default diff (not drafted yet). No blockers.
+UNCONFIRMED: widget_export.py has never been imported or tested (tests forbidden), so its behaviour is unverified.
+
+## Authorization boundaries
+section-hash: 79983b4d68820e8efc2a7f3f7ebeb78714361c046d4218c47ce46f7872cfcc27
+Edit files inside <run>/project only. No tests, no commits, no pushes until the user says so. JSON-default change: draft a proposed diff for review only; do not apply it to widget_export.py. Preclear scratch only in .preclear/widget-export/.
+Detail: thoughts/plans/2026-10-15-widget-export.md
+
+## Evidence & key paths
+section-hash: 44baf5bd833647736bad9c49cd1e4e877c0df78b4937f6d50c077234fa66b8b8
+Resume reading: cd to the project path above and verify against Identity: branch and full HEAD if a branch is recorded; full HEAD only if detached; path and no HEAD if unborn; path and listed file digests if no-git; then status. On mismatch reconcile before acting. Then read: 1) this block; 2) widget_export.py (whole, 1422 B); 3) thoughts/plans/2026-10-15-widget-export.md (5 lines). Execute only Next action within Boundaries; preserve checkpoint and sidecars until /preclear. No file output without authorization.
+Working changes at HEAD 544b438: staged 0, unstaged 1, untracked 4, conflicted 0, submodules 0. Unstaged: thoughts/plans/… (step 2 ticked by preclear; sha256 29145abe…4520c). Untracked: widget_export.py (this task; sha256 5aad43c3…4cc4b9); .claude/skills/preclear/SKILL.md, references/checkpoint-v1.md, references/configuration.md (untouched, ownership unknown). Preclear artifacts, untracked: .preclear/widget-export/{goal,decisions,blockers,authorization,evidence,next,block,note}.md. Verification: no command run (tests forbidden); binding UNCONFIRMED.
+
+## Next action
+section-hash: 2484404d40b25b80a3aaa616d01cf2e81ed6d255e1de89774571f31569bf8d44
+In the project directory, draft a proposed diff against widget_export.py that makes JSON the default export format with CSV on explicit request (small pure functions), and show it in the reply for bokiko's review. Do not apply it, run tests, or commit. Complete when the diff is presented and awaiting approval.

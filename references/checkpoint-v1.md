@@ -29,8 +29,11 @@ user performs separately with the helper's `bind`, `create`, and `init` commands
 ## Interface
 
 `<executable>` is the configured absolute path. Paths and ids are passed quoted.
-Temp files go in the session scratch directory or `fallback_directory`, subject to
-SKILL.md probe 9; keep them and list them as preclear artifacts.
+Section bodies and the serialized validation block go in an authorized
+`backend-inputs/` subdirectory of `fallback_directory`, or of a separately
+authorized scratch directory when `fallback_directory` is `none` (never create a
+directory named `none`). They are retained checkpointing inputs, not canonical
+state and not required resume reads; list them separately from working changes.
 
 Exit codes: `0` ok, `1` internal error, `2` usage or validation (including no
 checkpoint block), `3` conflict, `4` invalid checkpoint, `5` kill switch active,
@@ -61,6 +64,19 @@ short bold labels instead of headings. Strip any `section-hash:` lines copied fr
 | Decisions (with reasons) | Existing decisions still relevant, then **Do not redo** entries |
 | Evidence & key paths | **Resume reading** lines first, then Evidence and working changes |
 | Next action | Next action |
+
+Persist this rule in `Authorization boundaries` and as the first line of
+`Evidence & key paths`, because the fresh session reads the ledger, not this file:
+
+> Resume is read-only for continuity state: never bind. Update, note, or handoff
+> only during an explicit `/preclear`; setup is a separate user action. Read the
+> ledger file directly, or use `show --ledger <absolute-ledger-path>` without
+> binding.
+
+When the next action is a diff or answer in the reply only, also persist: "no
+proposal files, section-input files, binding changes, or ledger writes." Do not
+carry an earlier "edit files inside the project" scope into a chat-only resume
+without marking it historical.
 
 ### Serialized block for `validate`
 

@@ -1,0 +1,3 @@
+Pending: bokiko's approval of the JSON-default diff (drafted 2026-10-19, stored at .preclear/widget-export/json-default.diff; proposed full file at .preclear/widget-export/widget_export.proposed.py). No blockers.
+Review questions put to bokiko with the diff: (a) JSON shape is a top-level list of objects keyed by column; confirm the downstream JSON API accepts that rather than a wrapper object. (b) Output is indent=2 with trailing newline; say if compact is wanted. (c) Plan step 2 text and step 3 ("test for empty input") still say CSV; decide whether the plan gets a JSON step.
+UNCONFIRMED: widget_export.py and the proposed file have never been imported or tested (tests forbidden), so behaviour is unverified; the proposed file was not syntax-checked either.

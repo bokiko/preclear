@@ -1,0 +1,5 @@
+67c43e0867af34d692aca0b3c585d9b00cf86fef2524e3234252a8011772ae54  helper-state/bindings/b5f263b4-2bb7-4edc-978c-4bc6afda93cc.json
+88e3fd6c5545b01b8c56de2d2e0cd7a039b03ca9ba9062c044d91a0452a2d2fd  helper-state/ledger-roots.json
+bbffc7ead647983227d0d9b1e472b5f20f92d562d49b73812b994834bc9fcfdd  ledgers/.checkpoint-log.jsonl
+4da92726e06bc85d471ec1fe26422892490a99af734851ed94360dcf5a8d49d9  ledgers/CONTINUITY_CLAUDE-widget-export.md
+3ccf15ec14c70586d5c0c8d289c3a0b79211410bfffbf0a1e31c3fcfa3d335b8  project/thoughts/plans/2026-10-15-widget-export.md

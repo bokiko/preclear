@@ -1,0 +1,1 @@
+2026-10-19: plan step 2 (CSV exporter, widget_export.py) completed. bokiko then reported the downstream owner's correction: JSON is the default export format, CSV on explicit request (consumer moved to a JSON API in the week of 2026-10-12). CSV-first decision superseded; next action is a JSON-default diff for review only.

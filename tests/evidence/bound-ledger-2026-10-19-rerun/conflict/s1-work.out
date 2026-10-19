@@ -1,0 +1,3 @@
+Step 2 is done: new file `widget_export.py` holds the CSV exporter as small pure functions (format_field, format_row, header_row, widget_row, to_csv) over step 1's columns id, name.
+It follows the ledger's "CSV first, JSON deferred" decision and writes RFC 4180 output with quoting only when a field needs it.
+No tests run, nothing committed, step 3 untouched, and the plan checkbox is left for checkpointing to reconcile.

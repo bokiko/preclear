@@ -1,0 +1,3 @@
+Step 2 done: `widget_export.py` holds the step 1 columns plus four small pure functions ending in `export_widgets_csv`, CSV-only per the ledger decision.
+Not run, not committed, step 3 untouched, plan checkbox left for checkpointing.
+Open point: no language was fixed in the plan or ledger, so I chose dependency-free Python.

@@ -1,0 +1,3 @@
+Step 2 done: `widget_export.py` adds the pure function `export_widgets_csv`, which returns a CSV string with header `id,name` and one row per widget.
+No tests run, nothing committed, step 3 untouched. The project had no existing source or language, so I used Python with only the stdlib.
+Not done: the plan checkbox for step 2 is still unticked, since the plan edit was outside the ask.

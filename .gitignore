@@ -1,3 +1,5 @@
 # Local Claude Code hook state, not part of the skill
 .backups/
 .claude/tsc-cache/
+# Local test run roots (evidence is copied into tests/evidence)
+runs/

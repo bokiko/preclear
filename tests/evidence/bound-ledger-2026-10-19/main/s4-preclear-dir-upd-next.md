@@ -1,0 +1,1 @@
+Await bokiko's verdict on .preclear/widget-export/json-default.diff. Approved: apply it to widget_export.py (copy widget_export.proposed.py), record the new sha256 in Decisions, ask whether tests may run (plan step 3). Changes requested: redraft in scratch and re-present. Until then do not touch widget_export.py, test, or commit.

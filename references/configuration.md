@@ -41,6 +41,12 @@ preclear:
 
 Known backends: `checkpoint-v1` (`references/checkpoint-v1.md`).
 
+Recommended line next to the block, so a fresh session that resumes from the
+ledger sees it before reading anything else: "Resuming from this ledger requires
+no binding. Read its file directly, or use the helper's `show --ledger <path>`. A
+resume request never authorizes `bind` or continuity writes; binding is a
+separate user-approved setup action."
+
 ## Resolution: three states
 
 Resolve configuration before any write. Exactly one state applies.
