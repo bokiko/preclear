@@ -1,0 +1,10 @@
+ M memory/hub_projects.md
+ M memory/project_widget_export.md
+ M thoughts/plans/2026-10-15-widget-export.md
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? .preclear/widget-export/checkpoint.md
+?? .preclear/widget-export/draft-json-default.diff
+?? src/widget_export/__init__.py
+?? src/widget_export/csv_exporter.py

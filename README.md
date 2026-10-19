@@ -41,6 +41,11 @@ needed. Leave the saved checkpoint unchanged; run `/preclear` again when you wan
 a fresh verified checkpoint. A checkpoint records its capture time and goes stale
 as work proceeds.
 
+A resume line authorizes only the checkpoint's next action. Respect its allowed
+paths and scratch or file-output limits; never delete files or bypass a denied
+operation. Preserve existing checkpoint sidecars as well as the checkpoint. Create
+another task artifact only when its output is authorized.
+
 ## What it writes
 
 By default, one checkpoint file per task:

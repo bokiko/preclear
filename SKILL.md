@@ -7,10 +7,8 @@ allowed-tools: [Read, Write, Edit, Glob, Grep]
 
 # preclear
 
-The user is about to run `/clear`. Leave behind the smallest set of files that lets
-a fresh session continue without avoidable questions or redoing this session's
-work. Run here, not in a subagent. You print one resume line; the user copies it,
-runs `/clear`, then pastes it into the fresh session.
+Run here, not in a subagent. Save verified state and a resume line; the user
+copies it, runs `/clear`, then pastes it into the fresh session.
 
 ## Hard rules
 
@@ -134,9 +132,9 @@ normally under 3,000. If forced to choose, keep boundaries, report an exception.
 | Heading | Max bytes | Contents |
 | --- | ---: | --- |
 | `## Identity and state` | 800 | `preclear-schema: 1`, `checkpoint-id: <task-slug>-<UTC-timestamp>`, absolute physical project path (note linked worktree), task slug, one-line objective, current result, branch or `detached`/`unborn`/`no-git`, full HEAD or `n/a`, `untracked-notice` if sent |
-| `## Boundaries and blockers` | 600 | Authorization limits in force, actions awaiting approval, real blockers, `UNCONFIRMED:` items, `Detail:` pointer to the governing document |
+| `## Boundaries and blockers` | 600 | Persist user-authorized scope and scratch/draft limits; paths grant no permission; no deletion or denial bypass. Pending approvals, blockers, `UNCONFIRMED:` items, `Detail:` pointer |
 | `## Next action` | 500 | One presently authorized step with directory, target, and completion condition. If blocked: one prerequisite or question, never a conditional workflow |
-| `## Resume reading` | 600 | Fixed first line: "cd to the project path above and verify against Identity: branch and full HEAD if a branch is recorded; full HEAD only if `detached`; path and no HEAD if `unborn`; path and listed file digests if `no-git`; then status. On mismatch reconcile before acting." Then ordered minimum reads (path plus heading or line range) and when a conditional read is needed. Last line: "Then execute Next action within Boundaries; leave this checkpoint unchanged until the next `/preclear`." |
+| `## Resume reading` | 600 | Fixed first line: "cd to the project path above and verify against Identity: branch and full HEAD if a branch is recorded; full HEAD only if `detached`; path and no HEAD if `unborn`; path and listed file digests if `no-git`; then status. On mismatch reconcile before acting." Then ordered minimum reads (path plus heading or line range) and when a conditional read is needed. Last line: "Execute only Next action within Boundaries; preserve checkpoint and sidecars until `/preclear`. No file output without authorization." |
 | `## Evidence and working changes` | 1,000 | Non-preclear counts: staged, unstaged, untracked, conflicted, changed submodules; preclear artifacts listed separately by exact path; untouched files `ownership unknown`; verification command, observed result, the HEAD and file digests it ran against (or `binding UNCONFIRMED`); sidecar pointer |
 | `## Do not redo` | 596 | Expensive discoveries or checks already done, each with evidence location and what invalidates it. Never exempts the freshness check or digest recheck |
 

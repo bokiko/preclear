@@ -1,0 +1,86 @@
+--- /dev/null
++++ b/widget_export/json_exporter.py
+@@ -0,0 +1,40 @@
++"""Newline-delimited JSON exporter for widgets (default format, see memory/project_widget_export.md).
++
++Every function here is pure: no I/O, no mutation of inputs. Callers decide
++where the resulting string goes.
++"""
++
++import json
++from typing import Any, Iterable, Mapping, Sequence
++
++from .csv_exporter import COLUMNS
++
++_NEWLINE = "\n"
++
++
++def select_fields(widget: Mapping[str, Any], columns: Sequence[str] = COLUMNS) -> dict[str, Any]:
++    """Project one widget onto the export columns, in column order.
++
++    Missing keys become null, mirroring the empty field in the CSV exporter.
++    """
++    return {column: widget.get(column) for column in columns}
++
++
++def format_record(widget: Mapping[str, Any], columns: Sequence[str] = COLUMNS) -> str:
++    """Render one widget as a single JSON line (json.dumps never emits newlines here).
++
++    Values JSON cannot encode natively (e.g. datetimes) fall back to str(),
++    matching the CSV exporter's rendering.
++    """
++    return json.dumps(select_fields(widget, columns), default=str)
++
++
++def to_json(widgets: Iterable[Mapping[str, Any]], columns: Sequence[str] = COLUMNS) -> str:
++    """Render widgets as newline-delimited JSON: one object per line, each line terminated.
++
++    Empty input yields "" (no lines), the NDJSON analogue of an empty document.
++    """
++    return "".join(format_record(widget, columns) + _NEWLINE for widget in widgets)
++
++
++__all__ = ["COLUMNS", "select_fields", "format_record", "to_json"]
+--- a/widget_export/__init__.py
++++ b/widget_export/__init__.py
+@@ -1,5 +1,38 @@
+-"""Widget export. CSV first; JSON deferred (see memory/project_widget_export.md)."""
++"""Widget export. Newline-delimited JSON by default; CSV only on explicit request (see memory/project_widget_export.md)."""
++
++from typing import Any, Callable, Iterable, Mapping, Sequence
+
+ from .csv_exporter import COLUMNS, escape_field, format_row, to_csv
++from .json_exporter import format_record, select_fields, to_json
++
++DEFAULT_FORMAT = "json"
++
++_EXPORTERS: dict[str, Callable[[Iterable[Mapping[str, Any]], Sequence[str]], str]] = {
++    "json": to_json,
++    "csv": to_csv,
++}
++
++
++def export(
++    widgets: Iterable[Mapping[str, Any]],
++    fmt: str = DEFAULT_FORMAT,
++    columns: Sequence[str] = COLUMNS,
++) -> str:
++    """Render widgets in the requested format; NDJSON unless the caller asks for CSV."""
++    try:
++        exporter = _EXPORTERS[fmt]
++    except KeyError:
++        raise ValueError(f"unknown export format {fmt!r}; expected one of {sorted(_EXPORTERS)}") from None
++    return exporter(widgets, columns)
+
+-__all__ = ["COLUMNS", "escape_field", "format_row", "to_csv"]
++__all__ = [
++    "COLUMNS",
++    "DEFAULT_FORMAT",
++    "escape_field",
++    "export",
++    "format_record",
++    "format_row",
++    "select_fields",
++    "to_csv",
++    "to_json",
++]
