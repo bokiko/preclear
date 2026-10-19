@@ -1,0 +1,16 @@
+project:
+total 16
+drwxr-xr-x@  8 bokiko  staff  256 Oct 20 02:33 .
+drwxr-xr-x@  6 bokiko  staff  192 Oct 20 02:32 ..
+drwxr-xr-x@  3 bokiko  staff   96 Oct 20 02:32 .claude
+drwxr-xr-x@ 12 bokiko  staff  384 Oct 20 02:33 .git
+drwxr-xr-x@  3 bokiko  staff   96 Oct 20 02:33 .preclear
+-rw-r--r--@  1 bokiko  staff  103 Oct 20 02:32 CLAUDE.md
+drwxr-xr-x@  3 bokiko  staff   96 Oct 20 02:32 thoughts
+-rw-r--r--@  1 bokiko  staff  767 Oct 20 02:32 widget_export.py
+
+project/thoughts/plans:
+total 8
+drwxr-xr-x@ 3 bokiko  staff   96 Oct 20 02:32 .
+drwxr-xr-x@ 3 bokiko  staff   96 Oct 20 02:32 ..
+-r--r--r--@ 1 bokiko  staff  222 Oct 20 02:32 2026-10-15-widget-export.md

@@ -1,0 +1,3 @@
+I added `widget_export.py` for step 2. It has four small pure functions: `widget_row`, `widget_rows`, `rows_to_csv`, and `export_csv`, which writes the `id`, `name` header and then one CSV row per widget.
+Per the 2026-10-15 decision, it only does CSV; there's no JSON. The repo had no code yet, so I wrote it in Python, which was my choice; it hasn't been run.
+I didn't touch the plan checkbox, step 3, any commit, or memory files.

@@ -1,0 +1,3 @@
+I wrote step 2, the CSV exporter, in `widget_export.py`. There was no existing source code, so I picked Python. It has three small pure functions: `widget_to_row`, `rows_to_csv` and `export_widgets_csv`. They export the `id, name` columns from step 1, and empty input gives just the header row.
+I followed the plan's CSV-first decision and added no JSON export.
+Tests weren't run, nothing was committed, step 3 wasn't started, and the plan checkbox is still unchecked for checkpointing to reconcile.

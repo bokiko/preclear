@@ -1,0 +1,2 @@
+ed03447e9df43888b81861f9904690a7e23ea715f339f382aef3194511997cf1  project/CLAUDE.md
+a4d70690252f755ea6b44d3c3362b345d5126962bb5b4bb40e99ed14a11adf0c  project/thoughts/plans/2026-10-15-widget-export.md

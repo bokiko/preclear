@@ -1,0 +1,3 @@
+I added `widget_export.py` with small pure functions; `export_csv(widgets)` writes the `id,name` header and RFC 4180-quoted rows (CSV only, JSON deferred, as the plan's decision says).
+The repo had no code yet, so I chose Python myself; I ran nothing, including tests.
+I didn't commit, start step 3, tick the plan checkbox or touch `other_task_notes.md`.

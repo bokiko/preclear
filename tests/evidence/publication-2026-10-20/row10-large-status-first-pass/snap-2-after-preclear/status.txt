@@ -1,0 +1,132 @@
+ M thoughts/plans/2026-10-15-widget-export.md
+??   leading-space.txt
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? .preclear/widget-export/checkpoint.md
+?? .preclear/widget-export/status.txt
+?? NOTES.md
+?? data/raw files/sample 1.csv
+?? data/raw files/sample 10.csv
+?? data/raw files/sample 11.csv
+?? data/raw files/sample 12.csv
+?? data/raw files/sample 13.csv
+?? data/raw files/sample 14.csv
+?? data/raw files/sample 15.csv
+?? data/raw files/sample 16.csv
+?? data/raw files/sample 17.csv
+?? data/raw files/sample 18.csv
+?? data/raw files/sample 19.csv
+?? data/raw files/sample 2.csv
+?? data/raw files/sample 20.csv
+?? data/raw files/sample 21.csv
+?? data/raw files/sample 22.csv
+?? data/raw files/sample 23.csv
+?? data/raw files/sample 24.csv
+?? data/raw files/sample 25.csv
+?? data/raw files/sample 26.csv
+?? data/raw files/sample 27.csv
+?? data/raw files/sample 28.csv
+?? data/raw files/sample 29.csv
+?? data/raw files/sample 3.csv
+?? data/raw files/sample 30.csv
+?? data/raw files/sample 31.csv
+?? data/raw files/sample 32.csv
+?? data/raw files/sample 33.csv
+?? data/raw files/sample 34.csv
+?? data/raw files/sample 35.csv
+?? data/raw files/sample 36.csv
+?? data/raw files/sample 37.csv
+?? data/raw files/sample 38.csv
+?? data/raw files/sample 39.csv
+?? data/raw files/sample 4.csv
+?? data/raw files/sample 40.csv
+?? data/raw files/sample 41.csv
+?? data/raw files/sample 42.csv
+?? data/raw files/sample 43.csv
+?? data/raw files/sample 44.csv
+?? data/raw files/sample 45.csv
+?? data/raw files/sample 46.csv
+?? data/raw files/sample 47.csv
+?? data/raw files/sample 48.csv
+?? data/raw files/sample 49.csv
+?? data/raw files/sample 5.csv
+?? data/raw files/sample 50.csv
+?? data/raw files/sample 51.csv
+?? data/raw files/sample 52.csv
+?? data/raw files/sample 53.csv
+?? data/raw files/sample 54.csv
+?? data/raw files/sample 55.csv
+?? data/raw files/sample 56.csv
+?? data/raw files/sample 57.csv
+?? data/raw files/sample 58.csv
+?? data/raw files/sample 59.csv
+?? data/raw files/sample 6.csv
+?? data/raw files/sample 60.csv
+?? data/raw files/sample 61.csv
+?? data/raw files/sample 62.csv
+?? data/raw files/sample 63.csv
+?? data/raw files/sample 64.csv
+?? data/raw files/sample 65.csv
+?? data/raw files/sample 66.csv
+?? data/raw files/sample 67.csv
+?? data/raw files/sample 68.csv
+?? data/raw files/sample 69.csv
+?? data/raw files/sample 7.csv
+?? data/raw files/sample 70.csv
+?? data/raw files/sample 71.csv
+?? data/raw files/sample 72.csv
+?? data/raw files/sample 73.csv
+?? data/raw files/sample 74.csv
+?? data/raw files/sample 75.csv
+?? data/raw files/sample 76.csv
+?? data/raw files/sample 77.csv
+?? data/raw files/sample 78.csv
+?? data/raw files/sample 79.csv
+?? data/raw files/sample 8.csv
+?? data/raw files/sample 80.csv
+?? data/raw files/sample 81.csv
+?? data/raw files/sample 82.csv
+?? data/raw files/sample 83.csv
+?? data/raw files/sample 84.csv
+?? data/raw files/sample 85.csv
+?? data/raw files/sample 86.csv
+?? data/raw files/sample 87.csv
+?? data/raw files/sample 88.csv
+?? data/raw files/sample 89.csv
+?? data/raw files/sample 9.csv
+?? data/raw files/sample 90.csv
+?? odd
+name.txt
+?? quote"and"tab	name.md
+?? widget_export.py
+?? ملفات/ملف 1.txt
+?? ملفات/ملف 10.txt
+?? ملفات/ملف 11.txt
+?? ملفات/ملف 12.txt
+?? ملفات/ملف 13.txt
+?? ملفات/ملف 14.txt
+?? ملفات/ملف 15.txt
+?? ملفات/ملف 2.txt
+?? ملفات/ملف 3.txt
+?? ملفات/ملف 4.txt
+?? ملفات/ملف 5.txt
+?? ملفات/ملف 6.txt
+?? ملفات/ملف 7.txt
+?? ملفات/ملف 8.txt
+?? ملفات/ملف 9.txt
+?? データ/テスト 1.txt
+?? データ/テスト 10.txt
+?? データ/テスト 11.txt
+?? データ/テスト 12.txt
+?? データ/テスト 13.txt
+?? データ/テスト 14.txt
+?? データ/テスト 15.txt
+?? データ/テスト 2.txt
+?? データ/テスト 3.txt
+?? データ/テスト 4.txt
+?? データ/テスト 5.txt
+?? データ/テスト 6.txt
+?? データ/テスト 7.txt
+?? データ/テスト 8.txt
+?? データ/テスト 9.txt

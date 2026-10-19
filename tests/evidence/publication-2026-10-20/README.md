@@ -51,3 +51,38 @@ decisive results.
 Recurring defect D1 across all evidence so far: the model's own cap statements disagreed with the
 independent manifest in 5 of 12 checkpoint-producing runs (character counts, heading lines skipped,
 or no per-section measurement). Historical artifacts are kept as produced.
+
+## Rows 5–12 (new digests: skill 6d22a71e7f3c…, adapter eca134a3defc…)
+
+Codex verdict on this group: FIX FIRST on evidence reporting, functional coverage complete; the corrections it required are applied in the READMEs and traces (full per-call results keyed by tool-use id, refusal counts recomputed, manifest limits stated, package totals marked as estimates where freshness output was unmeasured).
+
+| Row | Case | Result (Codex verdict in each README) |
+| --- | --- | --- |
+| 5a | no memory system | PASS: no memory writes, no invented hierarchy, correction kept in the plan |
+| 5b | memory explicitly disabled | PASS: no memory writes, plan carries the correction |
+| 6 | read-only plan | PASS: plan untouched, pending update recorded |
+| 7 | all destinations denied | PASS for destination handling; FAIL for evidence integrity (unsupported Do-not-redo entry) |
+| 8a | non-git (inside an unrelated parent repo) | PASS + resume: `no-git @ n/a` |
+| 8b | detached HEAD | PASS + resume |
+| 8c | unborn branch | PASS + resume |
+| 9 | linked worktree | PASS + resume: main checkout untouched |
+| 10 | large status, hostile names | first pass: prescribed command refused by the harness; rerun PASS with format and measurement exceptions (NUL form never executed) |
+| 11 | concurrent change during capture | first pass not exercised (wrapper fired on Claude Code's own git call); rerun PASS |
+| 12 | frozen handoff, external edit, resume, refresh | PASS: frozen copy hash identical through four stages |
+
+Section caps: every checkpoint produced in rows 5–12 and in the 3a/3b reruns measured within cap except
+one overrun event in row 12, reproduced in its two identical initial artifacts (Resume reading 712/600)
+and disclosed; the refreshed mutable checkpoint is within every cap. No false section-cap claim after the
+Step 4 change (14 artifacts). This says nothing about complete resume packages: several rows disclose
+required reads above the 1,392-byte allocation and unmeasured freshness output, and package totals in
+replies are estimates unless a row README says otherwise.
+
+Harness defects found during this group, both fixed for later runs: the allowlist never matched the
+skill's exact status command until the row 10/11 reruns (earlier runs, including the three accepted
+layouts, used a declared plain-porcelain fallback; Codex: those acceptances stand for the behaviour
+actually demonstrated and are not exact-command tests); snapshot manifests split newline-containing
+paths. The `-z` NUL sidecar form has not executed under this headless tool policy, because output
+redirection needs approval.
+
+Public-content and history audit: see `../../..`'s private audit record before any visibility change.
+

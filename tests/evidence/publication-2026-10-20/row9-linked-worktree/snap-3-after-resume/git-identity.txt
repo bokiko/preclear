@@ -1,0 +1,3 @@
+<repo>/<run>/project
+<repo>/<run>/main-checkout/.git/worktrees/project
+<repo>/<run>/main-checkout/.git

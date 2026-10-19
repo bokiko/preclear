@@ -1,0 +1,3 @@
+I added step 2 as `widget_export.py`: small pure functions that export the `id, name` columns to CSV, with JSON deferred as the plan's 2026-10-15 decision says.
+The repo had no code yet, so I chose Python and the standard `csv` module myself. Empty input returns just the header line.
+I didn't run any tests, didn't commit, didn't start step 3, and left the plan's step 2 checkbox unticked.

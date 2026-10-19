@@ -1,0 +1,44 @@
+--- a/widget_export.py
++++ b/widget_export.py
+@@ -1,20 +1,40 @@
+-"""CSV exporter for widgets (plan step 2; JSON deferred per 2026-10-15 decision)."""
++"""Widget exporter: JSON by default, CSV on explicit request (2026-10-20 decision)."""
+
+ import csv
+ import io
++import json
+
+ COLUMNS = ("id", "name")
+
+
+ def widget_row(widget):
+     """Return the export columns of one widget mapping, in COLUMNS order."""
+     return [widget[column] for column in COLUMNS]
+
+
++def widget_record(widget):
++    """Return one widget mapping reduced to the export columns."""
++    return {column: widget[column] for column in COLUMNS}
++
++
++def export_json(widgets):
++    """Return JSON text: an array with one {id, name} object per widget."""
++    return json.dumps([widget_record(widget) for widget in widgets])
++
++
+ def export_csv(widgets):
+     """Return CSV text: a header row, then one row per widget."""
+     buffer = io.StringIO()
+     writer = csv.writer(buffer, lineterminator="\n")
+     writer.writerow(COLUMNS)
+     writer.writerows(widget_row(widget) for widget in widgets)
+     return buffer.getvalue()
++
++
++def export(widgets, *, format="json"):
++    """Return widgets as JSON text, or as CSV text when format="csv"."""
++    if format == "json":
++        return export_json(widgets)
++    if format == "csv":
++        return export_csv(widgets)
++    raise ValueError(f"unknown export format: {format!r}")

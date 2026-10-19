@@ -1,0 +1,1 @@
+- [widget-export JSON default](project_widget_export_json_default.md) — JSON default, CSV opt-in; supersedes CSV-first (2026-10-20)

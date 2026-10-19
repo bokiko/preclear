@@ -1,0 +1,3 @@
+I added step 2, the CSV exporter, in `widget_export.py`. It's CSV only, per the 2026-10-15 decision, and its small pure functions output an `id,name` header and then one row per widget.
+The repo had no code, so I picked Python and wrote it as a new module. Nothing has been run or tested yet.
+I made no commit, didn't touch step 3, and left the plan checkbox unticked for checkpointing.

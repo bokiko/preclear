@@ -1,0 +1,2 @@
+I wrote the step 2 CSV exporter in `widget_export.py`, following the plan's decision to do CSV now and defer JSON. Output is an `id,name` header row, then one row per widget, built from small pure functions with `export_widgets_csv` as the entry point. The project had no code or language yet, so I chose Python.
+I didn't run tests or commit, and didn't start step 3; the plan checkbox is still unchecked for checkpointing to reconcile.

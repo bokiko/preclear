@@ -1,0 +1,4 @@
+{
+  "autoMemoryDirectory": "<repo>/<run>/auto-memory",
+  "autoMemoryEnabled": true
+}

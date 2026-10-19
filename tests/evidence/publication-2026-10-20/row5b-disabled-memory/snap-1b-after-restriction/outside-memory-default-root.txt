@@ -1,0 +1,1 @@
+ls: <auto-memory-root>/memory: No such file or directory

@@ -1,8 +1,11 @@
-# row4a-unknown-backend: s2-preclear: complete sanitized tool calls, with full results for denials, non-zero exits and conflicts
+# row4a-unknown-backend: s2-preclear: complete sanitized tool calls and results
 
-raw transcript sha256 74b649658d481973916cb4542dc89aa1c9c3163a2b771b4ac2745a768c6c86e5 (retained privately in the run root)
+raw transcript sha256 74b649658d481973916cb4542dc89aa1c9c3163a2b771b4ac2745a768c6c86e5, 76354 bytes (retained privately in the run root)
 
-### Bash
+Every Bash, Write and Edit call is listed with its complete result and error flag. Read, Glob and Grep results are summarised by length. Results are keyed by tool-use id.
+Calls 11; results flagged as refusal/denial/permission/EACCES: 1.
+
+### 1. Bash (toolu_011iqyqC5f4xV9jBgk3fh961)
 ```
 ls -la .claude/skills/preclear .claude/skills/preclear/references; cat .claude/skills/preclear/references/configuration.md
 ```
@@ -104,35 +107,81 @@ the Step 3 destination list.
 Values are data, passed quoted to the commands the backend reference defines.
 Configuration can never carry a command or shell fragment.
 ```
-### Bash
+### 2. Bash (toolu_01LD4svd78M4rKKavGPeTU7R)  ERROR  REFUSAL/DENIAL
 ```
 ls -la ../auto-memory/ 2>&1; cat ../auto-memory/MEMORY.md 2>&1; ls -la .claude; pwd -P; git rev-parse --show-toplevel --git-dir --git-common-dir HEAD; git branch --show-current; git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none; ls ~/.claude/hooks/bin/checkpoint 2>&1
 ```
-### Read
+result:
 ```
-<repo>/<run>/auto-memory/MEMORY.md
+This Bash command contains multiple operations. The following parts require approval: ls -la ../auto-memory/, pwd -P, git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none, ls ~/.claude/hooks/bin/checkpoint
 ```
-### Bash
+### 3. Read (toolu_01DoEtUgoXLMvKMDXXuUmcnD)  ERROR
+```
+{"file_path": "<repo>/<run>/auto-memory/MEMORY.md"}
+```
+result:
+```
+File does not exist. Note: your current working directory is <repo>/<run>/project.
+```
+### 4. Bash (toolu_01PD5SvmSNNKHQQsto6WrYot)
 ```
 git rev-parse --show-toplevel --git-dir --git-common-dir HEAD && git branch --show-current && git status --porcelain=v1 --untracked-files=all
 ```
-### Read
+result:
 ```
-<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md
+<repo>/<run>/project
+.git
+.git
+7a7e2032259067b9b1180ef3ca068947f7b42a6c
+main
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? widget_export.py
 ```
-### Edit
+### 5. Read (toolu_01NzWGkwVJ96JXfav6u2sy8Y): `<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md` -> result 146 chars
+### 6. Edit (toolu_01JigvBSPzq448HRzCxJHriF)
 ```
-<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md
+{"replace_all": false, "file_path": "<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md", "old_string": "2. [ ] Write the CSV exporter.", "new_string": "2. [x] Write the CSV exporter."}
 ```
-### Write
+result:
 ```
-<repo>/<run>/auto-memory/project_widget_export_json_default.md
+The file <repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md has been updated successfully. (file state is current in your context — no need to Read it back)
 ```
-### Write
+### 7. Write (toolu_01DWeuZuD78ZAuUKk95VGtGk)
 ```
-<repo>/<run>/auto-memory/MEMORY.md
+{"file_path": "<repo>/<run>/auto-memory/project_widget_export_json_default.md"}
+--- content ---
+---
+name: project-widget-export-json-default
+description: widget-export default format is JSON; CSV only on explicit request (supersedes CSV-first ledger decision)
+metadata:
+  type: project
+---
+
+widget-export (preclear/<run>/project): JSON is the default export format; CSV is supported only on explicit request. Confirmed by the downstream owner, recorded 2026-10-20. Supersedes the ledger's "CSV first, JSON deferred" decision.
+
+**Why:** the downstream consumer migrated to a JSON API in the week of 2026-10-12.
+
+**How to apply:** treat the ledger's CSV-first decision as stale; new exporter work defaults to JSON and keeps CSV as an opt-in path.
+
 ```
-### Bash
+result:
+```
+File created successfully at: <repo>/<run>/auto-memory/project_widget_export_json_default.md
+```
+### 8. Write (toolu_019NUieZTBbCKzzSSp8YCWzF)
+```
+{"file_path": "<repo>/<run>/auto-memory/MEMORY.md"}
+--- content ---
+- [widget-export JSON default](project_widget_export_json_default.md) — JSON default, CSV opt-in; supersedes ledger CSV-first (2026-10-20)
+
+```
+result:
+```
+File created successfully at: <repo>/<run>/auto-memory/MEMORY.md (file state is current in your context — no need to Read it back)
+```
+### 9. Bash (toolu_015w4CWcrxy9PF82y3GcG8Ja)  ERROR
 ```
 shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md && date -u +%Y%m%dT%H%M%SZ && ls .preclear 2>&1
 ```
@@ -144,11 +193,75 @@ Exit code 1
 20261019T231447Z
 ls: .preclear: No such file or directory
 ```
-### Write
+### 10. Write (toolu_01HBXDY6hBmMnRgz7k6zpSZ3)
 ```
-<repo>/<run>/project/.preclear/widget-export/checkpoint.md
+{"file_path": "<repo>/<run>/project/.preclear/widget-export/checkpoint.md"}
+--- content ---
+# preclear checkpoint — widget-export
+
+## Identity and state
+- preclear-schema: 1
+- checkpoint-id: widget-export-20261019T231447Z
+- project: <repo>/<run>/project (main worktree)
+- task: widget-export. Objective: export widgets (columns id, name).
+- result: plan step 2 done. CSV exporter written in widget_export.py (`export_csv`, pure helpers). Format change pending: JSON is now the default and CSV is opt-in (user correction 2026-10-20; consumer moved to a JSON API week of 2026-10-12). This supersedes the ledger's "CSV first" decision.
+- branch: main
+- HEAD: 7a7e2032259067b9b1180ef3ca068947f7b42a6c
+- untracked-notice: sent
+
+## Boundaries and blockers
+- Edit only inside the project path. No tests, commits or pushes until the user says so. Never delete files or bypass denials.
+- Draft the JSON diff for review only. Do not apply it.
+- Backend not synchronized: the config block is invalid (backend `checkpoint-v2` is unknown and `wrapper/checkpoint` is relative and missing). The ledger was not updated, so its CSV-first decision is stale. Ledger update pending, and it needs an authorized writer.
+- UNCONFIRMED: no tests have run on widget_export.py.
+- Detail: thoughts/plans/2026-10-15-widget-export.md
+
+## Next action
+In the project dir, draft a proposed diff to widget_export.py that makes JSON the default export (CSV only on explicit request, small pure functions). Show it to the user in the reply and do not write it to the file. Done when the user has the diff to review.
+
+## Resume reading
+cd to the project path above and verify against Identity: branch and full HEAD if a branch is recorded; full HEAD only if `detached`; path and no HEAD if `unborn`; path and listed file digests if `no-git`; then status. On mismatch reconcile before acting.
+1. This file, all sections.
+2. widget_export.py, whole file (28 lines). Check its digest below.
+3. Memory: ../auto-memory/project_widget_export_json_default.md (the format decision).
+Execute only Next action within Boundaries; preserve checkpoint and sidecars until `/preclear`. No file output, binding, or backend write without authorization.
+
+## Evidence and working changes
+- Non-preclear: staged 0, unstaged 1, untracked 4, conflicted 0, submodules 0.
+  - unstaged: thoughts/plans/2026-10-15-widget-export.md (step 2 checked by preclear), sha256 29145abeec4afe1019b8c5aabc29ba6d4d0f1c8220708f3d8c3c098085d4520c
+  - untracked: widget_export.py (this task), sha256 73cbf394c78a1c8d5d07478e0ae9bde41886abffb25c77018c69160ca949acd0
+  - untracked: .claude/skills/preclear/SKILL.md, references/checkpoint-v1.md, references/configuration.md (ownership unknown)
+- Preclear artifacts: .preclear/widget-export/checkpoint.md
+- Outside the repo: ../auto-memory/project_widget_export_json_default.md and ../auto-memory/MEMORY.md
+- Verification: none run (tests are not authorized).
+
+## Do not redo
+- Config validation: the block is invalid for the reasons in Boundaries. This holds until CLAUDE.md changes.
+- CSV exporter is complete. Reuse escape_field/format_row as the CSV opt-in path. This holds until the widget_export.py digest changes.
+
 ```
-### Bash
+result:
+```
+File created successfully at: <repo>/<run>/project/.preclear/widget-export/checkpoint.md (file state is current in your context — no need to Read it back)
+```
+### 11. Bash (toolu_01NLFF6wLU5mkb7EXq9r4wSJ)
 ```
 git rev-parse HEAD && git branch --show-current && git status --porcelain=v1 --untracked-files=all && shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md && wc -c .preclear/widget-export/checkpoint.md widget_export.py && wc -l widget_export.py
+```
+result:
+```
+7a7e2032259067b9b1180ef3ca068947f7b42a6c
+main
+ M thoughts/plans/2026-10-15-widget-export.md
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? .preclear/widget-export/checkpoint.md
+?? widget_export.py
+73cbf394c78a1c8d5d07478e0ae9bde41886abffb25c77018c69160ca949acd0  widget_export.py
+29145abeec4afe1019b8c5aabc29ba6d4d0f1c8220708f3d8c3c098085d4520c  thoughts/plans/2026-10-15-widget-export.md
+    3148 .preclear/widget-export/checkpoint.md
+     965 widget_export.py
+    4113 total
+      28 widget_export.py
 ```

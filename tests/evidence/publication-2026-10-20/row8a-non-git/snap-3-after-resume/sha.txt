@@ -1,0 +1,6 @@
+63c3d46823176a176865bbf84724e1f42e46415bc13a2c91ba7101f46059b708  auto-memory/MEMORY.md
+feab4b42d93abc3086065d665f5b0a3e87b397a50c64d9e5a2d00344cd26df60  auto-memory/widget-export-json-default.md
+1f40dcc0e8a28e06e8f8b46c862e59584d6c747e26803e5c5c20c0a7df5c9aa6  project/.preclear/widget-export/checkpoint.md
+ed03447e9df43888b81861f9904690a7e23ea715f339f382aef3194511997cf1  project/CLAUDE.md
+d86f68e4aa9bb23df82bea3be11f387ddebc3acd0681b0ea5f55ae6dc9043606  project/thoughts/plans/2026-10-15-widget-export.md
+69a29d341a2900af2e192ba211da7615b3fb0d0c3bc073e79a36841b9d6102fb  project/widget_export.py

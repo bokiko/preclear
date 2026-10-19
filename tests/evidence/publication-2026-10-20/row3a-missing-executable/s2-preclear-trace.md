@@ -1,6 +1,11 @@
 # row3a-missing-executable: s2-preclear
 
 - Read: `<repo>/<run>/project/.claude/skills/preclear/references/configuration.md`
+    result: `1	# Preclear configuration
+2	
+3	Preclear needs no configuration. Without one it writes a plain checkpoint under
+4	`<project>/.preclear/<task-slug>/`. Configuration is for users who already have a
+5	le`
 - Read: `<repo>/<run>/project/.claude/skills/preclear/references/checkpoint-v1.md`
     result: `1	# Backend: checkpoint-v1
 2	
@@ -8,7 +13,9 @@
 4	continuity ledger. Each of six sections carries a hash; an update must present the
 5	hash`
 - Bash: `P=<repo>/<run>; ls -la "$P/wrapper/" "$P/wrapper/missing-checkpoint" "$P/project/.preclear" "$P/auto-memory/" 2>&1; pwd -P; git -C "$P/project" rev-parse --show-toplevel --git-dir --git-common-dir HEAD; git -C "$P/project" branch --show-current; git -C "$P/pro`
+    result: `This Bash command contains multiple operations. The following parts require approval: ls -la <repo>/<run>/wrapper/ <repo>/<run>/wrapper/missing-checkpoint <repo>/<run>/project/.preclear <repo>/<run>/a`
 - Bash: `ls -la <repo>/<run>/wrapper/`
+    result: `ls in '<repo>/<run>/wrapper' was blocked. For security, Claude Code may only list files in the allowed working directories for this session: '<repo>/<run>/project'.`
 - Bash: `git rev-parse --show-toplevel --git-dir --git-common-dir HEAD`
 - Bash: `git branch --show-current`
 - Bash: `git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none`
@@ -27,7 +34,7 @@
 - Bash: `date -u +%Y%m%dT%H%M%SZ`
 - Edit: `<repo>/<run>/project/.preclear/widget-export/checkpoint.md`
 
-Turns 20. Write/Edit calls 5: ['<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md', '<repo>/<run>/auto-memory/widget-export-json-default.md', '<repo>/<run>/auto-memory/MEMORY.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md']. Bash calls naming the configured executable: 1. Denied tool results: 2.
+Turns 20. Write/Edit calls 5: ['<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md', '<repo>/<run>/auto-memory/widget-export-json-default.md', '<repo>/<run>/auto-memory/MEMORY.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md']. Bash calls naming the configured executable: 1. Results flagged refusal/denial/EACCES/blocked (short filter; the full trace is authoritative): 5.
 Usage: input 20, cache creation 18718, cache read 460678, output 5681.
 
 ## Final reply

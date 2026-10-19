@@ -1,0 +1,1 @@
+Resume widget-export from "<repo>/<run>/project/.preclear/widget-export/checkpoint.md" — unborn @ n/a — draft JSON-default diff for review

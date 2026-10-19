@@ -82,6 +82,8 @@ certifies a cap.
 
 None is needed. If you already keep a ledger or handoff system and want preclear
 to write through it, see `references/configuration.md`. Backends are opt-in only.
+When the NUL-separated status sidecar cannot be captured, the quoted porcelain
+fallback in `references/status-sidecar.md` applies.
 Finding a helper or a ledger on disk never activates one.
 
 ## Safety

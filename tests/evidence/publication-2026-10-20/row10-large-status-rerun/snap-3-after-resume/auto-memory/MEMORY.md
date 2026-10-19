@@ -1,0 +1,1 @@
+- [widget-export JSON default](widget-export-json-default.md) — JSON is default since 2026-10-20 correction; CSV opt-in only

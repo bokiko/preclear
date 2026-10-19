@@ -1,248 +1,13 @@
-# row3a-missing-executable-rerun: s2-preclear: complete sanitized tool calls, with full results for denials, non-zero exits and conflicts
+# row3a-missing-executable-rerun: s2-preclear: complete sanitized tool calls and results
 
-raw transcript sha256 b1d1e53e47212a4d57c32030773a0a7ab98d6bb6f2c42cfe1f5f5ac6e9dcfcb0 (retained privately in the run root)
+raw transcript sha256 b1d1e53e47212a4d57c32030773a0a7ab98d6bb6f2c42cfe1f5f5ac6e9dcfcb0, 142185 bytes (retained privately in the run root)
 
-### Read
-```
-<repo>/<run>/project/.claude/skills/preclear/references/configuration.md
-```
-result:
-```
-1	# Preclear configuration
-2	
-3	Preclear needs no configuration. Without one it writes a plain checkpoint under
-4	`<project>/.preclear/<task-slug>/`. Configuration is for users who already have a
-5	ledger or handoff system and want preclear to write through it.
-6	
-7	## Where it lives
-8	
-9	A fenced YAML block headed exactly `Preclear configuration`, in an applicable
-10	approved instruction file (project or user `CLAUDE.md`). Claude Code does not
-11	parse these keys; the model reads the block in Step 1, probe 4. Installing the
-12	block is a separate, user-approved edit. Preclear never writes its own
-13	configuration.
-14	
-15	````markdown
-16	## Preclear configuration
-17	
-18	```yaml
-19	preclear:
-20	  version: 1
-21	  backend: checkpoint-v1
-22	  executable: /absolute/path/to/checkpoint
-23	  project: /absolute/project
-24	  task: stable-task-id
-25	  ledger: /absolute/path/to/CONTINUITY.md
-26	  fallback_directory: /absolute/project/.preclear
-27	```
-28	````
-29	
-30	## Keys
-31	
-32	| Key | Required | Meaning |
-33	| --- | --- | --- |
-34	| `version` | yes | Integer. Only `1` exists. |
-35	| `backend` | yes | One of the names below. Not a path. |
-36	| `executable` | per backend | Non-empty absolute path to the helper. Never resolved from `PATH`. |
-37	| `project` | yes | Non-empty absolute physical project path the block applies to. |
-38	| `task` | per backend | Non-empty stable task id. Required for any backend mutation. |
-39	| `ledger` | per backend | Non-empty absolute path to the file the backend writes. |
-40	| `fallback_directory` | no | Absolute directory for a plain checkpoint when the backend cannot be used. Default `<project>/.preclear`. The literal `none` is a prohibition, not a path: no fallback is ever written. |
-41	
-42	Known backends: `checkpoint-v1` (`references/checkpoint-v1.md`).
-43	
-44	Recommended line next to the block, so a fresh session that resumes from the
-45	ledger sees it before reading anything else: "Resuming from this ledger requires
-46	no binding. Read its file directly, or use the helper's `show --ledger <path>`. A
-47	resume request never authorizes `bind` or continuity writes; binding is a
-48	separate user-approved setup action."
-49	
-50	## Resolution: three states
-51	
-52	Resolve configuration before any write. Exactly one state applies.
-53	
-54	**1. No block applies.** No block exists, or no block's `project` equals the
-55	session's resolved physical project path. Destination is chosen by SKILL.md
-56	Step 3 under normal authorization.
-57	
-58	**2. A block applies and validates.** All required keys present with the right
-59	types, `version` known, `backend` in the known list and its reference file
-60	present, every path absolute, `executable` and `ledger` exist on disk. The backend
-61	runs. If it then fails for any reason (preconditions, exit code, unexpected
-62	output), the **fallback policy** below applies.
-63	
-64	**3. A block applies but is invalid or ambiguous.** Any validation failure, or two
-65	applicable blocks that disagree on any key. No backend runs. Record the reason in
-66	Boundaries and blockers. Then the fallback policy applies, with one extra rule: if
-67	the blocks disagree on `fallback_directory`, or any applicable block says `none`,
-68	persistence is `BLOCKED`. A conflict never grants fallback permission.
-69	
-70	## Fallback policy
-71	
-72	Used by states 2 and 3. It never re-enters backend selection and never consults
-73	the Step 3 destination list.
-74	
-75	- `fallback_directory` is a path: write the plain checkpoint there using the
-76	  Step 3 schema, mark the backend "not synchronized: <reason>", and point the
-77	  resume line at the plain file.
-78	- `fallback_directory` is `none`: print the full checkpoint in the reply, report
-79	  persistence `BLOCKED`, emit no resume line.
-80	
-81	Values are data, passed quoted to the commands the backend reference defines.
-82	Configuration can never carry a command or shell fragment.
-83	
-```
-### Read
-```
-<repo>/<run>/project/.claude/skills/preclear/references/checkpoint-v1.md
-```
-result:
-```
-1	# Backend: checkpoint-v1
-2	
-3	A ledger helper that keeps a hash-guarded checkpoint block inside a Markdown
-4	continuity ledger. Each of six sections carries a hash; an update must present the
-5	hash it read, so concurrent sessions cannot overwrite each other silently. On the
-6	author's machine a hook blocks direct edits to the ledger; the helper is the only
-7	write path.
-8	
-9	Loaded only when a `Preclear configuration` block in state 2 names
-10	`backend: checkpoint-v1`. Interface facts were verified against the helper build
-11	of 2026-10-04 (`~/.claude/hooks/dist/checkpoint.mjs`). A different build may
-12	differ; output that does not match the table is a failure, never a success.
-13	
-14	## Preconditions for any mutation
-15	
-16	All must hold, else the fallback policy in `references/configuration.md` applies:
-17	
-18	1. The helper identifies the session from `CLAUDE_CODE_SESSION_ID` or `--session`.
-19	   If neither is available there is no confirmed binding. Never guess an id.
-20	2. `status` reports a binding (format below) whose ledger, symlinks resolved,
-21	   equals the configured `ledger`.
-22	3. The ledger's existing block names this project and the configured `task`.
-23	4. The configured `task` is set. Preclear verifies task identity; configuration
-24	   never causes a bind.
-25	
-26	Preclear does not bind, create, or initialise ledgers. Those are setup actions the
-27	user performs separately with the helper's `bind`, `create`, and `init` commands.
-28	
-29	## Interface
-30	
-31	`<executable>` is the configured absolute path. Paths and ids are passed quoted.
-32	Section bodies and the serialized validation block go in an authorized
-33	`backend-inputs/` subdirectory of `fallback_directory`, or of a separately
-34	authorized scratch directory when `fallback_directory` is `none` (never create a
-35	directory named `none`). They are retained checkpointing inputs, not canonical
-36	state and not required resume reads; list them separately from working changes.
-37	
-38	Exit codes: `0` ok, `1` internal error, `2` usage or validation (including no
-39	checkpoint block), `3` conflict, `4` invalid checkpoint, `5` kill switch active,
-40	`6` lock timeout.
-41	
-42	| Operation | Command | Observed output |
-43	| --- | --- | --- |
-44	| Status | `status` | Unbound: one line `session <id8>: unbound`. Bound: line 1 `session <id8> → <ledger>`, optionally followed by ` (carried from <id8>, <verifier>)`; line 2 either `checkpoint updated <iso> by <id>` then `Next action: <text>`, or `checkpoint: NONE`. Take the ledger from line 1 between `→ ` and the optional ` (`. `checkpoint: NONE` fails precondition 3. |
-45	| Read | `show [--ledger P] [--section S]` | Each section prints as `## <name>`, then `section-hash: <hash>`, then the body. One `--section` per call; a repeated flag is ignored. |
-46	| Validate | `validate --from <file>` | Input must be a full serialized block (below). Same checks as `update`: all six sections present, no others, block ≤4,096 bytes, `Authorization boundaries` non-empty and ≤600 chars. |
-47	| Update | `update --section S --expect-section <hash> --from <file>` | File holds one section body only. Exit 3: section changed since your read; message names a `.conflict-*` file. |
-48	| Note | `note --from <file>` | Appends to ledger history outside the hashed block. |
-49	| Lint | `lint` | Success prints `ledger lint OK`. It scans all registered ledgers; a warning counts only if it names the configured ledger. |
-50	| Handoff | `handoff --from <file>` | Immutable snapshot tied to this session. Use on the Step 3 frozen-copy triggers. |
-51	
-52	## Section assembly
-53	
-54	The helper parses every `## ` line as a section, so the plain-file headings cannot
-55	be nested inside it. Build **one complete final body per helper section**, using
-56	short bold labels instead of headings. Strip any `section-hash:` lines copied from
-57	`show`. Existing content that is still true stays; this is a merge, not a replace.
-58	
-59	| Helper section | Final body contains |
-60	| --- | --- |
-61	| Goal & current state | Identity and state content |
-62	| Authorization boundaries | Limits only, ≤600 chars, plus `Detail: <path#anchor>` |
-63	| Blockers & open questions | Blockers and `UNCONFIRMED` items |
-64	| Decisions (with reasons) | Existing decisions still relevant, then **Do not redo** entries |
-65	| Evidence & key paths | **Resume reading** lines first, then Evidence and working changes |
-66	| Next action | Next action |
-67	
-68	Persist this rule in `Authorization boundaries` and as the first line of
-69	`Evidence & key paths`, because the fresh session reads the ledger, not this file:
-70	
-71	> Resume is read-only for continuity state: never bind. Update, note, or handoff
-72	> only during an explicit `/preclear`; setup is a separate user action. Read the
-73	> ledger file directly, or use `show --ledger <absolute-ledger-path>` without
-74	> binding.
-75	
-76	When the next action is a diff or answer in the reply only, also persist: "no
-77	proposal files, section-input files, binding changes, or ledger writes." Do not
-78	carry an earlier "edit files inside the project" scope into a chat-only resume
-79	without marking it historical.
-80	
-81	### Serialized block for `validate`
-82	
-83	Write the six bodies into this exact shape, in this order, in a separate file
-84	from the per-section `update` files. The `updated` and `by` values are
-85	placeholders; the helper rewrites them on update.
-86	
-87	```
-88	<!-- CHECKPOINT:BEGIN updated: 1970-01-01T00:00:00Z by: preclear -->
-89	## Goal & current state
-90	<body>
-91	
-92	## Decisions (with reasons)
-93	<body>
-94	
-95	## Blockers & open questions
-96	<body>
-97	
-98	## Authorization boundaries
-99	<body>
-100	
-101	## Evidence & key paths
-102	<body>
-103	
-104	## Next action
-105	<body>
-106	<!-- CHECKPOINT:END -->
-107	```
-108	
-109	The 4,096-byte limit applies to this rendered block including the markers and
-110	headings, not to the six bodies alone.
-111	
-112	## Flow
-113	
-114	1. Check preconditions. 2. `show`; record every `section-hash`. 3. Assemble six
-115	bodies; serialize; `validate`. 4. `update` each changed section with its hash,
-116	one body file each. 5. Exit 3: read the conflict file, `show` again, merge by
-117	hand, retry once with the new hash; a second conflict means `UNSTABLE` and the
-118	fallback policy. 6. `lint` must print `ledger lint OK` or only warnings naming
-119	other ledgers. 7. On a frozen trigger, `handoff`. 8. SKILL.md Step 4 still
-120	applies in full.
-121	
-122	## Failure handling
-123	
-124	Missing or non-executable `executable` is a state 3 validation failure (see
-125	configuration reference). Exit 1, 2, 4, 5, 6, a precondition failure, or output
-126	not matching the table: stop backend operations, do not claim synchronization,
-127	apply the fallback policy with "ledger not synchronized: <reason>". A validation
-128	rejection (exit 2 or 4) may be repaired once if the message is understood;
-129	otherwise fallback. Never edit the ledger directly, never initialise a missing
-130	block, never change bindings.
-131	
-132	After the first denied or unapproved helper mutation, attempt no further helper
-133	mutation in this run: not another section, note, handoff, bind, create, or init.
-134	Apply the fallback policy with "ledger not synchronized: helper write denied".
-135	Read-only checks may verify unchanged state. Do not retry the mutation through
-136	another command form or executable. A successful `status`, `show` or `validate`
-137	is not permission to mutate.
-138	
-139	Backend failure changes persistence, not ownership. Preserve a pending
-140	correction in the fallback checkpoint until its established owner can be
-141	updated; name the owner and the pending synchronization. Memory may hold a
-142	navigation pointer, not a parallel rationale, when the ledger owns the decision.
-143	
-```
-### Bash
+Every Bash, Write and Edit call is listed with its complete result and error flag. Read, Glob and Grep results are summarised by length. Results are keyed by tool-use id.
+Calls 29; results flagged as refusal/denial/permission/EACCES: 5.
+
+### 1. Read (toolu_01GMxbUsWETMHEAQzyWp6y3s): `<repo>/<run>/project/.claude/skills/preclear/references/configuration.md` -> result 3918 chars
+### 2. Read (toolu_01D5ctzyRmtB5kZbmwv58GuZ): `<repo>/<run>/project/.claude/skills/preclear/references/checkpoint-v1.md` -> result 7814 chars
+### 3. Bash (toolu_01G8FJ6yFt6ojJuCz4RLtPji)  ERROR  REFUSAL/DENIAL
 ```
 cd <repo>/<run>/project; pwd -P; git rev-parse --show-toplevel --git-dir --git-common-dir HEAD; git branch --show-current; git --no-optional-locks status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none | tr '\0' '\n'; echo ---; test -e <repo>/<run>/wrapper/missing-checkpoint && echo EXISTS || echo MISSING; test -e <repo>/<run>/ledgers/CONTINUITY_CLAUDE-widget-export.md && echo LEDGER_EXISTS; ls -la .preclear 2>&1
 ```
@@ -250,7 +15,7 @@ result:
 ```
 This Bash command contains multiple operations. The following part requires approval: cd <repo>/<run>/project; pwd -P; git rev-parse --show-toplevel --git-dir --git-common-dir HEAD; git branch --show-current; git --no-optional-locks status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none
 ```
-### Bash
+### 4. Bash (toolu_01QyNUts2xyNczJmLFGbsmCc)  ERROR  REFUSAL/DENIAL
 ```
 git -C <repo>/<run>/project rev-parse --show-toplevel --git-dir --git-common-dir HEAD
 ```
@@ -258,7 +23,7 @@ result:
 ```
 This command requires approval
 ```
-### Bash
+### 5. Bash (toolu_01MC8hpVKa86Dot7Eton1a7L)  ERROR  REFUSAL/DENIAL
 ```
 git -C <repo>/<run>/project branch --show-current
 ```
@@ -266,7 +31,7 @@ result:
 ```
 This command requires approval
 ```
-### Bash
+### 6. Bash (toolu_01Tm9gfquX2iLFRruCfKapwZ)  ERROR  REFUSAL/DENIAL
 ```
 git -C <repo>/<run>/project --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none
 ```
@@ -274,27 +39,50 @@ result:
 ```
 This command requires approval
 ```
-### Bash
+### 7. Bash (toolu_011MgTXGLc8hUNNdt9vEZGCf)
 ```
 test -e <repo>/<run>/wrapper/missing-checkpoint && echo EXISTS || echo MISSING
 ```
-### Read
+result:
 ```
-<repo>/<run>/auto-memory/MEMORY.md
+MISSING
 ```
-### Bash
+### 8. Read (toolu_0142vyDBUXdUxhAQ6pNMyXgk)  ERROR
+```
+{"file_path": "<repo>/<run>/auto-memory/MEMORY.md"}
+```
+result:
+```
+File does not exist. Note: your current working directory is <repo>/<run>/project.
+```
+### 9. Bash (toolu_013CUXvesTMZMrccdskFwPy6)
 ```
 git status --porcelain=v1 --untracked-files=all
 ```
-### Bash
+result:
+```
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? widget_export.py
+```
+### 10. Bash (toolu_013whnXxkREkTg4hZaAkGy4g)
 ```
 git rev-parse HEAD
 ```
-### Bash
+result:
+```
+32d72bd9171aa9d221a6a17ff51167407de7d36f
+```
+### 11. Bash (toolu_01VYmi6w7mKCtXpdSxJpoXki)
 ```
 git branch --show-current
 ```
-### Bash
+result:
+```
+main
+```
+### 12. Bash (toolu_019cnKZSNSczSSXqGZUvE3at)  ERROR  REFUSAL/DENIAL
 ```
 pwd -P
 ```
@@ -302,71 +90,204 @@ result:
 ```
 This command requires approval
 ```
-### Bash
+### 13. Bash (toolu_01SB3wHKETfDAQctrE8TvzTg)
 ```
 git rev-parse --show-toplevel --git-dir --git-common-dir
 ```
-### Bash
+result:
+```
+<repo>/<run>/project
+.git
+.git
+```
+### 14. Bash (toolu_01Ri7vqkhDRpNzMKMDpNZTi5)
 ```
 shasum -a 256 widget_export.py
 ```
-### Glob
+result:
 ```
-.preclear/**/*
+19821cb2505d7280dfd40a92c716db1dff6bc26809c9f59f311a066a33a1c29c  widget_export.py
 ```
-### Glob
+### 15. Glob (toolu_01Si1wPAobt2B8Wyuxe7thBr): `.preclear/**/*` -> result 14 chars
+### 16. Glob (toolu_01NgctHbNhmfj2KqiafHCVs7): `*` -> result 14 chars
+### 17. Edit (toolu_01Y5Af1vE9tZTC1cTEYuY2g7)
 ```
-*
+{"replace_all": false, "file_path": "<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md", "old_string": "2. [ ] Write the CSV exporter.", "new_string": "2. [x] Write the CSV exporter."}
 ```
-### Edit
+result:
 ```
-<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md
+The file <repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md has been updated successfully. (file state is current in your context — no need to Read it back)
 ```
-### Write
+### 18. Write (toolu_01MeGHXG87UUzZXWyuZeLCQ5)
 ```
-<repo>/<run>/auto-memory/widget-export-json-default.md
+{"file_path": "<repo>/<run>/auto-memory/widget-export-json-default.md"}
+--- content ---
+---
+name: widget-export-json-default
+description: widget-export project — JSON is the default export format; CSV only on explicit request (supersedes CSV-first)
+metadata:
+  type: project
+---
+
+JSON is the default export format for the widget-export project; CSV is supported only on explicit request. Confirmed by the downstream owner, relayed by bokiko 2026-10-20; supersedes the ledger's earlier "CSV first, JSON deferred" decision.
+
+**Why:** the consumer migrated to a JSON API in the week of 2026-10-12.
+**How to apply:** treat JSON as the default in any widget-export design. The owning record is the ledger `ledgers/CONTINUITY_CLAUDE-widget-export.md` (Decisions); as of 2026-10-20 it still says CSV-first and needs syncing — see `project/.preclear/widget-export/checkpoint.md`.
+
 ```
-### Write
+result:
 ```
-<repo>/<run>/auto-memory/MEMORY.md
+File created successfully at: <repo>/<run>/auto-memory/widget-export-json-default.md
 ```
-### Bash
+### 19. Write (toolu_01C2uYWrBiTQ9NAN9BVc3E7p)
+```
+{"file_path": "<repo>/<run>/auto-memory/MEMORY.md"}
+--- content ---
+- [widget-export JSON default](widget-export-json-default.md) — JSON default, CSV only on request; ledger not yet synced
+
+```
+result:
+```
+File created successfully at: <repo>/<run>/auto-memory/MEMORY.md (file state is current in your context — no need to Read it back)
+```
+### 20. Bash (toolu_01SFEcfGjpd1t71mF5SYwxcL)
 ```
 date -u +%Y%m%dT%H%M%SZ
 ```
-### Bash
+result:
+```
+20261019T232840Z
+```
+### 21. Bash (toolu_01NgmhuPJsdp6VzMto5jjtjK)
 ```
 shasum -a 256 thoughts/plans/2026-10-15-widget-export.md
 ```
-### Write
+result:
 ```
-<repo>/<run>/project/.preclear/widget-export/checkpoint.md
+29145abeec4afe1019b8c5aabc29ba6d4d0f1c8220708f3d8c3c098085d4520c  thoughts/plans/2026-10-15-widget-export.md
 ```
-### Bash
+### 22. Write (toolu_01UenXpa29GtoyYvPFVErypA)
+```
+{"file_path": "<repo>/<run>/project/.preclear/widget-export/checkpoint.md"}
+--- content ---
+## Identity and state
+preclear-schema: 1
+checkpoint-id: widget-export-20261019T232840Z
+project: <repo>/<run>/project (main worktree; physical path UNCONFIRMED, `pwd -P` denied)
+task: widget-export
+objective: export widgets (columns id, name).
+result: plan step 2 done (CSV exporter `widget_export.py`, 4 pure fns, untested). Format decision changed: JSON is now default, CSV only on explicit request; code not yet changed.
+branch: main
+HEAD: 32d72bd9171aa9d221a6a17ff51167407de7d36f
+untracked-notice: sent
+
+## Boundaries and blockers
+Scope: next action is chat-only. No proposal files, section-input files, binding changes, or ledger writes; no tests, commits, pushes; do not apply the diff or start plan step 3. Earlier "edit files inside the project" scope is historical. Paths grant no permission; no deletion or denial bypass.
+Backend not synchronized: configured executable `.../wrapper/missing-checkpoint` does not exist (config state 3).
+Pending: ledger Decisions still says "CSV first"; sync the JSON-default decision when the helper works.
+UNCONFIRMED: JSON shape (array of {id,name}?).
+Detail: thoughts/plans/2026-10-15-widget-export.md
+
+## Next action
+In <repo>/<run>/project, draft in the reply a proposed diff to `widget_export.py` that makes JSON the default export and keeps CSV only on explicit request (small pure functions). Done when the diff is shown for bokiko's review, not applied.
+
+## Resume reading
+cd to the project path above and verify against Identity: branch and full HEAD if a branch is recorded; full HEAD only if `detached`; path and no HEAD if `unborn`; path and listed file digests if `no-git`; then status. On mismatch reconcile before acting.
+1. `widget_export.py` (whole file; recheck digest below).
+2. Ledger <repo>/<run>/ledgers/CONTINUITY_CLAUDE-widget-export.md, Decisions only if context is needed; its CSV-first decision is superseded (see Identity).
+Execute only Next action within Boundaries; preserve checkpoint and sidecars until `/preclear`. No file output, binding, or backend write without authorization.
+
+## Evidence and working changes
+Non-preclear: staged 0, unstaged 1, untracked 4, conflicted 0, submodules 0.
+- `widget_export.py` untracked, this task; sha256 19821cb2505d7280dfd40a92c716db1dff6bc26809c9f59f311a066a33a1c29c
+- `thoughts/plans/2026-10-15-widget-export.md` modified (step 2 ticked); sha256 29145abeec4afe1019b8c5aabc29ba6d4d0f1c8220708f3d8c3c098085d4520c
+- `.claude/skills/preclear/{SKILL.md,references/checkpoint-v1.md,references/configuration.md}` untracked, ownership unknown
+Preclear artifacts: `.preclear/widget-export/checkpoint.md`.
+Verification: none run (tests not authorized).
+Memory (outside repo): auto-memory/widget-export-json-default.md + MEMORY.md.
+
+## Do not redo
+- Helper `missing-checkpoint` checked missing (`test -e`); invalid if the file appears.
+- CSV exporter written; keep CSV path when adding JSON. Invalid if `widget_export.py` digest changes.
+
+```
+result:
+```
+File created successfully at: <repo>/<run>/project/.preclear/widget-export/checkpoint.md (file state is current in your context — no need to Read it back)
+```
+### 23. Bash (toolu_01PurhH2L2MTtFopR17mVpU9)
 ```
 git status --porcelain=v1 --untracked-files=all
 ```
-### Bash
+result:
+```
+ M thoughts/plans/2026-10-15-widget-export.md
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? .preclear/widget-export/checkpoint.md
+?? widget_export.py
+```
+### 24. Bash (toolu_014qub3sXSmAeysPW2w4bR5z)
 ```
 wc -c .preclear/widget-export/checkpoint.md widget_export.py thoughts/plans/2026-10-15-widget-export.md
 ```
-### Bash
+result:
+```
+    3095 .preclear/widget-export/checkpoint.md
+     835 widget_export.py
+     134 thoughts/plans/2026-10-15-widget-export.md
+    4064 total
+```
+### 25. Bash (toolu_01BamfD8gqC5Gk94hmp3ba6K)
 ```
 awk '/^## /{if(n)print n": "b; n=$0; b=0} {b+=length($0)+1} END{print n": "b}' .preclear/widget-export/checkpoint.md
 ```
-### Bash
+result:
+```
+## Identity and state: 558
+## Boundaries and blockers: 641
+## Next action: 309
+## Resume reading: 702
+## Evidence and working changes: 680
+## Do not redo: 205
+```
+### 26. Bash (toolu_012hcwtRpSfDC23X8N8mv832)
 ```
 shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md
 ```
-### Edit
+result:
 ```
-<repo>/<run>/project/.preclear/widget-export/checkpoint.md
+19821cb2505d7280dfd40a92c716db1dff6bc26809c9f59f311a066a33a1c29c  widget_export.py
+29145abeec4afe1019b8c5aabc29ba6d4d0f1c8220708f3d8c3c098085d4520c  thoughts/plans/2026-10-15-widget-export.md
 ```
-### Edit
+### 27. Edit (toolu_01Tva1eZMz7iJq6boeQweQyq)
 ```
-<repo>/<run>/project/.preclear/widget-export/checkpoint.md
+{"replace_all": false, "file_path": "<repo>/<run>/project/.preclear/widget-export/checkpoint.md", "old_string": "Backend not synchronized: configured executable `.../wrapper/missing-checkpoint` does not exist (config state 3).\nPending: ledger Decisions still says \"CSV first\"; sync the JSON-default decision when the helper works.", "new_string": "Ledger not synchronized: configured helper `wrapper/missing-checkpoint` absent.\nPending: ledger Decisions still says CSV-first; sync JSON default later."}
 ```
-### Bash
+result:
+```
+The file <repo>/<run>/project/.preclear/widget-export/checkpoint.md has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+### 28. Edit (toolu_01Ku74h6Q1TmvodZ6e1JvC9m)
+```
+{"replace_all": false, "file_path": "<repo>/<run>/project/.preclear/widget-export/checkpoint.md", "old_string": "1. `widget_export.py` (whole file; recheck digest below).\n2. Ledger <repo>/<run>/ledgers/CONTINUITY_CLAUDE-widget-export.md, Decisions only if context is needed; its CSV-first decision is superseded (see Identity).", "new_string": "1. `widget_export.py` (whole file; recheck digest).\nLedger CSV-first decision is superseded; do not reread it."}
+```
+result:
+```
+The file <repo>/<run>/project/.preclear/widget-export/checkpoint.md has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+### 29. Bash (toolu_01TRHpVUJmGZwNoRegFuFCSn)
 ```
 LC_ALL=C awk '/^## /{if(n)print n": "b; n=$0; b=0} {b+=length($0)+1} END{print n": "b}' .preclear/widget-export/checkpoint.md; wc -c .preclear/widget-export/checkpoint.md
+```
+result:
+```
+## Identity and state: 558
+## Boundaries and blockers: 576
+## Next action: 309
+## Resume reading: 547
+## Evidence and working changes: 680
+## Do not redo: 205
+    2875 .preclear/widget-export/checkpoint.md
 ```

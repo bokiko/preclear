@@ -126,8 +126,8 @@ snapshot's SHA-256. "Frozen" is a convention unless the filesystem enforces it.
 
 ### Schema (plain-file checkpoints)
 
-Six headings, exactly these, in this order. Whole file under **4,096 bytes**,
-normally under 3,000. If forced to choose, keep boundaries, report an exception.
+Six headings, exactly these, in this order. Whole file under **4,096 bytes**.
+If forced to choose, keep boundaries, report an exception.
 
 | Heading | Max bytes | Contents |
 | --- | ---: | --- |
@@ -136,11 +136,12 @@ normally under 3,000. If forced to choose, keep boundaries, report an exception.
 | `## Next action` | 500 | One presently authorized step with directory, target, and completion condition. If blocked: one prerequisite or question, never a conditional workflow |
 | `## Resume reading` | 600 | Fixed first line: "cd to the project path above and verify against Identity: branch and full HEAD if a branch is recorded; full HEAD only if `detached`; path and no HEAD if `unborn`; path and listed file digests if `no-git`; then status. On mismatch reconcile before acting." Then ordered minimum reads (path plus heading or line range) and when a conditional read is needed. Last line: "Execute only Next action within Boundaries; preserve checkpoint and sidecars until `/preclear`. No file output, binding, or backend write without authorization." |
 | `## Evidence and working changes` | 1,000 | Non-preclear counts: staged, unstaged, untracked, conflicted, changed submodules; preclear artifacts listed separately by exact path; untouched files `ownership unknown`; verification command, observed result, the HEAD and file digests it ran against (or `binding UNCONFIRMED`); sidecar pointer |
-| `## Do not redo` | 596 | Expensive discoveries or checks already done, each with evidence location and what invalidates it. Never exempts the freshness check or digest recheck |
+| `## Do not redo` | 596 | Expensive discoveries/checks, each citing verified evidence and its invalidation condition. Unsupported checks are `UNCONFIRMED`. Never exempts freshness or digest rechecks |
 
 **Sidecar.** When changes exceed what fits inline, write `status.txt` beside the
 checkpoint from `git --no-optional-locks status --porcelain=v1 -z
---untracked-files=all --ignore-submodules=none`, counts only inline. Every change
+--untracked-files=all --ignore-submodules=none` (else
+`references/status-sidecar.md`), counts only inline. Every change
 is accounted for inline or in the sidecar; a tree too large to enumerate gets an
 explicit inventory exception, never a claim of completeness. Never attribute
 another session's files by guessing.
@@ -164,9 +165,8 @@ another session's files by guessing.
    section, heading through before the next heading, including newlines. Print
    actual/cap; fix overruns or report measured exceptions, never claim a pass.
    Backend blocks use adapter limits. Checkpoint ≤4,096; line ≤512; required
-   excerpts + freshness output ≤1,392; package ≤6,000 (about 2,000 tokens at
-   bytes/3, an estimate). Exclude auto-loaded instructions; count required
-   memory/plan reads. Denied/unavailable measurement is `UNCONFIRMED`; install
+   excerpts + freshness output ≤1,392; package ≤6,000 (about 2,000 tokens, estimated).
+   Exclude auto-loaded instructions; count required memory/plan reads. Denied/unavailable measurement is `UNCONFIRMED`; install
    nothing to measure.
 
 Print the result: artifacts with paths and bytes, package total, snapshot digest

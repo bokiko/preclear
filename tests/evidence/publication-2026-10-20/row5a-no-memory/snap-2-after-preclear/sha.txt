@@ -1,0 +1,4 @@
+c4021b54e76d7205f4734c2b3e8e3c7df3c93a46f72785d81629a431157a12df  project/.preclear/widget-export/checkpoint.md
+de73808ee04afcf4321ba54595e3e39b02a350da31916e8219801b2ac3e13d5f  project/CLAUDE.md
+74ac13e7f2323de6302dd01d03b595dc72de9a3ff4ac645f4c502e9690c74e82  project/thoughts/plans/2026-10-15-widget-export.md
+962e2ab8cfb8741f3fb50c3bfe39a4975d12fccf1ebf01e789d285e80d5e67a4  project/widget_export.py

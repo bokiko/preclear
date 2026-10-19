@@ -1,0 +1,1 @@
+- [widget-export JSON default](widget-export-json-default.md) — JSON default, CSV opt-in; supersedes 2026-10-15 CSV-first decision

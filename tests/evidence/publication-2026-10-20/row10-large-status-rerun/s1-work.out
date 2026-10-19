@@ -1,0 +1,3 @@
+I wrote step 2 in `widget_export.py`: four small pure functions, ending in `export_csv(widgets)`, which returns CSV text with the `id,name` columns, RFC 4180 quoting and CRLF line endings. Following the plan, it's CSV only; JSON is left for later.
+The repo had no code yet, so I chose Python myself. As you asked, I haven't run or tested anything, made no commit, and didn't start step 3.
+The plan checkbox is still unchecked so checkpointing can reconcile it.

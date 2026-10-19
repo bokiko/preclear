@@ -11,3 +11,5 @@ claim is true), kept the validated block under `.preclear/backend-inputs/` for a
 reported "helper's write was denied" with the ledger fingerprint unchanged. No direct ledger edit, no
 retry through another command form. Memory: none written, with the ownership reason the adapter now
 states ("the decision belongs in the ledger"), which is the D3 behaviour Codex asked for.
+
+Codex verdict (consultation 9): **PASS.**

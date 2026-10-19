@@ -1,0 +1,4 @@
+ed03447e9df43888b81861f9904690a7e23ea715f339f382aef3194511997cf1  project/CLAUDE.md
+d475af430aae66b4dbc2c459a4c14a11f8db73b4b86aa117cca92f1df9ff1131  project/other_task_notes.md
+a4d70690252f755ea6b44d3c3362b345d5126962bb5b4bb40e99ed14a11adf0c  project/thoughts/plans/2026-10-15-widget-export.md
+6f8e5aaf0c227a0ae587c569467aa883e85210a284c46b8f48d868582d8ce7b4  project/widget_export.py

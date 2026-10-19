@@ -22,8 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   review. The expanded publication matrix (wrong binding, double conflict, missing or denied
   helper, malformed configuration, no or disabled memory, read-only plan, all destinations
   denied, non-git, detached, unborn, linked worktree, hostile filenames, concurrent change,
-  frozen handoff) is in progress: rows 1–4 done, rows 5–12 pending. The repository stays
-  private until it completes and publication is explicitly approved.
+  frozen handoff) has run: all twelve rows reviewed, with rows 3a, 3b, 10 and 11 rerun after
+  fixes (see `tests/evidence/publication-2026-10-20/`). Known open content defect: row 7's
+  printed checkpoint carries an unsupported Do-not-redo entry. The repository stays private
+  until the public-content and history audit is accepted and publication is explicitly approved.
 - Harness rules in `tests/acceptance.md`: isolation preflight, per-stage snapshots,
   original-file measurements, memory-root pinning, correction-in-the-`/preclear`-turn.
 - Fixtures keep memory inside the project and ship a `runtime-settings.example.json`.
@@ -33,6 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `references/checkpoint-v1.md`: resume is read-only for continuity state (never bind outside
   setup), backend inputs live in `backend-inputs/`, read-only bootstrap note recommended
   beside the configuration block.
+- Publication matrix evidence (2026-10-20), rows 5–12: no or disabled memory, read-only plan,
+  all destinations denied, non-git, detached HEAD, unborn branch, linked worktree, large status
+  with hostile filenames, concurrent change during capture, frozen handoff with external edit,
+  resume and refresh. Every fresh resume made zero writes.
 - Publication matrix evidence (2026-10-20), rows 1–4: wrong active binding, two same-section
   conflicts, missing executable, denied helper write, unbound with `fallback_directory: none`,
   unknown backend, conflicting configuration blocks. Backend isolation and fallback policy held

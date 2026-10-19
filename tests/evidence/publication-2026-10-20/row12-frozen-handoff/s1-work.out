@@ -1,0 +1,3 @@
+I added step 2 as `widget_export.py`: `export_csv(widgets)` turns the widgets into CSV text with an `id,name` header, using the small helper `widget_row()`. It follows the plan's decision: CSV only, with JSON put off.
+The repo had no code from step 1 (only the plan), so I defined the columns in this file as `COLUMNS = ("id", "name")`. The project had no language set, so I chose Python.
+I didn't run any tests, commit, start step 3 or change the plan checkbox.

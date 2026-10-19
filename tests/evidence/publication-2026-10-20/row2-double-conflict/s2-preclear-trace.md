@@ -3,6 +3,11 @@
 - Bash: `ls -R .claude/skills/preclear && cat .claude/skills/preclear/references/configuration.md; pwd -P; git rev-parse --show-toplevel --git-dir --git-common-dir HEAD; git branch --show-current; git --no-optional-locks status --porcelain=v1 -z --untracked-files=all -`
     result: `This Bash command contains multiple operations. The following part requires approval: ls -R .claude/skills/preclear && cat .claude/skills/preclear/references/configuration.md; pwd -P; git rev-parse --`
 - Read: `<repo>/<run>/project/.claude/skills/preclear/references/configuration.md`
+    result: `1	# Preclear configuration
+2	
+3	Preclear needs no configuration. Without one it writes a plain checkpoint under
+4	`<project>/.preclear/<task-slug>/`. Configuration is for users who already have a
+5	le`
 - Bash: `git -C <repo>/<run>/project rev-parse --show-toplevel --git-dir --git-common-dir HEAD`
     result: `This command requires approval`
 - Bash: `git -C <repo>/<run>/project --no-optional-locks status --porcelain=v1 --branch --untracked-files=all --ignore-submodules=none`
@@ -19,9 +24,11 @@
 - Bash: `ls -l <repo>/<run>/wrapper/checkpoint <repo>/<run>/ledgers/; echo "SID=${CLAUDE_CODE_SESSION_ID:-unset}"`
 - Bash: `git status --porcelain=v1 --untracked-files=all`
 - Bash: `ls -l <repo>/<run>/wrapper/checkpoint <repo>/<run>/ledgers/`
+    result: `ls in '<repo>/<run>/wrapper/checkpoint' was blocked. For security, Claude Code may only list files in the allowed working directories for this session: '<repo>/<run>/project'.`
 - Bash: `<repo>/<run>/wrapper/checkpoint status`
 - Bash: `<repo>/<run>/wrapper/checkpoint show`
 - Bash: `ls -la <repo>/<run>/auto-memory/; shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md`
+    result: `ls in '<repo>/<run>/auto-memory' was blocked. For security, Claude Code may only list files in the allowed working directories for this session: '<repo>/<run>/project'.`
 - Glob: `*`
 - Bash: `shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md`
 - Edit: `<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md`
@@ -61,7 +68,7 @@ checkpoint: conflict: "Goal & current state" changed since your read. Nothing wr
 - Bash: `wc -c .preclear/widget-export/checkpoint.md; git rev-parse HEAD; git branch --show-current; git status --porcelain=v1 --untracked-files=all; shasum -a 256 widget_export.py thoughts/plans/2026-10-15-widget-export.md`
 - Bash: `wc -c widget_export.py thoughts/plans/2026-10-15-widget-export.md`
 
-Turns 42. Write/Edit calls 12: ['<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md', '<repo>/<run>/auto-memory/project-json-default-export.md', '<repo>/<run>/auto-memory/MEMORY.md', '<repo>/<run>/project/.preclear/backend-inputs/goal.md', '<repo>/<run>/project/.preclear/backend-inputs/decisions.md', '<repo>/<run>/project/.preclear/backend-inputs/blockers.md', '<repo>/<run>/project/.preclear/backend-inputs/auth.md', '<repo>/<run>/project/.preclear/backend-inputs/evidence.md', '<repo>/<run>/project/.preclear/backend-inputs/next.md', '<repo>/<run>/project/.preclear/backend-inputs/block.md', '<repo>/<run>/project/.preclear/backend-inputs/goal.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md']. Bash calls naming the configured executable: 11. Denied tool results: 5.
+Turns 42. Write/Edit calls 12: ['<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md', '<repo>/<run>/auto-memory/project-json-default-export.md', '<repo>/<run>/auto-memory/MEMORY.md', '<repo>/<run>/project/.preclear/backend-inputs/goal.md', '<repo>/<run>/project/.preclear/backend-inputs/decisions.md', '<repo>/<run>/project/.preclear/backend-inputs/blockers.md', '<repo>/<run>/project/.preclear/backend-inputs/auth.md', '<repo>/<run>/project/.preclear/backend-inputs/evidence.md', '<repo>/<run>/project/.preclear/backend-inputs/next.md', '<repo>/<run>/project/.preclear/backend-inputs/block.md', '<repo>/<run>/project/.preclear/backend-inputs/goal.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md']. Bash calls naming the configured executable: 11. Results flagged refusal/denial/EACCES/blocked (short filter; the full trace is authoritative): 8.
 Usage: input 46, cache creation 30734, cache read 1106178, output 15736.
 
 ## Final reply

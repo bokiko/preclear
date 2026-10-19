@@ -1,6 +1,11 @@
 # row3a-missing-executable-rerun: s2-preclear
 
 - Read: `<repo>/<run>/project/.claude/skills/preclear/references/configuration.md`
+    result: `1	# Preclear configuration
+2	
+3	Preclear needs no configuration. Without one it writes a plain checkpoint under
+4	`<project>/.preclear/<task-slug>/`. Configuration is for users who already have a
+5	le`
 - Read: `<repo>/<run>/project/.claude/skills/preclear/references/checkpoint-v1.md`
     result: `1	# Backend: checkpoint-v1
 2	
@@ -40,7 +45,7 @@
 - Edit: `<repo>/<run>/project/.preclear/widget-export/checkpoint.md`
 - Bash: `LC_ALL=C awk '/^## /{if(n)print n": "b; n=$0; b=0} {b+=length($0)+1} END{print n": "b}' .preclear/widget-export/checkpoint.md; wc -c .preclear/widget-export/checkpoint.md`
 
-Turns 30. Write/Edit calls 6: ['<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md', '<repo>/<run>/auto-memory/widget-export-json-default.md', '<repo>/<run>/auto-memory/MEMORY.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md']. Bash calls naming the configured executable: 2. Denied tool results: 6.
+Turns 30. Write/Edit calls 6: ['<repo>/<run>/project/thoughts/plans/2026-10-15-widget-export.md', '<repo>/<run>/auto-memory/widget-export-json-default.md', '<repo>/<run>/auto-memory/MEMORY.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md', '<repo>/<run>/project/.preclear/widget-export/checkpoint.md']. Bash calls naming the configured executable: 2. Results flagged refusal/denial/EACCES/blocked (short filter; the full trace is authoritative): 7.
 Usage: input 26, cache creation 21146, cache read 612904, output 7367.
 
 ## Final reply
