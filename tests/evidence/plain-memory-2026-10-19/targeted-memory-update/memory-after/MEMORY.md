@@ -1,0 +1,1 @@
+- [widget-export](project_widget_export.md) - export format decision for sample-project (JSON default, CSV on request, since 2026-10-19)

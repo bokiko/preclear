@@ -18,6 +18,13 @@ Copy or symlink this folder to one of:
 The skill is invoked only by typing `/preclear`. It never fires on its own,
 because `SKILL.md` sets `disable-model-invocation: true`.
 
+**Existing installation:** a personal skill named `preclear` takes precedence
+over a project installation of the same name. Before testing or migrating, check
+which `SKILL.md` will load. Move an old installation outside every skill
+directory before replacing it; renaming its folder alone can leave a conflicting
+frontmatter name. Start a fresh session after changing the installation. Never
+delete or overwrite an existing installation automatically.
+
 ## Usage
 
 In this order:
@@ -29,6 +36,11 @@ In this order:
 
 preclear never runs `/clear` for you.
 
+After resuming, do the authorized next action and update the normal plan as
+needed. Leave the saved checkpoint unchanged; run `/preclear` again when you want
+a fresh verified checkpoint. A checkpoint records its capture time and goes stale
+as work proceeds.
+
 ## What it writes
 
 By default, one checkpoint file per task:
@@ -39,9 +51,9 @@ By default, one checkpoint file per task:
 
 Optional files next to it:
 
-- `checkpoint-<UTC-timestamp>.md`, a frozen copy. Written only for a handoff,
-  a move to another person, machine or worktree, a project rule, or shared
-  sessions. Never overwritten.
+- `checkpoint-<UTC-timestamp>-<4-char-random>.md`, a frozen copy. Written only
+  for a handoff, a move to another person, machine or worktree, a project rule,
+  or shared sessions. Never overwritten, nor are the sidecars it cites.
 - `status.txt`, a sidecar with the full `git status` when it is long.
 
 Other facts go to their existing owners (your memory files, your plan file) in
@@ -57,7 +69,9 @@ You decide whether to track it.
   6,000 bytes, roughly 2,000 tokens estimated as `ceil(bytes / 3)`.
 
 preclear prints the measured bytes. The token figure is an estimate, not a
-tokenizer count.
+tokenizer count. Byte measurement may be unavailable under your tool
+permissions; unchecked sizes are reported as `UNCONFIRMED`, and an estimate never
+certifies a cap.
 
 ## Configuration
 
@@ -67,22 +81,21 @@ Finding a helper or a ledger on disk never activates one.
 
 ## Safety
 
-Hard rules, verbatim from `SKILL.md`:
+Hard rules, as stated in `SKILL.md`:
 
 - **Git is read-only.** `git status`, `git log`, `git rev-parse`, `git branch`,
   `git diff` are fine. Never `commit`, `push`, `add`, `stash`, `checkout`,
   `reset`, `rm`, or anything that mutates git state or the index. This also
   binds any helper you call.
-- **Never delete files.** Update in place. Frozen snapshots are new files and are
-  never overwritten.
+- **Never delete files.** Update in place. Frozen snapshots and their sidecars are
+  new files and are never overwritten.
 - **Never run `/clear` or compact.** That is the user's move.
 - If something is genuinely unknown, write it down as `UNCONFIRMED` rather than
   guessing. A checkpoint that invents state is worse than one that admits gaps.
-- Never bypass a hook, edit a protected file through the shell, install anything,
-  change settings, or write a secret into any file.
-- Finding a tool, a ledger, or a plan file is evidence of a candidate, not
-  permission to use it. Only explicit configuration (Step 1, probe 4) activates a
-  backend.
+- Never bypass a hook, edit a protected file via the shell, install anything,
+  change settings, bind a session, or write a secret anywhere.
+- Anything merely found is a candidate. Only explicit configuration (probe 4)
+  activates a backend.
 - Convert relative dates to absolute.
 
 ## Limitations

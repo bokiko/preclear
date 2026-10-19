@@ -1,0 +1,2 @@
+- [Widget export defaults to JSON](widget-export-json-default.md) — consumer moved to JSON API; CSV only on request
+- [Widget-export: no tests, no commits until told](widget-export-no-tests-no-commit.md) — standing rule for the task
