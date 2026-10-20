@@ -46,6 +46,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- README restructured to the RepoFix repository standard (wave header, badge rows, feature and
+  tech tables, architecture diagram, structure tree, collapsible configuration, roadmap, footer);
+  `.gitignore` gained the universal OS/IDE/environment block; `.github/` issue and pull request
+  templates added. No skill or reference content changed.
 - `SKILL.md` Step 4 after publication rows 1–4: artifacts are measured by command, UTF-8 bytes
   of the final file and of each section including its heading line, printed as actual/cap; an
   overrun is a measured exception, never a passed check; plain checkpoints start at the first

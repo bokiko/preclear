@@ -1,5 +1,27 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs (reviewed, sanitized helper and git call logs in tests/evidence stay tracked)
+*.log
+logs/
+!tests/evidence/**/*.log
+
 # Local Claude Code hook state, not part of the skill
 .backups/
 .claude/tsc-cache/
+.claude/cache/
+
 # Local test run roots (evidence is copied into tests/evidence)
 runs/
