@@ -100,13 +100,53 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled by roadmap) | | |
+| PUB-01 | Phase 1 | Pending |
+| PUB-02 | Phase 1 | Pending |
+| PUB-03 | Phase 1 | Pending |
+| PUB-04 | Phase 1 | Pending |
+| PUB-05 | Phase 1 | Pending |
+| PUB-06 | Phase 1 | Pending |
+| PUB-07 | Phase 1 | Pending |
+| HARN-01 | Phase 3 | Pending |
+| HARN-02 | Phase 3 | Pending |
+| HARN-03 | Phase 2 | Pending |
+| HARN-04 | Phase 2 | Pending |
+| HARN-05 | Phase 3 | Pending |
+| HARN-06 | Phase 2 | Pending |
+| HARN-07 | Phase 3 | Pending |
+| HARN-08 | Phase 2 | Pending |
+| HARN-09 | Phase 3 | Pending |
+| HARN-10 | Phase 4 | Pending |
+| HARN-11 | Phase 4 | Pending |
+| HARN-12 | Phase 4 | Pending |
+| HARN-13 | Phase 3 | Pending |
+| HARN-14 | Phase 2 | Pending |
+| STUB-01 | Phase 2 | Pending |
+| STUB-02 | Phase 2 | Pending |
+| STUB-03 | Phase 2 | Pending |
+| STUB-04 | Phase 2 | Pending |
+| STUB-05 | Phase 2 | Pending |
+| STUB-06 | Phase 2 | Pending |
+| STUB-07 | Phase 2 | Pending |
+| EVID-01 | Phase 2 | Pending |
+| EVID-02 | Phase 2 | Pending |
+| EVID-03 | Phase 2 | Pending |
+| EVID-04 | Phase 3 | Pending |
+| EVID-05 | Phase 3 | Pending |
+| EVID-06 | Phase 3 | Pending |
+| EVID-07 | Phase 2 | Pending |
+| RERUN-01 | Phase 4 | Pending |
+| RERUN-02 | Phase 4 | Pending |
+| RERUN-03 | Phase 4 | Pending |
+| RERUN-04 | Phase 4 | Pending |
+| RERUN-05 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 40 total
-- Mapped to phases: 0
-- Unmapped: 40 ⚠️
+- Mapped to phases: 40
+- Unmapped: 0
+- Phase 1: 7, Phase 2: 16, Phase 3: 9, Phase 4: 8
 
 ---
 *Requirements defined: 2026-10-21*
-*Last updated: 2026-10-21 after initial definition*
+*Last updated: 2026-10-21 after roadmap creation*
