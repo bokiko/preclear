@@ -28,6 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Publication Gate
+
 **Goal:** The repository is public on GitHub with nothing unreviewed in its history, tree or live settings, and the visibility changes only after bokiko says so in the conversation.
 **Mode:** mvp
 **Depends on:** Nothing (first phase)
@@ -38,16 +39,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A seeded fake leak is blocked by the pre-commit hook and by the pre-push hook, the seeded commit never reaches history, and the hook configuration is committed so a fresh clone can enable it with one documented command. (PUB-03)
   4. The README or CHANGELOG discloses row 7's known defect, the carried-forward rows (1, 2, 3c, 4b on the pre-fix digest) and the never-executed NUL `-z` form, and this disclosure is committed before the flip. A recorded live-repo inventory (refs, tags, hooks, issues, PRs, deploy keys, Actions history, wiki, pages) taken in the same session as the flip shows nothing unreviewed. (PUB-05, PUB-06)
   5. After bokiko's explicit go-word, `gh repo view` reports the repository as public, and secret scanning and push protection are reported enabled right after. Before that word the repository is still private. (PUB-07)
-**Plans:** 3 plans
+
+**Plans:** 4 plans
 
 Plans:
-- [ ] 01-01: Record owner decisions in `PROJECT.md`; pin repo-local identity and `user.useConfigOnly`; pre-push identity and attribution-trailer check (PUB-01, PUB-04)
-- [ ] 01-02: Scan configuration and accepted-finding list; committed pre-commit and pre-push hooks proven by a seeded fake leak; full-history `--mirror` scan (PUB-02, PUB-03)
-- [ ] 01-03: Row 7 and carry-forward disclosures; live-repo inventory; visibility-flip checkpoint, executed only on bokiko's explicit word; enable secret scanning and push protection (PUB-05, PUB-06, PUB-07)
+**Wave 1**
+- [ ] 01-01-PLAN.md — Tracer: pre-push hook set that refuses one seeded leak and one wrong-identity push in a throwaway clone; attribution-trailer gate; pin repo-local identity and `user.useConfigOnly`; record the three owner decisions in `PROJECT.md` (PUB-01, PUB-03, PUB-04)
 
-**Hard-rule gate:** The visibility flip (PUB-07) and any history rewrite happen only on bokiko's explicit word in the conversation. They never run inside an autonomous execution, a script, or a subagent. Plan 01-03 ends at a go or no-go checkpoint and stops there. The recorded decision is no rewrite, so a new finding in the scan halts the phase and goes to bokiko. A rewrite is not a fallback the executor may choose.
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 01-02-PLAN.md — Full scan rules and 15-fingerprint accepted-finding list; pre-commit hook and local deny-list check; hooks README and fresh-clone one-command enable (PUB-02, PUB-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 01-03-PLAN.md — Read-only pre-flip tool (fresh `--mirror` scan, identity and trailer checks, live-repo inventory); row 7, carry-forward, shipped-digest and NUL `-z` disclosures (PUB-02, PUB-05, PUB-06)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 01-04-PLAN.md — Human-gated push, recorded pre-flip scan and inventory, go or no-go checkpoint; visibility flip and protections run only on bokiko's explicit word, then the read-back is recorded in a committed file and checked (PUB-02, PUB-05, PUB-07)
+
+**Hard-rule gate:** The visibility flip (PUB-07) and any history rewrite happen only on bokiko's explicit word in the conversation. They never run inside an autonomous execution, a script, or a subagent. Plan 01-04 stops at a go or no-go checkpoint first; only after that word does the main conversation (never a subagent) run the flip, and it then records the read-back in a committed file that a read-only task checks. The recorded decision is no rewrite, so a new finding in the scan halts the phase and goes to bokiko. A rewrite is not a fallback the executor may choose.
 
 ### Phase 2: Model-Free Foundation and Stub
+
 **Goal:** A stranger with only Claude Code, git and Python 3 can run a zero-token self-test suite that proves the stub helper, run-root allocator, snapshotter, measurer, sanitizer, leak gate and allowlist check, and two spikes have decided the pinned flags and the isolation mode.
 **Mode:** mvp
 **Depends on:** Phase 1 (every commit from here on is public history and must pass the Phase 1 gates)
@@ -58,6 +69,7 @@ Plans:
   3. Conflict injection and call logging come from a wrapper outside the stub. A scripted double-conflict replay of row 2 shows exit 3 twice and then success after a manual merge, and `bind`, `create` and `init` appear in no model-facing allowlist (checked by the allowlist self-test). (STUB-04, STUB-06)
   4. The spike findings (isolation mode, flag semantics, `init` manifest, session-id handling) are committed with a real captured stream-json fixture. One committed flag table pins every `claude -p` behaviour. The version gate refuses a simulated untested version with a distinct exit code. The allowlist self-test matches the skill's exact commands taken from committed traces. A synthetic `permission_denied` event or `permission_denials` entry fails a row, and a reply that merely contains the word "denied" does not. (HARN-04, HARN-06)
   5. Run-root creation is exclusive: a second creation of the same path is an error, and nothing in the harness deletes or overwrites a run root. The sanitizer builds its deny-list at run time from the live machine, and a seeded leak makes both the leak gate and `promote` refuse to copy into `tests/evidence/`. A scan of the harness imports finds only the standard library, and the bash entry shims run under bash 3.2. (HARN-03, HARN-14, EVID-02, EVID-03)
+
 **Plans:** 3 plans
 
 Plans:
@@ -66,6 +78,7 @@ Plans:
 - [ ] 02-03: Exclusive run-root allocator; NUL-safe snapshots and manifests; measurer; runtime-built sanitizer; leak gate and `promote`; self-test suite wiring (HARN-03, HARN-08, HARN-14, EVID-01, EVID-02, EVID-03, EVID-07)
 
 ### Phase 3: Walking Skeleton (Row 1)
+
 **Goal:** One row, row 1 (wrong binding), runs end to end through the real `claude -p` against the stub from a single command, is filed as sanitized evidence in a new dated folder with mechanical facts only, and lines up structurally with the committed row 1 evidence.
 **Mode:** mvp
 **Depends on:** Phase 2
@@ -76,6 +89,7 @@ Plans:
   3. The `system/init` manifest is asserted on the run (the `preclear` skill is listed, the permission mode is as pinned, the memory paths are as set) and the isolation mode is recorded as decided by spike S1. The write-boundary and git-read-only checks are derived from snapshots and traces: they report zero writes outside approved roots and zero git mutations on the real run, and they FAIL on a fixture run seeded with an out-of-root write. (HARN-07, HARN-09)
   4. The row README ends with `Reviewer verdict: PENDING` and a checklist of mechanical facts, and no filed file from the harness contains an accepted, passed or failed verdict. (EVID-05)
   5. The read-only comparer prints per-row differences between the rerun and `tests/evidence/publication-2026-10-20/row1-wrong-binding`, and tree digests of both evidence trees are identical before and after it runs. `git diff` shows `SKILL.md`, `references/` and `tests/fixtures/` unchanged, `SKILL.md` is at or under 12,000 bytes, and all new code sits under `tests/harness/`. (EVID-06, HARN-13)
+
 **Plans:** 3 plans
 
 Plans:
@@ -86,6 +100,7 @@ Plans:
 **Exit output:** This phase reports the measured cost of one row, which gives the first real cost figure. Phase 4's spend is confirmed from that figure.
 
 ### Phase 4: Full Matrix, Row 7 and Review
+
 **Goal:** A stranger clones the public repository, runs the free self-test, and then the full matrix (three layouts plus every publication row) on a pinned model. The result is filed as a new dated baseline that Codex has reviewed, and row 7 has been rerun three times with its defect visible in a review table, not hidden.
 **Mode:** mvp
 **Depends on:** Phase 3
@@ -96,6 +111,7 @@ Plans:
   3. From a fresh clone in a never-used path, with a minimal environment, no `runs/` folder and the private helper unreachable, `--all` produces one folder per entry in `--list`. The wrapper logs show every helper call resolved to the stub, and none to the private helper. (RERUN-02)
   4. A new dated evidence folder holds a per-row digest table, the measured cost per row and a label that the run is a new baseline on the pinned model. It also holds the comparer's per-row differences against `tests/evidence/publication-2026-10-20/`, and every file passed the leak gate. Codex's per-row verdicts, from a review in a visible Herdr tab, are recorded in it before any acceptance claim is made. (RERUN-03, RERUN-04)
   5. `tests/harness/README.md` states the prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), the measured cost, the supported platforms and what a pass proves. `tests/acceptance.md` and `CHANGELOG.md` both point to it. (RERUN-05)
+
 **Plans:** 3 plans
 
 Plans:
@@ -119,7 +135,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Publication Gate | 0/3 | Not started | - |
+| 1. Publication Gate | 0/4 | Not started | - |
 | 2. Model-Free Foundation and Stub | 0/3 | Not started | - |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
