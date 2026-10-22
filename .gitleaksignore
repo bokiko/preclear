@@ -1,0 +1,17 @@
+# Accepted historical findings (owner decision 2026-10-21, see .planning/PROJECT.md Key Decisions).
+# Home-folder path lines in commit d437af2 (11 lines in 10 evidence files), immutable history.
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/conflict/digests.txt:home-path-unix:4
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/conflict/s2-preclear-conflict-trace.md:home-path-dash-slug:7
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/conflict/s2-preclear-conflict-trace.md:home-path-unix:7
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/main/digests.txt:home-path-unix:4
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/main/s2-preclear-trace.md:home-path-unix:12
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/main/s2-preclear-trace.md:home-path-unix:16
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19-rerun/main/s4-preclear-unbound-trace.md:home-path-unix:10
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/fallback-none/s2-preclear-trace.md:home-path-dash-slug:22
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/fallback-none/s2-preclear-trace.md:home-path-unix:22
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/main/digests.txt:home-path-unix:3
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/main/s2-preclear-trace.md:home-path-dash-slug:19
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/main/s2-preclear-trace.md:home-path-unix:19
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/main/s3-fresh-resume-trace.md:home-path-unix:5
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/main/s4-preclear-unbound-trace.md:home-path-dash-slug:8
+d437af2ef754f0521e6da7377a64c0684faf7b37:tests/evidence/bound-ledger-2026-10-19/main/s4-preclear-unbound-trace.md:home-path-unix:8

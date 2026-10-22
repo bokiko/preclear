@@ -1,4 +1,55 @@
-title = "preclear scan config"
+title = "preclear public-release scan"
 
 [extend]
 useDefault = true
+
+[[rules]]
+id = "home-path-unix"
+description = "Home-folder path with a user name segment (macOS or Linux)"
+regex = '''/(?:Users|home)/[A-Za-z0-9._-]{1,64}/'''
+tags = ["identifier", "path"]
+
+[[rules]]
+id = "home-path-dash-slug"
+description = "Claude Code dash-slug of a home-folder path"
+regex = '''-(?:Users|home)-[A-Za-z0-9._]{1,64}-'''
+tags = ["identifier", "path"]
+
+[[rules]]
+id = "mac-temp-root"
+description = "macOS per-user temp root"
+regex = '''/(?:private/)?var/folders/[A-Za-z0-9_]{2}/'''
+tags = ["identifier", "path"]
+
+[[rules]]
+id = "private-ipv4"
+description = "RFC1918 or CGNAT (Tailscale) IPv4 address"
+regex = '''(?:^|[^0-9.])((?:10\.[0-9]{1,3}|192\.168|172\.(?:1[6-9]|2[0-9]|3[01])|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.[0-9]{1,3}\.[0-9]{1,3})(?:[^0-9]|$)'''
+secretGroup = 1
+tags = ["identifier", "network"]
+
+[[rules]]
+id = "internal-hostname"
+description = "Hostname under a private or mDNS suffix"
+regex = '''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)'''
+tags = ["identifier", "host"]
+
+[[rules]]
+id = "email-address"
+description = "Any email address; the public identity is allowlisted below"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''
+tags = ["identifier", "email"]
+
+[[allowlists]]
+description = "The public identity address may appear in planning documents"
+condition = "AND"
+targetRules = ["email-address"]
+paths = ['''(?:^|/)\.planning/.+\.md$''']
+regexes = ['''^bokiko@gmail\.com$''']
+regexTarget = "match"
+
+[[allowlists]]
+description = "Reserved or role-account domains are not personal identifiers"
+targetRules = ["email-address"]
+regexes = ['''@(?:(?:[A-Za-z0-9-]+\.)*example\.(?:com|org|net|test)|users\.noreply\.github\.com|anthropic\.com)$''']
+regexTarget = "match"
