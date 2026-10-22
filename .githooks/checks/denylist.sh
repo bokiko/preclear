@@ -6,7 +6,14 @@
 # file names only: an entry or a matched line is never printed.
 # Usage: denylist.sh --staged         check the staged diff (pre-commit)
 #        denylist.sh RANGES_FILE      check each "ref<TAB>range" line (pre-push fan-out)
+#        denylist.sh --history GITDIR check every added line in all refs of GITDIR (pre-flip scan;
+#                                     the entries still come from the repository you run it in)
 mode=$1
+histdir=
+if [ "$mode" = --history ]; then
+  if [ -n "$2" ] && [ -d "$2" ]; then histdir=$(cd "$2" && pwd -P); fi
+  [ -n "$histdir" ] || { echo "denylist check FAILED (history): git directory not readable" >&2; exit 1; }
+fi
 cd "$(git rev-parse --show-toplevel)" || exit 1
 raw=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 list=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
@@ -53,6 +60,15 @@ case $mode in
       printf '%s\n' "$hits" | while IFS=$tab read -r file n; do
         echo "denylist check FAILED: $file ($n added line(s) match a local deny-list entry)" >&2
       done
+      rc=1
+    fi
+    ;;
+  --history)
+    git --git-dir="$histdir" log -p -U0 --format= --all --no-color --no-ext-diff --no-textconv > "$diffout" \
+      || { echo "denylist check FAILED (history): could not read the history" >&2; exit 1; }
+    n=$(count_hits < "$diffout" | awk -F"$tab" '{ s += $2 } END { print s + 0 }')
+    if [ "$n" -gt 0 ]; then
+      echo "denylist check FAILED (history): $n added line(s) match a local deny-list entry" >&2
       rc=1
     fi
     ;;

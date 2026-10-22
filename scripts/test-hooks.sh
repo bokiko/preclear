@@ -390,6 +390,41 @@ case_fresh_clone_enable_blocks_seed() {
   reset_in "$W3" "$head_before"; rm -f "$W3/seed-fresh.txt"
 }
 
+# ---- pre-flip tool negative control ----
+# The tool must be able to FAIL. A local-path clone of the real repository (origin removed at
+# once) gets one commit under a foreign identity that holds the run-time-built seed. The tool
+# runs from the real repository with that clone as its source and must refuse on the three
+# checks named below. The commit goes through scratch_commit without its skip mode, after the
+# guard asserted the clone's toplevel is under the throwaway directory (T-01-26). The seed is
+# never printed, and the case checks that the tool did not print it either.
+W4="$TP/prepublish"
+case_prepublish_detects_seed_and_foreign_identity() {
+  if ! git clone -q "$REPO" "$W4" 2>/dev/null; then
+    fail prepublish-detects-seed-and-foreign-identity "the local clone of the repository failed"; return
+  fi
+  git -C "$W4" remote remove origin
+  assert_scratch "$W4"
+  write_seed "$W4/seed-prepublish.txt"
+  git -C "$W4" add seed-prepublish.txt
+  (
+    GIT_AUTHOR_NAME=Intruder; GIT_AUTHOR_EMAIL=intruder@example.org
+    GIT_COMMITTER_NAME=Intruder; GIT_COMMITTER_EMAIL=intruder@example.org
+    export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+    scratch_commit "$W4" "Add a seed file under a foreign identity"
+  )
+  seed_value=$(sed 's/^aws_key = //' "$W4/seed-prepublish.txt")
+  out=$(cd "$REPO" && sh scripts/prepublish-check.sh --rehearse --skip-inventory --source "$W4" 2>&1); rc=$?
+  why=
+  [ "$rc" -ne 0 ] || why="$why the tool exited 0;"
+  for chk in gate-clean strict-equals-accepted one-identity; do
+    printf '%s\n' "$out" | grep -q "^FAIL $chk" || why="$why no FAIL line for $chk;"
+  done
+  if printf '%s\n' "$out" | grep -q -F "$seed_value"; then why="$why the tool printed the seed;"; fi
+  if [ -z "$why" ]; then pass prepublish-detects-seed-and-foreign-identity
+  else fail prepublish-detects-seed-and-foreign-identity "$why"; printf '%s\n' "$out" | tail -n 10
+  fi
+}
+
 # Last case: nothing in the real repository moved, and the guard is not vacuous.
 case_real_origin_refs_unchanged() {
   origin_end=$(git -C "$REPO" for-each-ref refs/remotes/origin | cksum)
@@ -418,6 +453,7 @@ case_denylist_precommit
 case_fail_closed_no_scanner
 case_fresh_clone_hooks_off_by_default
 case_fresh_clone_enable_blocks_seed
+case_prepublish_detects_seed_and_foreign_identity
 case_real_origin_refs_unchanged
 
 echo "throwaway directory (kept): $T"
