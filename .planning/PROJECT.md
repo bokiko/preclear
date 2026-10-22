@@ -72,8 +72,9 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 | Ship a test-only stub helper for backend rows | Lets strangers run the full matrix without the private helper; real helper stays private | — Pending |
 | Done means a full matrix rerun from a clean clone | Committed scripts alone would not prove reproducibility | — Pending |
 | No CI this milestone | API-key secret and per-run token cost; local reproducibility first | — Pending |
-| No history rewrite; `bokiko <bokiko@gmail.com>` stays the public identity (2026-10-21) | The ten d437af2 lines reveal only a folder name; the address is already the public GitHub identity; SHA citations stay valid | — Pending |
-| Row 7 ships as a disclosed known issue, rerun three times in this milestone | A single clean run cannot show a stochastic defect is fixed | — Pending |
+| No history rewrite (2026-10-21) | The d437af2 commit adds eleven home-folder path lines across ten files (measured 2026-10-21; earlier text said ten lines); they reveal only a folder name and SHA citations stay valid; the scan accepts exactly those 15 fingerprints through `.gitleaksignore`, and a new finding halts the phase and goes to bokiko | Decided 2026-10-21 |
+| `bokiko <bokiko@gmail.com>` is the public identity (2026-10-21) | The address is already the public GitHub identity; all 14 pre-phase commits carry it as the only author and committer; each clone pins it with `user.useConfigOnly` and `preclear.pinnedIdentity` | Decided 2026-10-21 |
+| Row 7 ships as a disclosed known issue, rerun three times in this milestone (2026-10-21) | A single clean run cannot show a stochastic defect is fixed | Decided 2026-10-21 |
 | Row 10 keeps the quoted-porcelain fallback; no policy exception for the NUL form (2026-10-21) | The fallback is documented behaviour; widening headless policy for one row proves less than it costs | — Pending |
 | Rerun pins one full model id and is labelled a new baseline (2026-10-21) | The 2026-10-20 evidence never recorded its model, so replication is impossible to claim | — Pending |
 | Conflict injection and logging composed outside the stub (2026-10-21) | Three of four research files agree; the conflict row then proves the real hash guard | — Pending |
