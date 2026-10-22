@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Publication Gate
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-10-22T04:16:22.343Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-10-22T04:25:16.895Z"
 last_activity: 2026-10-22
 last_activity_desc: Phase 01 execution started
-state_head: 340dd6732ec42af19c1e88842a132f0a28550fca
+state_head: 0002f7a3496b69ab2527466cae5f314a4ca29650
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-21)
 ## Current Position
 
 Phase: 01 (Publication Gate) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-10-22 — Phase 01 execution started
 
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 5 min | 3 tasks | 10 files |
+| Phase 01 P02 | 6 min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Roadmap]: Phase 4 starts multi-run spend only after bokiko has seen the measured Phase 3 cost per row.
 - [Phase 01]: Identity and attribution checks run only in clones that set preclear.pinnedIdentity; the leak check runs everywhere
 - [Phase 01]: Hook checks fail closed: a failed git log or a missing attribution pattern file refuses the push
+- [Phase 01]: Public-address allowlist matches .planning markdown at any depth so git-mode and directory-mode scans agree
+- [Phase 01]: Deny-list check parses the diff stream in one awk pass, so unusual file names cannot make it skip a file
 
 ### Pending Todos
 
@@ -95,6 +98,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-22T04:16:22.329Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-10-22T04:25:16.882Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
