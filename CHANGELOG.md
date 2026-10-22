@@ -24,8 +24,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   denied, non-git, detached, unborn, linked worktree, hostile filenames, concurrent change,
   frozen handoff) has run: all twelve rows reviewed, with rows 3a, 3b, 10 and 11 rerun after
   fixes (see `tests/evidence/publication-2026-10-20/`). Known open content defect: row 7's
-  printed checkpoint carries an unsupported Do-not-redo entry. The repository stays private
-  until the public-content and history audit is accepted and publication is explicitly approved.
+  printed checkpoint carries an unsupported Do-not-redo entry. Publication is gated on the
+  public-content and history audit and on bokiko's explicit approval; the audit is
+  reproducible with `.gitleaks.toml`, `.githooks/` and `scripts/prepublish-check.sh`.
 - Harness rules in `tests/acceptance.md`: isolation preflight, per-stage snapshots,
   original-file measurements, memory-root pinning, correction-in-the-`/preclear`-turn.
 - Fixtures keep memory inside the project and ship a `runtime-settings.example.json`.
@@ -43,6 +44,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   conflicts, missing executable, denied helper write, unbound with `fallback_directory: none`,
   unknown backend, conflicting configuration blocks. Backend isolation and fallback policy held
   in every row. Two defects led to the changes below and to targeted reruns of rows 3a and 3b.
+- Publication gate (2026-10-22): committed hooks in `.githooks/` (pre-commit, commit-msg, pre-push)
+  that scan for leaks and identifiers, pin the commit identity and check commit messages
+  for forbidden trailers, enabled per clone with `git config core.hooksPath .githooks`; the scan
+  configuration in `.gitleaks.toml` and `.gitleaksignore`; `scripts/test-hooks.sh`, which
+  proves the hooks in throwaway clones; and the read-only `scripts/prepublish-check.sh`,
+  which scans a fresh mirror and compares the live repository with a reviewed inventory.
+  The decisions are recorded in `.planning/PROJECT.md`.
+- Known issues disclosed in README.md (2026-10-22): row 7 (destination handling passed, evidence
+  integrity failed), rows 1, 2, 3c and 4b carried forward on the earlier digests, the shipped
+  skill digest that no matrix row ran, and the NUL `-z` status form that never executed.
 
 ### Changed
 

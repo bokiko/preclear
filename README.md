@@ -272,6 +272,34 @@ run leaves sanitized evidence in `tests/evidence/`.
 
 ---
 
+## Known issues and limits
+
+- **Row 7 (all destinations denied):** destination handling passed; evidence integrity
+  failed (Codex verdict). The printed checkpoint lists a "workspace policy/registry
+  checked" fact that no tool call in that turn supports. It is kept as produced. Three
+  reruns are planned, and the Roadmap item stays open.
+- **Rows 1, 2, 3c, 4b carry forward** from the first pass on skill `bbda28403d95` and
+  adapter `272838d4722d`. No edit changed the behaviour they test, and they have not
+  been rerun on later digests.
+- **Shipped skill digest not run:** matrix rows 5 to 12 and the reruns of 3a and 3b ran
+  skill `6d22a71e7f3c`. The shipped `SKILL.md` is `86e5b14e64b1`: wording edits and a
+  status-sidecar pointer were made in the same commit as rows 5 to 12. The planned full
+  rerun is the first run of the shipped text and will be filed as a new baseline.
+- **NUL `-z` status form never executed** under the headless tool policy (output
+  redirection needs approval). Rows 10 and 11 passed through the documented
+  quoted-porcelain fallback, so earlier acceptances are not exact-command tests for
+  that form.
+- **Smaller recorded defects:** the model's cap statements disagreed with the
+  independent manifest in 5 of 12 checkpoint-producing runs (D1), and row 12 recorded
+  one overrun (Resume reading 712 of 600 bytes).
+
+Details: `tests/evidence/publication-2026-10-20/README.md`. Reviewer verdicts there come
+from a Codex review and are recorded, not yet independently reproducible. That file also
+mentions an audit record that is not part of this repository. The reproducible check is
+`.gitleaks.toml` plus `scripts/prepublish-check.sh`.
+
+---
+
 ## Roadmap
 
 - [x] Plain-memory layout accepted after review (2026-10-19)
