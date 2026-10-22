@@ -237,7 +237,9 @@ case_unpinned_skips_identity() {
 # Every flagged value below is assembled at run time from separate words, so no line of this
 # file holds a complete home path, address, host name or deny-list token.
 # reset_w SHA: return the work repository to SHA after a case (scratch guard first).
-reset_w() { assert_scratch "$W"; git -C "$W" reset -q --hard "$1"; }
+# reset_in DIR SHA: the same for any scratch repository; reset_w is the work-repository form.
+reset_in() { assert_scratch "$1"; git -C "$1" reset -q --hard "$2"; }
+reset_w() { reset_in "$W" "$1"; }
 
 case_leak_seed_precommit() {
   head_before=$(git -C "$W" rev-parse HEAD)
@@ -333,6 +335,61 @@ case_fail_closed_no_scanner() {
   fi
 }
 
+# ---- fresh-clone cases ----
+# A local-path clone of the real repository (no network). Its origin is removed at once, so
+# nothing in this clone can ever be pushed anywhere. Both seeded commits go through
+# scratch_commit without its skip mode: the first shows that hooks really are off in a fresh
+# clone, the second that the one documented command turns them on. The guard asserts the
+# clone's toplevel is under the throwaway directory and is not the real repository.
+W3="$TP/fresh"
+FRESH_OK=
+fresh_clone() {
+  [ -n "$FRESH_OK" ] && return 0
+  git clone -q "$REPO" "$W3" 2>/dev/null || return 1
+  git -C "$W3" remote remove origin
+  git -C "$W3" config user.name "Fresh Cloner"
+  git -C "$W3" config user.email fresh-cloner@example.com
+  scratch_ok "$W3" || return 1
+  FRESH_OK=yes
+}
+
+case_fresh_clone_hooks_off_by_default() {
+  if ! fresh_clone; then fail fresh-clone-hooks-off-by-default "the local clone of the repository failed"; return; fi
+  assert_scratch "$W3"
+  hp=$(git -C "$W3" config --get core.hooksPath)
+  head_before=$(git -C "$W3" rev-parse HEAD)
+  count_before=$(git -C "$W3" rev-list --count HEAD)
+  write_seed "$W3/seed-fresh.txt"
+  git -C "$W3" add seed-fresh.txt
+  out=$(scratch_commit "$W3" "Add a seed file" 2>&1); rc=$?
+  count_after=$(git -C "$W3" rev-list --count HEAD)
+  why=
+  [ -z "$hp" ] || why="$why core.hooksPath is already set;"
+  [ "$rc" -eq 0 ] || why="$why the seeded commit was refused (exit $rc);"
+  [ "$count_after" -eq $((count_before + 1)) ] || why="$why history count $count_before -> $count_after;"
+  if [ -z "$why" ]; then pass fresh-clone-hooks-off-by-default
+  else fail fresh-clone-hooks-off-by-default "$why"; printf '%s\n' "$out" | tail -n 6
+  fi
+  reset_in "$W3" "$head_before"; rm -f "$W3/seed-fresh.txt"
+}
+
+case_fresh_clone_enable_blocks_seed() {
+  if ! fresh_clone; then fail fresh-clone-enable-blocks-seed "the local clone of the repository failed"; return; fi
+  assert_scratch "$W3"
+  git -C "$W3" config core.hooksPath .githooks
+  head_before=$(git -C "$W3" rev-parse HEAD)
+  count_before=$(git -C "$W3" rev-list --count HEAD)
+  write_seed "$W3/seed-fresh.txt"
+  git -C "$W3" add seed-fresh.txt
+  out=$(scratch_commit "$W3" "Add a seed file" 2>&1); rc=$?
+  count_after=$(git -C "$W3" rev-list --count HEAD)
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'aws-access-token' && [ "$count_before" = "$count_after" ]
+  then pass fresh-clone-enable-blocks-seed
+  else fail fresh-clone-enable-blocks-seed "exit $rc, history count $count_before -> $count_after, expected a refusal naming rule aws-access-token"; printf '%s\n' "$out" | tail -n 6
+  fi
+  reset_in "$W3" "$head_before"; rm -f "$W3/seed-fresh.txt"
+}
+
 # Last case: nothing in the real repository moved, and the guard is not vacuous.
 case_real_origin_refs_unchanged() {
   origin_end=$(git -C "$REPO" for-each-ref refs/remotes/origin | cksum)
@@ -359,6 +416,8 @@ case_identifiers_precommit
 case_identifier_false_positive_guards
 case_denylist_precommit
 case_fail_closed_no_scanner
+case_fresh_clone_hooks_off_by_default
+case_fresh_clone_enable_blocks_seed
 case_real_origin_refs_unchanged
 
 echo "throwaway directory (kept): $T"
