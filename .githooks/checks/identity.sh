@@ -1,0 +1,26 @@
+#!/bin/sh
+# Identity check: every commit in each pushed range must carry the pinned identity as both
+# author and committer, and an annotated tag must carry it as tagger. The pin is the
+# repo-local git config key preclear.pinnedIdentity ("name <address>"). When the key is
+# unset (a stranger's clone) the check skips with a visible message; the leak check still runs.
+ranges=$1
+pinned=$(git config --local --get preclear.pinnedIdentity 2>/dev/null)
+if [ -z "$pinned" ]; then echo "identity check skipped: preclear.pinnedIdentity is not set in this clone" >&2; exit 0; fi
+tab=$(printf '\t'); rc=0
+while IFS=$tab read -r ref rev; do
+  # shellcheck disable=SC2086
+  ids=$(git log --format='%an <%ae>%n%cn <%ce>' $rev) \
+    || { echo "identity check FAILED for $ref (git log failed for range)" >&2; rc=1; continue; }
+  bad=$(printf '%s\n' "$ids" | sort -u | grep -v -x -F "$pinned")
+  case $ref in refs/tags/*)
+    # A lightweight tag has no tagger; only compare when a tagger name exists.
+    tname=$(git for-each-ref --format='%(taggername)' "$ref")
+    if [ -n "$tname" ]; then
+      t="$tname $(git for-each-ref --format='%(taggeremail)' "$ref")"
+      [ "$t" = "$pinned" ] || bad="$bad
+$t"
+    fi ;;
+  esac
+  [ -z "$bad" ] || { echo "identity check FAILED for $ref (pinned identity differs):" >&2; echo "$bad" >&2; rc=1; }
+done < "$ranges"
+exit $rc

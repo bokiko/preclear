@@ -1,0 +1,31 @@
+#!/bin/sh
+# pre-push hook: read the pushed refs from stdin once, write one "ref<TAB>range" line per
+# pushed ref to a temporary file, then run every executable checks/*.sh with that file as
+# its first argument. Any failing check refuses the push. Enable with:
+#   git config core.hooksPath .githooks
+# Arguments: $1 remote name, $2 remote url.
+# Stdin lines: <local ref> <local sha> <remote ref> <remote sha>
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$(git rev-parse --show-toplevel)" || exit 1
+remote=$1
+tab=$(printf '\t')
+ranges=$(mktemp "${TMPDIR:-/tmp}/preclear-ranges.XXXXXX") || exit 1
+trap 'rm -f "$ranges"' EXIT
+# shellcheck disable=SC2034
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # A deletion pushes the all-zero sha: nothing to check.
+  case $local_sha in *[!0]*) ;; *) continue ;; esac
+  # New ref: everything not already on this remote.
+  rev="$local_sha --not --remotes=$remote"
+  case $remote_sha in
+    *[!0]*) git cat-file -e "$remote_sha^{commit}" 2>/dev/null && rev="$remote_sha..$local_sha" ;;
+  esac
+  printf '%s%s%s\n' "$local_ref" "$tab" "$rev" >> "$ranges"
+done
+[ -s "$ranges" ] || exit 0
+rc=0
+for check in "$here"/checks/*.sh; do
+  [ -x "$check" ] || continue
+  "$check" "$ranges" || rc=1
+done
+exit $rc

@@ -1,0 +1,4 @@
+title = "preclear scan config"
+
+[extend]
+useDefault = true
