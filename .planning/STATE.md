@@ -1,18 +1,18 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 1
+current_phase: 01
 current_phase_name: Publication Gate
 status: executing
-stopped_at: Roadmap and state initialized; next step is planning Phase 1
-last_updated: "2026-10-21T21:35:45.469Z"
-last_activity: 2026-10-21
-last_activity_desc: Roadmap created, 40 of 40 v1 requirements mapped to 4 phases
-state_head: 56e155ceb14b8674a8a3d754038e1e9f8276cd14
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-10-22T04:16:22.343Z"
+last_activity: 2026-10-22
+last_activity_desc: Phase 01 execution started
+state_head: 340dd6732ec42af19c1e88842a132f0a28550fca
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 4
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-21)
 
 **Core value:** A fresh session resumes from the checkpoint without guessing: every fact it reads was verified when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
-**Current focus:** Phase 1 - Publication Gate
+**Current focus:** Phase 01 — Publication Gate
 
 ## Current Position
 
-Phase: 1 (Publication Gate) — READY TO EXECUTE
-Plan: not yet planned (roadmap estimates 3 plans)
+Phase: 01 (Publication Gate) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-10-21 - Roadmap created, 40 of 40 v1 requirements mapped to 4 phases
+Last activity: 2026-10-22 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 5 min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -64,6 +69,8 @@ Recent decisions affecting current work:
 - [Roadmap]: Visibility flip (PUB-07), any history rewrite and any deletion happen only on bokiko's explicit word in the conversation, never in an autonomous run.
 - [Roadmap]: Conflict injection and call logging live in a wrapper outside the stub (STUB-04); row 11's injector is a Phase 4 item (HARN-11).
 - [Roadmap]: Phase 4 starts multi-run spend only after bokiko has seen the measured Phase 3 cost per row.
+- [Phase 01]: Identity and attribution checks run only in clones that set preclear.pinnedIdentity; the leak check runs everywhere
+- [Phase 01]: Hook checks fail closed: a failed git log or a missing attribution pattern file refuses the push
 
 ### Pending Todos
 
@@ -88,6 +95,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-21
-Stopped at: Roadmap and state initialized; next step is planning Phase 1
+Last session: 2026-10-22T04:16:22.329Z
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
