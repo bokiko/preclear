@@ -233,6 +233,106 @@ case_unpinned_skips_identity() {
   fi
 }
 
+# ---- pre-commit cases ----
+# Every flagged value below is assembled at run time from separate words, so no line of this
+# file holds a complete home path, address, host name or deny-list token.
+# reset_w SHA: return the work repository to SHA after a case (scratch guard first).
+reset_w() { assert_scratch "$W"; git -C "$W" reset -q --hard "$1"; }
+
+case_leak_seed_precommit() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  count_before=$(git -C "$W" rev-list --count HEAD)
+  write_seed "$W/seed-precommit.txt"
+  git -C "$W" add seed-precommit.txt
+  out=$(scratch_commit "$W" "Add a seed file" 2>&1); rc=$?
+  count_after=$(git -C "$W" rev-list --count HEAD)
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'aws-access-token' && [ "$count_before" = "$count_after" ]
+  then pass leak-seed-precommit
+  else fail leak-seed-precommit "exit $rc, history count $count_before -> $count_after, expected a refusal naming rule aws-access-token"; printf '%s\n' "$out" | tail -n 6
+  fi
+  reset_w "$head_before"; rm -f "$W/seed-precommit.txt"
+}
+
+case_identifiers_precommit() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  count_before=$(git -C "$W" rev-list --count HEAD)
+  id_a=Users; id_b=devname; id_c=project
+  {
+    printf 'path=/%s/%s/%s/notes\n' "$id_a" "$id_b" "$id_c"
+    printf 'addr=%s.%s.%s.%s\n' 192 168 1 20
+    printf 'host=%s.%s\n' testbox local
+    printf 'mail=%s@%s\n' person mail.org
+  } > "$W/identifiers.txt"
+  git -C "$W" add identifiers.txt
+  out=$(scratch_commit "$W" "Add a file of identifiers" 2>&1); rc=$?
+  count_after=$(git -C "$W" rev-list --count HEAD)
+  why=
+  [ "$rc" -ne 0 ] || why="$why commit succeeded;"
+  [ "$count_before" = "$count_after" ] || why="$why history count $count_before -> $count_after;"
+  for rule in home-path-unix private-ipv4 internal-hostname email-address; do
+    printf '%s\n' "$out" | grep -q "$rule" || why="$why rule $rule not named;"
+  done
+  if [ -z "$why" ]; then pass identifiers-precommit
+  else fail identifiers-precommit "$why"; printf '%s\n' "$out" | tail -n 8
+  fi
+  reset_w "$head_before"; rm -f "$W/identifiers.txt"
+}
+
+case_identifier_false_positive_guards() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  count_before=$(git -C "$W" rev-list --count HEAD)
+  {
+    printf 'contact: someone@example.com\n'
+    printf 'contact: support@anthropic.com\n'
+    printf 'settings file: settings.local.json\n'
+    printf 'dependency: some-package@0.2.25\n'
+    printf 'prose: macOS keeps homes under /Users/ and Linux under /home/ in general.\n'
+  } > "$W/benign.txt"
+  git -C "$W" add benign.txt
+  out=$(scratch_commit "$W" "Add a file of benign look-alikes" 2>&1); rc=$?
+  count_after=$(git -C "$W" rev-list --count HEAD)
+  if [ "$rc" -eq 0 ] && [ "$count_after" -eq $((count_before + 1)) ]
+  then pass identifier-false-positive-guards
+  else fail identifier-false-positive-guards "exit $rc, history count $count_before -> $count_after, expected the commit to succeed"; printf '%s\n' "$out" | tail -n 8
+  fi
+  reset_w "$head_before"; rm -f "$W/benign.txt"
+}
+
+case_denylist_precommit() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  count_before=$(git -C "$W" rev-list --count HEAD)
+  deny_a=gnarly; deny_b=Wombat42
+  deny_token="${deny_a}${deny_b}"
+  deny_file="$W/.git/info/preclear-deny.txt"
+  printf '# local deny list for this throwaway clone\n%s\n' "$deny_token" > "$deny_file"
+  printf 'note about %s here\n' "$deny_token" > "$W/deny-hit.txt"
+  git -C "$W" add deny-hit.txt
+  out=$(scratch_commit "$W" "Add a file with a deny-list entry" 2>&1); rc=$?
+  count_after=$(git -C "$W" rev-list --count HEAD)
+  why=
+  [ "$rc" -ne 0 ] || why="$why commit succeeded;"
+  [ "$count_before" = "$count_after" ] || why="$why history count $count_before -> $count_after;"
+  printf '%s\n' "$out" | grep -q 'denylist check FAILED' || why="$why no denylist refusal message;"
+  if printf '%s\n' "$out" | grep -q -i -F "$deny_token"; then why="$why the output printed the entry;"; fi
+  if [ -z "$why" ]; then pass denylist-precommit
+  else fail denylist-precommit "$why"; printf '%s\n' "$out" | tail -n 8
+  fi
+  : > "$deny_file"
+  reset_w "$head_before"; rm -f "$W/deny-hit.txt"
+}
+
+case_fail_closed_no_scanner() {
+  if env PATH=/usr/bin:/bin sh -c 'command -v gitleaks' >/dev/null 2>&1; then
+    echo "SKIP fail-closed-no-scanner: gitleaks is on the system directories"
+    return
+  fi
+  out=$(cd "$W" && env PATH=/usr/bin:/bin sh .githooks/pre-commit 2>&1); rc=$?
+  if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -q 'gitleaks not found'
+  then pass fail-closed-no-scanner
+  else fail fail-closed-no-scanner "exit $rc, expected exit 1 saying gitleaks was not found"; printf '%s\n' "$out" | tail -n 4
+  fi
+}
+
 # Last case: nothing in the real repository moved, and the guard is not vacuous.
 case_real_origin_refs_unchanged() {
   origin_end=$(git -C "$REPO" for-each-ref refs/remotes/origin | cksum)
@@ -254,6 +354,11 @@ case_identity_wrong_tagger
 case_trailer_commit_msg
 case_trailer_bypassed_prepush
 case_unpinned_skips_identity
+case_leak_seed_precommit
+case_identifiers_precommit
+case_identifier_false_positive_guards
+case_denylist_precommit
+case_fail_closed_no_scanner
 case_real_origin_refs_unchanged
 
 echo "throwaway directory (kept): $T"

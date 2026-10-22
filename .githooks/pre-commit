@@ -1,0 +1,14 @@
+#!/bin/sh
+# pre-commit hook: scan the staged diff with gitleaks (default rules plus the identifier
+# rules in .gitleaks.toml), then run the local deny-list check. Both checks always run,
+# so there is no exec. Fails closed: a missing scanner stops the commit. Enable with:
+#   git config core.hooksPath .githooks
+here=$(cd "$(dirname "$0")" && pwd)
+command -v gitleaks >/dev/null 2>&1 || { echo "pre-commit FAILED: gitleaks not found (install it, then retry)" >&2; exit 1; }
+cd "$(git rev-parse --show-toplevel)" || exit 1
+rc=0
+# --exit-code 2 keeps a finding (2) apart from a tool error (1); any non-zero stops the commit.
+gitleaks git --staged --config .gitleaks.toml --no-banner --redact -v --exit-code 2 -l warn \
+  || { echo "pre-commit FAILED: leak check" >&2; rc=1; }
+"$here/checks/denylist.sh" --staged || rc=1
+exit $rc
