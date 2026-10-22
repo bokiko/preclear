@@ -40,7 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The README or CHANGELOG discloses row 7's known defect, the carried-forward rows (1, 2, 3c, 4b on the pre-fix digest) and the never-executed NUL `-z` form, and this disclosure is committed before the flip. A recorded live-repo inventory (refs, tags, hooks, issues, PRs, deploy keys, Actions history, wiki, pages) taken in the same session as the flip shows nothing unreviewed. (PUB-05, PUB-06)
   5. After bokiko's explicit go-word, `gh repo view` reports the repository as public, and secret scanning and push protection are reported enabled right after. Before that word the repository is still private. (PUB-07)
 
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 **Wave 1**
@@ -50,7 +50,7 @@ Plans:
 - [x] 01-02-PLAN.md — Full scan rules and 15-fingerprint accepted-finding list; pre-commit hook and local deny-list check; hooks README and fresh-clone one-command enable (PUB-02, PUB-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 01-03-PLAN.md — Read-only pre-flip tool (fresh `--mirror` scan, identity and trailer checks, live-repo inventory); row 7, carry-forward, shipped-digest and NUL `-z` disclosures (PUB-02, PUB-05, PUB-06)
+- [x] 01-03-PLAN.md — Read-only pre-flip tool (fresh `--mirror` scan, identity and trailer checks, live-repo inventory); row 7, carry-forward, shipped-digest and NUL `-z` disclosures (PUB-02, PUB-05, PUB-06)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 01-04-PLAN.md — Human-gated push, recorded pre-flip scan and inventory, go or no-go checkpoint; visibility flip and protections run only on bokiko's explicit word, then the read-back is recorded in a committed file and checked (PUB-02, PUB-05, PUB-07)
@@ -135,7 +135,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Publication Gate | 2/4 | In Progress | - |
+| 1. Publication Gate | 3/4 | In Progress | - |
 | 2. Model-Free Foundation and Stub | 0/3 | Not started | - |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |

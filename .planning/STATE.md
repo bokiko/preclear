@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Publication Gate
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-10-22T04:25:16.895Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-10-22T04:40:22.986Z"
 last_activity: 2026-10-22
 last_activity_desc: Phase 01 execution started
-state_head: 0002f7a3496b69ab2527466cae5f314a4ca29650
+state_head: c1ea15f6e8398eabb59206bb48db7a4a141816ec
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-21)
 ## Current Position
 
 Phase: 01 (Publication Gate) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-10-22 — Phase 01 execution started
 
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 |------|----------|-------|-------|
 | Phase 01 P01 | 5 min | 3 tasks | 10 files |
 | Phase 01 P02 | 6 min | 3 tasks | 6 files |
+| Phase 01 P03 | 12 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Hook checks fail closed: a failed git log or a missing attribution pattern file refuses the push
 - [Phase 01]: Public-address allowlist matches .planning markdown at any depth so git-mode and directory-mode scans agree
 - [Phase 01]: Deny-list check parses the diff stream in one awk pass, so unusual file names cannot make it skip a file
+- [Phase 01]: 01-03: the pre-flip tool runs the local deny-list check in history mode on the mirror, so a remote that predates the history mode is still scanned
+- [Phase 01]: 01-03: an inventory call that errors is reported as 'error' and fails the category, so unreachable state fails closed
+- [Phase 01]: 01-03: the shipped-digest-gap bullet in the README is drafted from verified facts; publishing it is bokiko's call at the 01-04 checkpoint
 
 ### Pending Todos
 
@@ -98,6 +102,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-22T04:25:16.882Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-10-22T04:40:22.972Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None

@@ -69,7 +69,7 @@ coverage:
         status: pass
     human_judgment: false
   - id: D3
-    description: "The live-repository inventory compares 25 categories with the reviewed baseline and reports UNREVIEWED for any deviation (seen to fire on an unrelated public repository; INVENTORY OK on this one)"
+    description: "The live-repository inventory compares 24 categories with the reviewed baseline and reports UNREVIEWED for any deviation (seen to fire on an unrelated public repository; INVENTORY OK on this one)"
     requirement: PUB-05
     verification:
       - kind: integration
@@ -115,7 +115,7 @@ status: complete
 
 - `scripts/prepublish-check.sh` clones a mirror into a new temporary directory and runs ten checks in the order the plan names, printing one PASS, SKIP or FAIL line each. Rehearsal on this repository passes every check, prints the tip-check skip line and INVENTORY OK.
 - The strict check compares the scan's fingerprint set to `.gitleaksignore` as a set with `python3 -I`, and asserts 15 members, commit `d437af2` only and the two home-path rules only. Output is counts only.
-- The inventory covers 25 categories (visibility, refs, tags, branches, hooks, keys, issues, pull requests, Actions runs, workflows, artifacts, secrets and variables, wiki, Pages, releases, forks, collaborators, invitations, environments, deployments, activity event types, an anonymous public probe). A deviating or erroring category prints FAIL and UNREVIEWED. INFO lines report the security setting, topic and label counts and the community health figure without asserting them.
+- The inventory covers 24 categories (visibility, refs, tags, branches, hooks, keys, issues, pull requests, Actions runs, workflows, artifacts, secrets and variables, wiki, Pages, releases, forks, collaborators, invitations, environments, deployments, activity event types, an anonymous public probe). A deviating or erroring category prints FAIL and UNREVIEWED. INFO lines report the security setting, topic and label counts and the community health figure without asserting them.
 - The record writer creates its file exclusively in default mode after a clean run, with the fixed layout 01-04 will verify. Rehearsal refuses `--record`.
 - `.githooks/checks/denylist.sh` has a history mode that counts added lines across all refs of a git directory and prints counts only.
 - The negative-control case (`prepublish-detects-seed-and-foreign-identity`) takes the suite to 18 PASS lines.
