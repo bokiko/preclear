@@ -28,6 +28,7 @@ if [ -z "$T" ] || [ ! -d "$T" ]; then echo "FAIL setup: no throwaway directory" 
 TP=$(cd "$T" && pwd -P)
 if [ -z "$TP" ] || [ ! -d "$TP" ]; then echo "FAIL setup: cannot resolve the throwaway directory" >&2; exit 1; fi
 W="$TP/work"
+W2="$TP/work2"
 R="$TP/remote.git"
 
 FAILS=0
@@ -60,20 +61,27 @@ scratch_commit() {
     git -C "$1" commit -q -m "$2"
   fi
 }
-# Push guard (T-01-08): the work repository's origin must sit inside the throwaway directory.
-push_work() {
-  origin_url=$(git -C "$W" remote get-url origin 2>/dev/null)
+# Push guard (T-01-08): the pushing repository's origin must sit inside the throwaway directory.
+push_in() {
+  push_dir=$1; shift
+  assert_scratch "$push_dir"
+  origin_url=$(git -C "$push_dir" remote get-url origin 2>/dev/null)
   case $origin_url in
     "$TP"/*) ;;
     *) echo "FAIL push-guard: origin is not inside the throwaway directory" >&2; kill -TERM "$$"; exit 1 ;;
   esac
-  git -C "$W" push "$@"
+  git -C "$push_dir" push "$@"
 }
 absent_on_remote() { ! git -C "$R" cat-file -e "${1}^{commit}" 2>/dev/null; }
-back_one() { assert_scratch "$W"; git -C "$W" reset -q --hard HEAD~1; }
+back_one() { assert_scratch "$1"; git -C "$1" reset -q --hard HEAD~1; }
+# The seed is assembled at run time from three fragments; no source line holds the whole key.
+write_seed() {
+  seed_a=AK; seed_b=IA; seed_c=QYLPMN5HHHFPZAM7
+  printf 'aws_key = %s%s%s\n' "$seed_a" "$seed_b" "$seed_c" > "$1"
+}
 
 # ---- setup: bare remote, work repo pinned to a fake owner identity, hooks copied in ----
-git init -q --bare "$R" || exit 1
+git init -q --bare -b main "$R" || exit 1
 git init -q -b main "$W" || exit 1
 git -C "$W" config user.name "Hook Owner"
 git -C "$W" config user.email hook-owner@example.com
@@ -88,7 +96,7 @@ git -C "$W" remote add origin "$R"
 
 # ---- tracer cases ----
 case_clean_push() {
-  out=$(push_work origin main 2>&1); rc=$?
+  out=$(push_in "$W" origin main 2>&1); rc=$?
   want=$(git -C "$W" rev-parse HEAD)
   got=$(git -C "$R" rev-parse refs/heads/main 2>/dev/null)
   if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then pass clean-push
@@ -106,23 +114,21 @@ case_identity_wrong_author_committer() {
     scratch_commit "$W" "Add a file under a foreign identity"
   )
   bad_sha=$(git -C "$W" rev-parse HEAD)
-  out=$(push_work origin main 2>&1); rc=$?
+  out=$(push_in "$W" origin main 2>&1); rc=$?
   if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'identity check FAILED' && absent_on_remote "$bad_sha"
   then pass identity-wrong-author-committer
   else fail identity-wrong-author-committer "exit $rc, expected a refusal naming the identity check with the commit absent"; printf '%s\n' "$out" | tail -n 6
   fi
-  back_one
+  back_one "$W"
 }
 
-# The seed is assembled at run time from three fragments; no source line holds the whole key.
 SEED_SHA=
 case_leak_seed_prepush() {
-  seed_a=AK; seed_b=IA; seed_c=QYLPMN5HHHFPZAM7
-  printf 'aws_key = %s%s%s\n' "$seed_a" "$seed_b" "$seed_c" > "$W/seed.txt"
+  write_seed "$W/seed.txt"
   git -C "$W" add seed.txt
   scratch_commit "$W" "Add a seed file" skip
   SEED_SHA=$(git -C "$W" rev-parse HEAD)
-  out=$(push_work origin main 2>&1); rc=$?
+  out=$(push_in "$W" origin main 2>&1); rc=$?
   if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'aws-access-token' && printf '%s\n' "$out" | grep -q 'leak check FAILED'
   then pass leak-seed-prepush
   else fail leak-seed-prepush "exit $rc, expected a refusal naming rule aws-access-token"; printf '%s\n' "$out" | tail -n 6
@@ -133,15 +139,101 @@ case_leak_seed_absent_on_remote() {
   if [ -n "$SEED_SHA" ] && absent_on_remote "$SEED_SHA"; then pass leak-seed-absent-on-remote
   else fail leak-seed-absent-on-remote "the seed commit '$SEED_SHA' is on the throwaway remote or was never made"
   fi
-  back_one
+  back_one "$W"
 }
 
-case_clean_push
-case_identity_wrong_author_committer
-case_leak_seed_prepush
-case_leak_seed_absent_on_remote
+# ---- attribution and identity cases ----
+case_identity_committer_only() {
+  printf 'committer only\n' > "$W/committer-only.txt"
+  git -C "$W" add committer-only.txt
+  (
+    GIT_COMMITTER_NAME=Intruder; GIT_COMMITTER_EMAIL=intruder@example.org
+    export GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+    scratch_commit "$W" "Add a file with a foreign committer"
+  )
+  bad_sha=$(git -C "$W" rev-parse HEAD)
+  out=$(push_in "$W" origin main 2>&1); rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'identity check FAILED' && absent_on_remote "$bad_sha"
+  then pass identity-committer-only
+  else fail identity-committer-only "exit $rc, expected a refusal naming the identity check with the commit absent"; printf '%s\n' "$out" | tail -n 6
+  fi
+  back_one "$W"
+}
 
-# Last tracer case: nothing in the real repository moved, and the guard is not vacuous.
+case_identity_wrong_tagger() {
+  assert_scratch "$W"
+  (
+    GIT_COMMITTER_NAME=Intruder; GIT_COMMITTER_EMAIL=intruder@example.org
+    export GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+    git -C "$W" tag -a tag-foreign -m "Tag under a foreign identity"
+  )
+  git -C "$W" tag -a tag-owner -m "Tag under the pinned identity"
+  git -C "$W" tag tag-light
+  out_bad=$(push_in "$W" origin refs/tags/tag-foreign 2>&1); rc_bad=$?
+  out_owner=$(push_in "$W" origin refs/tags/tag-owner 2>&1); rc_owner=$?
+  out_light=$(push_in "$W" origin refs/tags/tag-light 2>&1); rc_light=$?
+  why=
+  if [ "$rc_bad" -eq 0 ] || ! printf '%s\n' "$out_bad" | grep -q 'identity check FAILED'; then why="$why foreign tagger not refused (exit $rc_bad);"; fi
+  if [ "$rc_owner" -ne 0 ]; then why="$why annotated tag under the pin refused (exit $rc_owner);"; fi
+  if [ "$rc_light" -ne 0 ]; then why="$why lightweight tag refused (exit $rc_light);"; fi
+  if [ -z "$why" ]; then pass identity-wrong-tagger
+  else fail identity-wrong-tagger "$why"; printf '%s\n%s\n%s\n' "$out_bad" "$out_owner" "$out_light" | tail -n 12
+  fi
+}
+
+# The trailer key is built at run time so this file never holds a complete trailer line.
+TRAILER_KEY=Co-Authored
+TRAILER_KEY="${TRAILER_KEY}-By"
+trailer_message() { printf 'Add a note under test\n\n%s: A Helper <helper@example.org>\n' "$TRAILER_KEY"; }
+
+case_trailer_commit_msg() {
+  printf 'note\n' > "$W/note.txt"
+  git -C "$W" add note.txt
+  before=$(git -C "$W" rev-list --count HEAD)
+  msg=$(trailer_message)
+  out=$(scratch_commit "$W" "$msg" 2>&1); rc=$?
+  after=$(git -C "$W" rev-list --count HEAD)
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'commit-msg FAILED' && [ "$before" = "$after" ]
+  then pass trailer-commit-msg
+  else fail trailer-commit-msg "exit $rc, history count $before -> $after, expected a refusal naming commit-msg"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
+case_trailer_bypassed_prepush() {
+  msg=$(trailer_message)
+  scratch_commit "$W" "$msg" skip
+  bad_sha=$(git -C "$W" rev-parse HEAD)
+  out=$(push_in "$W" origin main 2>&1); rc=$?
+  if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'attribution check FAILED' && absent_on_remote "$bad_sha"
+  then pass trailer-bypassed-prepush
+  else fail trailer-bypassed-prepush "exit $rc, expected a refusal naming the attribution check with the commit absent"; printf '%s\n' "$out" | tail -n 6
+  fi
+  back_one "$W"
+}
+
+case_unpinned_skips_identity() {
+  git clone -q "$R" "$W2" || { fail unpinned-skips-identity "clone of the throwaway remote failed"; return; }
+  git -C "$W2" config user.name Intruder
+  git -C "$W2" config user.email intruder@example.org
+  git -C "$W2" config core.hooksPath .githooks
+  printf 'unpinned\n' > "$W2/unpinned.txt"
+  git -C "$W2" add unpinned.txt
+  scratch_commit "$W2" "Add a file from an unpinned clone"
+  out_ok=$(push_in "$W2" origin HEAD:refs/heads/unpinned 2>&1); rc_ok=$?
+  write_seed "$W2/seed.txt"
+  git -C "$W2" add seed.txt
+  scratch_commit "$W2" "Add a seed file from an unpinned clone" skip
+  out_leak=$(push_in "$W2" origin HEAD:refs/heads/unpinned 2>&1); rc_leak=$?
+  why=
+  if [ "$rc_ok" -ne 0 ]; then why="$why unpinned push refused (exit $rc_ok);"; fi
+  if ! printf '%s\n' "$out_ok" | grep -q 'identity check skipped'; then why="$why no visible skip message;"; fi
+  if [ "$rc_leak" -eq 0 ] || ! printf '%s\n' "$out_leak" | grep -q 'leak check FAILED'; then why="$why leak check not enforced (exit $rc_leak);"; fi
+  if [ -z "$why" ]; then pass unpinned-skips-identity
+  else fail unpinned-skips-identity "$why"; printf '%s\n%s\n' "$out_ok" "$out_leak" | tail -n 10
+  fi
+}
+
+# Last case: nothing in the real repository moved, and the guard is not vacuous.
 case_real_origin_refs_unchanged() {
   origin_end=$(git -C "$REPO" for-each-ref refs/remotes/origin | cksum)
   allrefs_end=$({ git -C "$REPO" rev-parse HEAD; git -C "$REPO" for-each-ref; } | cksum)
@@ -152,6 +244,16 @@ case_real_origin_refs_unchanged() {
   if scratch_ok "$REPO"; then why="$why guard accepted the real repository;"; fi
   if [ -z "$why" ]; then pass real-origin-refs-unchanged; else fail real-origin-refs-unchanged "$why"; fi
 }
+
+case_clean_push
+case_identity_wrong_author_committer
+case_leak_seed_prepush
+case_leak_seed_absent_on_remote
+case_identity_committer_only
+case_identity_wrong_tagger
+case_trailer_commit_msg
+case_trailer_bypassed_prepush
+case_unpinned_skips_identity
 case_real_origin_refs_unchanged
 
 echo "throwaway directory (kept): $T"

@@ -1,0 +1,11 @@
+#!/bin/sh
+# commit-msg hook: refuse a commit message that carries an AI attribution trailer. The
+# forbidden patterns live in attribution.ere next to this file, the single source of truth
+# shared with the pre-push attribution check. Argument: $1 path of the message file.
+here=$(cd "$(dirname "$0")" && pwd)
+# Git's own comment lines (a leading hash) are not part of the message.
+if grep -v '^#' "$1" | grep -q -i -E -f "$here/attribution.ere"; then
+  echo "commit-msg FAILED: attribution trailer found in the commit message" >&2
+  exit 1
+fi
+exit 0

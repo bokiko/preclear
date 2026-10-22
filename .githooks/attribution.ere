@@ -1,0 +1,4 @@
+^(co-authored-by|assisted-by|generated-by)[[:space:]]*:
+^(signed-off-by|reviewed-by)[[:space:]]*:.*(claude|anthropic|openai|codex|copilot|gemini)
+generated with .*(claude|codex|copilot|gemini)
+noreply@anthropic\.com
