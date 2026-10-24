@@ -18,7 +18,9 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 raw=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 list=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 diffout=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
-trap 'rm -f "$raw" "$list" "$diffout"' EXIT
+hitsout=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
+cand=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
+trap 'rm -f "$raw" "$list" "$diffout" "$hitsout" "$cand"' EXIT
 {
   hostname
   hostname -s
@@ -28,8 +30,14 @@ trap 'rm -f "$raw" "$list" "$diffout"' EXIT
 extra=$(git rev-parse --git-path info/preclear-deny.txt 2>/dev/null)
 if [ -n "$extra" ] && [ -r "$extra" ]; then
   grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$extra" >> "$raw"
+  # grep status 1 only means "no entry lines"; above 1 is a read error and must not pass.
+  [ $? -le 1 ] || { echo "denylist check FAILED: could not read the local deny list" >&2; exit 1; }
 fi
-awk '{ sub(/\r$/, ""); if (length($0) >= 4) print }' "$raw" | sort -u > "$list"
+# Every step that builds the list is checked: a failed awk or sort would leave an empty list
+# and the "no entries" skip below would then approve everything.
+awk '{ sub(/\r$/, ""); if (length($0) >= 4) print }' "$raw" > "$cand" \
+  && sort -u "$cand" > "$list" \
+  || { echo "denylist check FAILED: could not build the entry list" >&2; exit 1; }
 if [ ! -s "$list" ]; then echo "denylist check skipped: no entries" >&2; exit 0; fi
 
 # count_hits: read a unified diff on stdin, print "<file><TAB><n>" for every file with n
@@ -51,22 +59,35 @@ count_hits() {
 
 rc=0
 tab=$(printf '\t')
+# scan_diff: scan $diffout into $hitsout. A scanner that dies (out of memory, a locale error)
+# leaves no output, which must not read as "no hits": the status is checked and a failure
+# stops the check with a refusal.
+scan_diff() {
+  count_hits < "$diffout" > "$hitsout" || { echo "denylist check FAILED: scan error" >&2; exit 1; }
+}
+# sum_hits: total the counts in $hitsout into n, again refusing on a tool error.
+sum_hits() {
+  n=$(awk -F"$tab" '{ s += $2 } END { print s + 0 }' "$hitsout") \
+    || { echo "denylist check FAILED: scan error" >&2; exit 1; }
+  case $n in ''|*[!0-9]*) echo "denylist check FAILED: scan error" >&2; exit 1 ;; esac
+}
 case $mode in
   --staged)
     git diff --cached -U0 --no-color --no-ext-diff --no-textconv > "$diffout" \
       || { echo "denylist check FAILED: could not read the staged diff" >&2; exit 1; }
-    hits=$(count_hits < "$diffout")
-    if [ -n "$hits" ]; then
-      printf '%s\n' "$hits" | while IFS=$tab read -r file n; do
+    scan_diff
+    if [ -s "$hitsout" ]; then
+      while IFS=$tab read -r file n; do
         echo "denylist check FAILED: $file ($n added line(s) match a local deny-list entry)" >&2
-      done
+      done < "$hitsout"
       rc=1
     fi
     ;;
   --history)
     git --git-dir="$histdir" log -p -U0 --format= --all --no-color --no-ext-diff --no-textconv > "$diffout" \
       || { echo "denylist check FAILED (history): could not read the history" >&2; exit 1; }
-    n=$(count_hits < "$diffout" | awk -F"$tab" '{ s += $2 } END { print s + 0 }')
+    scan_diff
+    sum_hits
     if [ "$n" -gt 0 ]; then
       echo "denylist check FAILED (history): $n added line(s) match a local deny-list entry" >&2
       rc=1
@@ -78,7 +99,8 @@ case $mode in
       # shellcheck disable=SC2086
       git log -p -U0 --format= --no-color --no-ext-diff --no-textconv $rev > "$diffout" \
         || { echo "denylist check FAILED for $ref: could not read the range" >&2; rc=1; continue; }
-      n=$(count_hits < "$diffout" | awk -F"$tab" '{ s += $2 } END { print s + 0 }')
+      scan_diff
+      sum_hits
       if [ "$n" -gt 0 ]; then
         echo "denylist check FAILED for $ref: $n added line(s) match a local deny-list entry" >&2
         rc=1

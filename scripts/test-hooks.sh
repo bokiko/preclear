@@ -406,6 +406,40 @@ case_denylist_precommit() {
   reset_w "$head_before"; rm -f "$W/deny-hit.txt"
 }
 
+# A scanner that dies must refuse the commit, not read as "no hits". A shim in front of awk
+# fails the diff scan (first argument -v) or the entry-list step (a program starting with a
+# brace) and hands every other call to the real awk.
+case_denylist_awk_failure_fails() {
+  real_awk=$(command -v awk)
+  head_before=$(git -C "$W" rev-parse HEAD)
+  deny_file="$W/.git/info/preclear-deny.txt"
+  printf '%s\n' "gnarlyWombat42" > "$deny_file"
+  why=
+  for mode in scan list; do
+    shim="$TP/awkshim-$mode"
+    mkdir -p "$shim"
+    case $mode in scan) pat='-v' ;; *) pat='{*' ;; esac
+    {
+      printf '#!/bin/sh\n'
+      printf 'case $1 in %s) exit 2 ;; esac\n' "$pat"
+      printf 'exec "%s" "$@"\n' "$real_awk"
+    } > "$shim/awk"
+    chmod +x "$shim/awk"
+    printf 'a harmless note\n' > "$W/awk-note.txt"
+    git -C "$W" add awk-note.txt
+    count_before=$(git -C "$W" rev-list --count HEAD)
+    out=$( ( PATH="$shim:$PATH"; export PATH; scratch_commit "$W" "Add a harmless note" ) 2>&1 ); rc=$?
+    count_after=$(git -C "$W" rev-list --count HEAD)
+    if [ "$rc" -eq 0 ] || [ "$count_before" != "$count_after" ] || ! printf '%s\n' "$out" | grep -q 'denylist check FAILED'
+    then why="$why the $mode failure did not refuse the commit (exit $rc);"; fi
+    reset_w "$head_before"; rm -f "$W/awk-note.txt"
+  done
+  : > "$deny_file"
+  if [ -z "$why" ]; then pass denylist-awk-failure-fails
+  else fail denylist-awk-failure-fails "$why"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
 case_fail_closed_no_scanner() {
   if env PATH=/usr/bin:/bin sh -c 'command -v gitleaks' >/dev/null 2>&1; then
     echo "SKIP fail-closed-no-scanner: gitleaks is on the system directories"
@@ -570,6 +604,7 @@ case_identifiers_precommit
 case_bare_home_path_precommit
 case_identifier_false_positive_guards
 case_denylist_precommit
+case_denylist_awk_failure_fails
 case_fail_closed_no_scanner
 case_fresh_clone_hooks_off_by_default
 case_fresh_clone_enable_blocks_seed
