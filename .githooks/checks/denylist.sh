@@ -2,8 +2,10 @@
 # Deny-list check: refuse added lines that contain a local deny-list entry. Entries are
 # built at run time from this machine's host names plus the non-comment lines of
 # .git/info/preclear-deny.txt (inside .git, so never committed; the owner may put a real
-# name there). Entries shorter than four characters are dropped. Output is counts and
-# file names only: an entry or a matched line is never printed.
+# name there). Host names shorter than six characters, and generic host names such as
+# localhost or a bare distribution name, are dropped: a short common word would block
+# ordinary text and push people towards --no-verify. Local-file entries keep a four-character
+# floor. Output is counts and file names only: an entry or a matched line is never printed.
 # Usage: denylist.sh --staged         check the staged diff (pre-commit)
 #        denylist.sh RANGES_FILE      check each "ref<TAB>range" line (pre-push fan-out)
 #        denylist.sh --history GITDIR check every added line in all refs of GITDIR (pre-flip scan;
@@ -16,11 +18,12 @@ if [ "$mode" = --history ]; then
 fi
 cd "$(git rev-parse --show-toplevel)" || exit 1
 raw=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
+extraraw=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 list=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 diffout=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 hitsout=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
 cand=$(mktemp "${TMPDIR:-/tmp}/preclear-deny.XXXXXX") || exit 1
-trap 'rm -f "$raw" "$list" "$diffout" "$hitsout" "$cand"' EXIT
+trap 'rm -f "$raw" "$extraraw" "$list" "$diffout" "$hitsout" "$cand"' EXIT
 {
   hostname
   hostname -s
@@ -29,13 +32,19 @@ trap 'rm -f "$raw" "$list" "$diffout" "$hitsout" "$cand"' EXIT
 } >> "$raw" 2>/dev/null
 extra=$(git rev-parse --git-path info/preclear-deny.txt 2>/dev/null)
 if [ -n "$extra" ] && [ -r "$extra" ]; then
-  grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$extra" >> "$raw"
+  grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$extra" >> "$extraraw"
   # grep status 1 only means "no entry lines"; above 1 is a read error and must not pass.
   [ $? -le 1 ] || { echo "denylist check FAILED: could not read the local deny list" >&2; exit 1; }
 fi
 # Every step that builds the list is checked: a failed awk or sort would leave an empty list
 # and the "no entries" skip below would then approve everything.
-awk '{ sub(/\r$/, ""); if (length($0) >= 4) print }' "$raw" > "$cand" \
+# Host names: at least six characters and not a generic name. Local-file entries: at least four.
+awk 'BEGIN {
+       n = split("localhost localdomain ubuntu debian fedora centos alpine docker container runner builder server laptop desktop machine default workstation macbook macbook-pro macbook-air mac-mini mac-studio mac-pro", g, " ")
+       for (i = 1; i <= n; i++) generic[g[i]] = 1
+     }
+     { sub(/\r$/, ""); if (length($0) >= 6 && !(tolower($0) in generic)) print }' "$raw" > "$cand" \
+  && awk '{ sub(/\r$/, ""); if (length($0) >= 4) print }' "$extraraw" >> "$cand" \
   && sort -u "$cand" > "$list" \
   || { echo "denylist check FAILED: could not build the entry list" >&2; exit 1; }
 if [ ! -s "$list" ]; then echo "denylist check skipped: no entries" >&2; exit 0; fi

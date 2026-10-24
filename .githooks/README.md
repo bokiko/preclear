@@ -59,7 +59,10 @@ different minor release needs the strict and gate scans repeated before you trus
 
 The deny-list check builds its entries when it runs, from this machine's host names. To
 add more, such as a real name, put one entry per line in `.git/info/preclear-deny.txt`.
-Lines that start with `#` and entries shorter than four characters are ignored. The
+Lines that start with `#` and entries shorter than four characters are ignored. Host
+names are held to a higher bar so that a short or generic machine name, such as
+`localhost` or a bare distribution name, cannot block ordinary text: only host names of
+six or more characters that are not on a short generic list become entries. The
 file sits inside `.git`, so it is never committed. The check prints counts and file
 names only, never an entry and never a matched line.
 

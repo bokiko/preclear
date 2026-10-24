@@ -440,6 +440,57 @@ case_denylist_awk_failure_fails() {
   fi
 }
 
+# Host-name entries: a short or generic machine name must not block ordinary text, a distinctive
+# one still must, and a local-file entry keeps its four-character floor. Shims stand in for
+# hostname and scutil so the result does not depend on this machine's names.
+case_denylist_hostname_entries() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  deny_file="$W/.git/info/preclear-deny.txt"
+  : > "$deny_file"
+  why=
+  uniq_a=quokka; uniq_b=box7
+  uniq_name="${uniq_a}${uniq_b}"
+  for names in generic distinctive; do
+    shim="$TP/hostshim-$names"
+    mkdir -p "$shim"
+    case $names in generic) first=localhost; second=home ;; *) first=$uniq_name; second=$uniq_name ;; esac
+    {
+      printf '#!/bin/sh\n'
+      printf 'case $1 in -s) echo %s ;; *) echo %s ;; esac\n' "$second" "$first"
+    } > "$shim/hostname"
+    printf '#!/bin/sh\nexit 1\n' > "$shim/scutil"
+    chmod +x "$shim/hostname" "$shim/scutil"
+    printf 'notes about localhost, home, test, node and work at %s\n' "$( [ "$names" = distinctive ] && printf '%s' "$uniq_name" || printf 'the office' )" > "$W/host-note.txt"
+    git -C "$W" add host-note.txt
+    count_before=$(git -C "$W" rev-list --count HEAD)
+    out=$( ( PATH="$shim:$PATH"; export PATH; scratch_commit "$W" "Add a host note" ) 2>&1 ); rc=$?
+    count_after=$(git -C "$W" rev-list --count HEAD)
+    case $names in
+      generic)
+        if [ "$rc" -ne 0 ] || [ "$count_after" -ne $((count_before + 1)) ]
+        then why="$why generic host names blocked ordinary text (exit $rc);"; fi ;;
+      *)
+        if [ "$rc" -eq 0 ] || [ "$count_before" != "$count_after" ] || ! printf '%s\n' "$out" | grep -q 'denylist check FAILED'
+        then why="$why a distinctive host name was not refused (exit $rc);"; fi
+        if printf '%s\n' "$out" | grep -q -i -F "$uniq_name"; then why="$why the output printed the host name;"; fi ;;
+    esac
+    reset_w "$head_before"; rm -f "$W/host-note.txt"
+  done
+  # A four-character local-file entry still counts.
+  printf '%s\n' "wxqz" > "$deny_file"
+  printf 'note wxqz here\n' > "$W/host-note.txt"
+  git -C "$W" add host-note.txt
+  count_before=$(git -C "$W" rev-list --count HEAD)
+  out=$(scratch_commit "$W" "Add a local entry note" 2>&1); rc=$?
+  count_after=$(git -C "$W" rev-list --count HEAD)
+  if [ "$rc" -eq 0 ] || [ "$count_before" != "$count_after" ]; then why="$why a four-character local entry was not refused (exit $rc);"; fi
+  : > "$deny_file"
+  reset_w "$head_before"; rm -f "$W/host-note.txt"
+  if [ -z "$why" ]; then pass denylist-hostname-entries
+  else fail denylist-hostname-entries "$why"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
 case_fail_closed_no_scanner() {
   if env PATH=/usr/bin:/bin sh -c 'command -v gitleaks' >/dev/null 2>&1; then
     echo "SKIP fail-closed-no-scanner: gitleaks is on the system directories"
@@ -605,6 +656,7 @@ case_bare_home_path_precommit
 case_identifier_false_positive_guards
 case_denylist_precommit
 case_denylist_awk_failure_fails
+case_denylist_hostname_entries
 case_fail_closed_no_scanner
 case_fresh_clone_hooks_off_by_default
 case_fresh_clone_enable_blocks_seed
