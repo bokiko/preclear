@@ -668,9 +668,12 @@ case_prepublish_detects_seed_and_foreign_identity() {
   out=$(cd "$REPO" && sh scripts/prepublish-check.sh --rehearse --skip-inventory --source "$W4" 2>&1); rc=$?
   why=
   [ "$rc" -ne 0 ] || why="$why the tool exited 0;"
-  for chk in gate-clean strict-equals-accepted one-identity; do
-    printf '%s\n' "$out" | grep -q "^FAIL $chk" || why="$why no FAIL line for $chk;"
-  done
+  # Each check must fail for the right reason: a scanner finding (exit 2, not a crash with exit 1),
+  # a finding outside the accepted commit, and a second identity in the history.
+  printf '%s\n' "$out" | grep -q '^FAIL gate-clean: gate exit 2' || why="$why gate-clean did not fail on a finding (exit 2);"
+  printf '%s\n' "$out" | grep -q '^FAIL tree-clean: tree scan exit 2' || why="$why tree-clean did not fail on a finding (exit 2);"
+  printf '%s\n' "$out" | grep -q '^FAIL strict-equals-accepted: .*finding(s) outside commit' || why="$why strict-equals-accepted did not name a finding outside the accepted commit;"
+  printf '%s\n' "$out" | grep -q '^FAIL one-identity: 2 distinct identities' || why="$why one-identity did not name the second identity;"
   if printf '%s\n' "$out" | grep -q -F "$seed_value"; then why="$why the tool printed the seed;"; fi
   if [ -z "$why" ]; then pass prepublish-detects-seed-and-foreign-identity
   else fail prepublish-detects-seed-and-foreign-identity "$why"; printf '%s\n' "$out" | tail -n 10
@@ -694,6 +697,20 @@ case_prepublish_log_failure_fails() {
      && ! printf '%s\n' "$out" | grep -q '^PASS no-attribution-trailers'
   then pass prepublish-log-failure-fails
   else fail prepublish-log-failure-fails "a failed git log did not produce a FAIL line"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
+# Positive control for the pre-flip tool: on the real, clean source the history checks must
+# PASS. Without it, the negative control above could be satisfied by a tool that fails
+# everything. Read-only: the tool only clones a mirror of this repository.
+case_prepublish_passes_clean_source() {
+  out=$(cd "$REPO" && sh scripts/prepublish-check.sh --rehearse --skip-inventory --source "$REPO" 2>&1)
+  why=
+  for chk in mirror-cloned strict-equals-accepted gate-clean tree-clean no-attribution-trailers denylist-history; do
+    printf '%s\n' "$out" | grep -q "^PASS $chk" || why="$why no PASS line for $chk;"
+  done
+  if [ -z "$why" ]; then pass prepublish-passes-clean-source
+  else fail prepublish-passes-clean-source "$why"; printf '%s\n' "$out" | tail -n 10
   fi
 }
 
@@ -748,6 +765,7 @@ case_fail_closed_no_scanner
 case_fresh_clone_hooks_off_by_default
 case_fresh_clone_enable_blocks_seed
 case_prepublish_detects_seed_and_foreign_identity
+case_prepublish_passes_clean_source
 case_prepublish_relative_source
 case_prepublish_log_failure_fails
 case_real_origin_refs_unchanged
