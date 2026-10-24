@@ -1,14 +1,17 @@
 #!/bin/sh
-# Deny-list check: refuse added lines that contain a local deny-list entry. Entries are
+# Deny-list check: refuse added lines, file names and (push and history modes) commit messages
+# that contain a local deny-list entry. Entries are
 # built at run time from this machine's host names plus the non-comment lines of
 # .git/info/preclear-deny.txt (inside .git, so never committed; the owner may put a real
 # name there). Host names shorter than six characters, and generic host names such as
 # localhost or a bare distribution name, are dropped: a short common word would block
 # ordinary text and push people towards --no-verify. Local-file entries keep a four-character
-# floor. Output is counts and file names only: an entry or a matched line is never printed.
+# floor. Output is counts and file names only: an entry or a matched line is never printed,
+# and a file name that itself holds an entry is shown as "(file name)".
 # Usage: denylist.sh --staged         check the staged diff (pre-commit)
 #        denylist.sh RANGES_FILE      check each "ref<TAB>range" line (pre-push fan-out)
-#        denylist.sh --history GITDIR check every added line in all refs of GITDIR (pre-flip scan;
+#        denylist.sh --history GITDIR check every added line, file name and message in all refs
+#                                     of GITDIR (pre-flip scan;
 #                                     the entries still come from the repository you run it in)
 mode=$1
 histdir=
@@ -51,10 +54,16 @@ if [ ! -s "$list" ]; then echo "denylist check skipped: no entries" >&2; exit 0;
 
 # count_hits: read a unified diff on stdin, print "<file><TAB><n>" for every file with n
 # added lines that contain an entry (case-insensitive, fixed string). Hunk bodies are told
-# apart from file headers by the diff --git line and the first hunk marker.
+# apart from file headers by the diff --git line and the first hunk marker. A path that holds
+# an entry is printed as "(file name)" so the entry itself never reaches the output.
 count_hits() {
   awk -v listfile="$list" '
     BEGIN { while ((getline e < listfile) > 0) entries[tolower(e)] = 1 }
+    function lab(p,   e, lp) {
+      lp = tolower(p)
+      for (e in entries) if (index(lp, e) > 0) return "(file name)"
+      return p
+    }
     /^diff --git / { inhdr = 1; next }
     /^@@/ { inhdr = 0; next }
     inhdr && /^\+\+\+ / { f = substr($0, 5); sub(/^b\//, "", f); next }
@@ -62,7 +71,17 @@ count_hits() {
       line = tolower(substr($0, 2))
       for (e in entries) if (index(line, e) > 0) { hits[f]++; break }
     }
-    END { for (k in hits) printf "%s\t%d\n", k, hits[k] }
+    END { for (k in hits) { l = lab(k); agg[l] += hits[k] } for (l in agg) printf "%s\t%d\n", l, agg[l] }
+  '
+}
+
+# count_plain LABEL: read lines on stdin (file names or message text), print "<LABEL><TAB><n>"
+# when n lines contain an entry. Same matching as count_hits.
+count_plain() {
+  awk -v listfile="$list" -v label="$1" '
+    BEGIN { while ((getline e < listfile) > 0) entries[tolower(e)] = 1 }
+    { line = tolower($0); for (e in entries) if (index(line, e) > 0) { n++; break } }
+    END { if (n > 0) printf "%s\t%d\n", label, n }
   '
 }
 
@@ -73,6 +92,10 @@ tab=$(printf '\t')
 # stops the check with a refusal.
 scan_diff() {
   count_hits < "$diffout" > "$hitsout" || { echo "denylist check FAILED: scan error" >&2; exit 1; }
+}
+# scan_plain LABEL: scan the lines in $cand and append any hit to $hitsout (status checked).
+scan_plain() {
+  count_plain "$1" < "$cand" >> "$hitsout" || { echo "denylist check FAILED: scan error" >&2; exit 1; }
 }
 # sum_hits: total the counts in $hitsout into n, again refusing on a tool error.
 sum_hits() {
@@ -85,9 +108,12 @@ case $mode in
     git diff --cached -U0 --no-color --no-ext-diff --no-textconv > "$diffout" \
       || { echo "denylist check FAILED: could not read the staged diff" >&2; exit 1; }
     scan_diff
+    git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR --no-renames --no-ext-diff > "$cand" \
+      || { echo "denylist check FAILED: could not read the staged file names" >&2; exit 1; }
+    scan_plain "(file name)"
     if [ -s "$hitsout" ]; then
       while IFS=$tab read -r file n; do
-        echo "denylist check FAILED: $file ($n added line(s) match a local deny-list entry)" >&2
+        echo "denylist check FAILED: $file ($n match(es) against a local deny-list entry)" >&2
       done < "$hitsout"
       rc=1
     fi
@@ -96,9 +122,15 @@ case $mode in
     git --git-dir="$histdir" log -p -U0 --format= --all --no-color --no-ext-diff --no-textconv > "$diffout" \
       || { echo "denylist check FAILED (history): could not read the history" >&2; exit 1; }
     scan_diff
+    git --git-dir="$histdir" -c core.quotePath=false log --all --name-only --format= --diff-filter=ACMR --no-renames --no-ext-diff > "$cand" \
+      || { echo "denylist check FAILED (history): could not read the file names" >&2; exit 1; }
+    scan_plain "(file name)"
+    git --git-dir="$histdir" log --all --format=%B > "$cand" \
+      || { echo "denylist check FAILED (history): could not read the messages" >&2; exit 1; }
+    scan_plain "(commit message)"
     sum_hits
     if [ "$n" -gt 0 ]; then
-      echo "denylist check FAILED (history): $n added line(s) match a local deny-list entry" >&2
+      echo "denylist check FAILED (history): $n added line(s), file name(s) or message line(s) match a local deny-list entry" >&2
       rc=1
     fi
     ;;
@@ -109,9 +141,17 @@ case $mode in
       git log -p -U0 --format= --no-color --no-ext-diff --no-textconv $rev > "$diffout" \
         || { echo "denylist check FAILED for $ref: could not read the range" >&2; rc=1; continue; }
       scan_diff
+      # shellcheck disable=SC2086
+      git -c core.quotePath=false log --name-only --format= --diff-filter=ACMR --no-renames --no-ext-diff $rev > "$cand" \
+        || { echo "denylist check FAILED for $ref: could not read the file names" >&2; rc=1; continue; }
+      scan_plain "(file name)"
+      # shellcheck disable=SC2086
+      git log --format=%B $rev > "$cand" \
+        || { echo "denylist check FAILED for $ref: could not read the messages" >&2; rc=1; continue; }
+      scan_plain "(commit message)"
       sum_hits
       if [ "$n" -gt 0 ]; then
-        echo "denylist check FAILED for $ref: $n added line(s) match a local deny-list entry" >&2
+        echo "denylist check FAILED for $ref: $n added line(s), file name(s) or message line(s) match a local deny-list entry" >&2
         rc=1
       fi
     done < "$mode"

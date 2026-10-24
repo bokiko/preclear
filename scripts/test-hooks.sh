@@ -409,6 +409,49 @@ case_denylist_precommit() {
 # A scanner that dies must refuse the commit, not read as "no hits". A shim in front of awk
 # fails the diff scan (first argument -v) or the entry-list step (a program starting with a
 # brace) and hands every other call to the real awk.
+# A real name or host name in a file name or a commit message leaks as surely as one in file
+# content. Staged: a file named with an entry (also an empty one, which has no diff body) is
+# refused and the output never prints the entry. Pushed and history: a message holding an entry
+# is refused with the commit absent from the remote.
+case_denylist_paths_and_messages() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  deny_file="$W/.git/info/preclear-deny.txt"
+  tok_a=plover; tok_b=Quasar77
+  tok="${tok_a}${tok_b}"
+  printf '%s\n' "$tok" > "$deny_file"
+  why=
+  for form in content-benign empty; do
+    case $form in
+      content-benign) printf 'a harmless note\n' > "$W/note-$tok.txt" ;;
+      *) : > "$W/empty-$tok.txt" ;;
+    esac
+    git -C "$W" add -A
+    count_before=$(git -C "$W" rev-list --count HEAD)
+    out=$(scratch_commit "$W" "Add a file with an odd name" 2>&1); rc=$?
+    count_after=$(git -C "$W" rev-list --count HEAD)
+    if [ "$rc" -eq 0 ] || [ "$count_before" != "$count_after" ] || ! printf '%s\n' "$out" | grep -q 'denylist check FAILED'
+    then why="$why a $form file name was not refused (exit $rc);"; fi
+    if printf '%s\n' "$out" | grep -q -i -F "$tok"; then why="$why the output printed the entry for a $form file name;"; fi
+    reset_w "$head_before"; rm -f "$W/note-$tok.txt" "$W/empty-$tok.txt"
+  done
+  printf 'a harmless note\n' > "$W/msg-note.txt"
+  git -C "$W" add msg-note.txt
+  scratch_commit "$W" "Mention $tok in the message" skip
+  bad_sha=$(git -C "$W" rev-parse HEAD)
+  out=$(push_in "$W" origin main 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'denylist check FAILED' || ! absent_on_remote "$bad_sha"
+  then why="$why a message holding an entry was not refused at push (exit $rc);"; fi
+  if printf '%s\n' "$out" | grep -q -i -F "$tok"; then why="$why the push output printed the entry;"; fi
+  out=$(cd "$W" && sh .githooks/checks/denylist.sh --history "$W/.git" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'denylist check FAILED (history)'
+  then why="$why the history scan missed a message holding an entry (exit $rc);"; fi
+  : > "$deny_file"
+  reset_w "$head_before"; rm -f "$W/msg-note.txt"
+  if [ -z "$why" ]; then pass denylist-paths-and-messages
+  else fail denylist-paths-and-messages "$why"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
 case_denylist_awk_failure_fails() {
   real_awk=$(command -v awk)
   head_before=$(git -C "$W" rev-parse HEAD)
@@ -655,6 +698,7 @@ case_identifiers_precommit
 case_bare_home_path_precommit
 case_identifier_false_positive_guards
 case_denylist_precommit
+case_denylist_paths_and_messages
 case_denylist_awk_failure_fails
 case_denylist_hostname_entries
 case_fail_closed_no_scanner
