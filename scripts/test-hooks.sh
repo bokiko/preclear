@@ -508,6 +508,26 @@ case_prepublish_detects_seed_and_foreign_identity() {
   fi
 }
 
+# The attribution scan must not read a failed "git log" as zero matches. A shim in front of
+# git fails only the message listing and passes everything else through to the real git.
+case_prepublish_log_failure_fails() {
+  real_git=$(command -v git)
+  shim="$TP/shim"
+  mkdir -p "$shim"
+  {
+    printf '#!/bin/sh\n'
+    printf 'for a in "$@"; do case $a in --format=%%B) exit 1 ;; esac; done\n'
+    printf 'exec "%s" "$@"\n' "$real_git"
+  } > "$shim/git"
+  chmod +x "$shim/git"
+  out=$(cd "$REPO" && PATH="$shim:$PATH" sh scripts/prepublish-check.sh --rehearse --skip-inventory --source "$REPO" 2>&1)
+  if printf '%s\n' "$out" | grep -q '^FAIL no-attribution-trailers: could not read the commit messages' \
+     && ! printf '%s\n' "$out" | grep -q '^PASS no-attribution-trailers'
+  then pass prepublish-log-failure-fails
+  else fail prepublish-log-failure-fails "a failed git log did not produce a FAIL line"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
 # A relative --source names a place relative to where the caller stands, not to the
 # repository top the tool changes into. Called from a subdirectory of the throwaway clone,
 # the sibling directory must be found and mirrored.
@@ -555,6 +575,7 @@ case_fresh_clone_hooks_off_by_default
 case_fresh_clone_enable_blocks_seed
 case_prepublish_detects_seed_and_foreign_identity
 case_prepublish_relative_source
+case_prepublish_log_failure_fails
 case_real_origin_refs_unchanged
 
 echo "throwaway directory (kept): $T"

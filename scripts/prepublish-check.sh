@@ -214,10 +214,16 @@ fi
 
 # ---- no-attribution-trailers: no commit message matches the attribution patterns ----
 if [ -s "$W/attribution.ere" ]; then
-  git -C "$M" log --all --format=%B > "$W/messages" 2>/dev/null
-  trailer_hits=$(grep -i -E -c -f "$W/attribution.ere" "$W/messages")
-  if [ "$trailer_hits" -eq 0 ]; then pass no-attribution-trailers "0 matching lines"
-  else fail no-attribution-trailers "$trailer_hits matching line(s) in commit messages"; fi
+  # A failed git log or grep must not read as "0 matches": check both statuses (stderr stays
+  # hidden so no path is ever printed).
+  if git -C "$M" log --all --format=%B > "$W/messages" 2>/dev/null; then
+    trailer_hits=$(grep -i -E -c -f "$W/attribution.ere" "$W/messages" 2>/dev/null); grep_rc=$?
+    if [ "$grep_rc" -gt 1 ]; then fail no-attribution-trailers "the pattern check errored"
+    elif [ "$trailer_hits" -eq 0 ]; then pass no-attribution-trailers "0 matching lines"
+    else fail no-attribution-trailers "$trailer_hits matching line(s) in commit messages"; fi
+  else
+    fail no-attribution-trailers "could not read the commit messages"
+  fi
 else
   fail no-attribution-trailers "attribution patterns are missing from the mirror HEAD"
 fi
