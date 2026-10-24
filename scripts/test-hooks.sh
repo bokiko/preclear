@@ -508,6 +508,20 @@ case_prepublish_detects_seed_and_foreign_identity() {
   fi
 }
 
+# A relative --source names a place relative to where the caller stands, not to the
+# repository top the tool changes into. Called from a subdirectory of the throwaway clone,
+# the sibling directory must be found and mirrored.
+case_prepublish_relative_source() {
+  if ! fresh_clone; then fail prepublish-relative-source "the local clone of the repository failed"; return; fi
+  assert_scratch "$W3"
+  if [ ! -d "$W4/.git" ]; then fail prepublish-relative-source "the source clone from the previous case is missing"; return; fi
+  out=$(cd "$W3/scripts" && sh "$REPO/scripts/prepublish-check.sh" --rehearse --skip-inventory --source ../../prepublish 2>&1)
+  if printf '%s\n' "$out" | grep -q '^PASS mirror-cloned'
+  then pass prepublish-relative-source
+  else fail prepublish-relative-source "the relative source was not resolved against the caller's directory"; printf '%s\n' "$out" | tail -n 4
+  fi
+}
+
 # Last case: nothing in the real repository moved, and the guard is not vacuous.
 case_real_origin_refs_unchanged() {
   origin_end=$(git -C "$REPO" for-each-ref refs/remotes/origin | cksum)
@@ -540,6 +554,7 @@ case_fail_closed_no_scanner
 case_fresh_clone_hooks_off_by_default
 case_fresh_clone_enable_blocks_seed
 case_prepublish_detects_seed_and_foreign_identity
+case_prepublish_relative_source
 case_real_origin_refs_unchanged
 
 echo "throwaway directory (kept): $T"

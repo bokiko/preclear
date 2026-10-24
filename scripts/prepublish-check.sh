@@ -34,6 +34,11 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# Resolve relative paths against the caller's directory now: the script changes into the
+# repository top below, and a relative path would otherwise mean two different places. A
+# --source that names no local path (a URL or a host:path address) is left as given.
+case $RECORD in ''|/*) ;; *) RECORD=$(pwd)/$RECORD ;; esac
+case $SOURCE in ''|/*) ;; *) [ -e "$SOURCE" ] && SOURCE=$(pwd)/$SOURCE ;; esac
 if [ "$REHEARSE" -eq 1 ] && [ -n "$RECORD" ]; then
   echo "rehearsal never writes a record" >&2
   exit 2
