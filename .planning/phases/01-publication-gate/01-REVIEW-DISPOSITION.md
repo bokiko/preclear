@@ -5,15 +5,15 @@ titles: json
 findings:
   - id: CR-01
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "commit-msg hook fails open when the pattern file is missing or empty"
   - id: CR-02
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "pre-push silently skips any check that is not executable or not present"
   - id: CR-03
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "home-folder path rule does not match a path with no trailing slash"
   - id: WR-01
     severity: warning
@@ -25,19 +25,19 @@ findings:
     title: "the attribution check passes when `git log` fails"
   - id: WR-03
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "the pre-flip deny-list scan can pass or skip without the owner's entries"
   - id: WR-04
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "deny-list check never looks at file paths or commit messages"
   - id: WR-05
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "deny-list scan treats an awk failure as \"no hits\""
   - id: WR-06
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "host-name entries of short common words block unrelated commits"
   - id: WR-07
     severity: warning
@@ -45,7 +45,7 @@ findings:
     title: "the whole `anthropic.com` domain is exempt from the email rule"
   - id: WR-08
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "the pre-flip negative control would pass for the wrong reason"
   - id: IN-01
     severity: info
@@ -83,26 +83,26 @@ findings:
     severity: info
     disposition: open
     title: "coverage gaps and silent skips in the test script"
-open: 20
+open: 12
 total: 20
-recorded: 2026-10-24T11:57:34.255Z
+recorded: 2026-10-24T14:35:30.262Z
 ---
 
 # Phase 01: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-01 | critical | open | - |
-| CR-02 | critical | open | - |
-| CR-03 | critical | open | - |
+| CR-01 | critical | fixed | 01-REVIEW-FIX.md |
+| CR-02 | critical | fixed | 01-REVIEW-FIX.md |
+| CR-03 | critical | fixed | 01-REVIEW-FIX.md |
 | WR-01 | warning | open | - |
 | WR-02 | warning | open | - |
-| WR-03 | warning | open | - |
-| WR-04 | warning | open | - |
-| WR-05 | warning | open | - |
-| WR-06 | warning | open | - |
+| WR-03 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-04 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-05 | warning | fixed | 01-REVIEW-FIX.md |
+| WR-06 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-07 | warning | open | - |
-| WR-08 | warning | open | - |
+| WR-08 | warning | fixed | 01-REVIEW-FIX.md |
 | IN-01 | info | open | - |
 | IN-02 | info | open | - |
 | IN-03 | info | open | - |
