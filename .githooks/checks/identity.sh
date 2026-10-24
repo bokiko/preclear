@@ -8,7 +8,7 @@ ranges=$1
 pinned=$(git config --local --get preclear.pinnedIdentity 2>/dev/null)
 if [ -z "$pinned" ]; then echo "identity check skipped: preclear.pinnedIdentity is not set in this clone" >&2; exit 0; fi
 pattern_file="$(dirname "$0")/../attribution.ere"
-[ -r "$pattern_file" ] || { echo "attribution check FAILED: pattern file $pattern_file is missing or unreadable" >&2; exit 1; }
+[ -s "$pattern_file" ] || { echo "attribution check FAILED: pattern file $pattern_file is missing, unreadable or empty" >&2; exit 1; }
 tab=$(printf '\t'); rc=0
 while IFS=$tab read -r ref rev; do
   # shellcheck disable=SC2086
@@ -29,7 +29,9 @@ $t"
   # shellcheck disable=SC2086
   msgs=$(git log --format='%H %s%n%B' $rev) \
     || { echo "attribution check FAILED for $ref (git log failed for range)" >&2; rc=1; continue; }
-  attr=$(printf '%s\n' "$msgs" | grep -i -E -f "$pattern_file")
+  attr=$(printf '%s\n' "$msgs" | grep -i -E -f "$pattern_file"); attr_rc=$?
+  # grep status above 1 is an error, never "no match".
+  [ "$attr_rc" -le 1 ] || { echo "attribution check FAILED for $ref (pattern check errored)" >&2; rc=1; continue; }
   [ -z "$attr" ] || { echo "attribution check FAILED for $ref:" >&2; echo "$attr" >&2; rc=1; }
 done < "$ranges"
 exit $rc

@@ -3,9 +3,16 @@
 # forbidden patterns live in attribution.ere next to this file, the single source of truth
 # shared with the pre-push attribution check. Argument: $1 path of the message file.
 here=$(cd "$(dirname "$0")" && pwd)
+pat="$here/attribution.ere"
+# Fail closed: a missing, unreadable or empty pattern file would otherwise match nothing and
+# let every message through.
+[ -s "$pat" ] || { echo "commit-msg FAILED: pattern file $pat is missing or empty" >&2; exit 1; }
+[ -r "$1" ] || { echo "commit-msg FAILED: message file is not readable" >&2; exit 1; }
 # Git's own comment lines (a leading hash) are not part of the message.
-if grep -v '^#' "$1" | grep -q -i -E -f "$here/attribution.ere"; then
-  echo "commit-msg FAILED: attribution trailer found in the commit message" >&2
-  exit 1
-fi
-exit 0
+grep -v '^#' "$1" | grep -q -i -E -f "$pat"
+# grep status: 0 a match, 1 no match, above 1 an error (never treated as "no match").
+case $? in
+  0) echo "commit-msg FAILED: attribution trailer found in the commit message" >&2; exit 1 ;;
+  1) exit 0 ;;
+  *) echo "commit-msg FAILED: pattern check errored" >&2; exit 1 ;;
+esac

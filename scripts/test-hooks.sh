@@ -211,6 +211,34 @@ case_trailer_bypassed_prepush() {
   back_one "$W"
 }
 
+# The pattern file is the single source for every attribution check. Missing or empty, it
+# matches nothing, so both consumers must refuse (fail closed) even for a benign message.
+case_attribution_pattern_fail_closed() {
+  assert_scratch "$W"
+  head_before=$(git -C "$W" rev-parse HEAD)
+  pat="$W/.githooks/attribution.ere"
+  why=
+  for state in missing empty; do
+    case $state in missing) rm -f "$pat" ;; *) : > "$pat" ;; esac
+    printf 'note\n' > "$W/pattern-note.txt"
+    git -C "$W" add pattern-note.txt
+    count_before=$(git -C "$W" rev-list --count HEAD)
+    out=$(scratch_commit "$W" "Add a benign note" 2>&1); rc=$?
+    count_after=$(git -C "$W" rev-list --count HEAD)
+    if [ "$rc" -eq 0 ] || [ "$count_before" != "$count_after" ] || ! printf '%s\n' "$out" | grep -q 'commit-msg FAILED'
+    then why="$why commit-msg did not refuse with the pattern file $state (exit $rc);"; fi
+    scratch_commit "$W" "Add a benign note" skip
+    bad_sha=$(git -C "$W" rev-parse HEAD)
+    out=$(push_in "$W" origin main 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'attribution check FAILED' || ! absent_on_remote "$bad_sha"
+    then why="$why pre-push did not refuse with the pattern file $state (exit $rc);"; fi
+    reset_w "$head_before"; rm -f "$W/pattern-note.txt"
+  done
+  if [ -z "$why" ]; then pass attribution-pattern-fail-closed
+  else fail attribution-pattern-fail-closed "$why"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
 case_unpinned_skips_identity() {
   git clone -q "$R" "$W2" || { fail unpinned-skips-identity "clone of the throwaway remote failed"; return; }
   git -C "$W2" config user.name Intruder
@@ -445,6 +473,7 @@ case_identity_committer_only
 case_identity_wrong_tagger
 case_trailer_commit_msg
 case_trailer_bypassed_prepush
+case_attribution_pattern_fail_closed
 case_unpinned_skips_identity
 case_leak_seed_precommit
 case_identifiers_precommit
