@@ -229,14 +229,22 @@ else
 fi
 
 # ---- denylist-history: no added line in any ref matches a local deny-list entry ----
-dl_out=$(sh "$TOP/.githooks/checks/denylist.sh" --history "$M" 2>&1)
+# The final gate (default mode) must have the owner's local entries loaded: a missing or
+# empty local list, or a scan with no entry at all, is a FAIL, never a pass or a skip. Only a
+# rehearsal may run on host-name entries alone, and it says so.
+if [ "$REHEARSE" -eq 1 ]; then dl_flag=--allow-no-local; else dl_flag=; fi
+# shellcheck disable=SC2086
+dl_out=$(sh "$TOP/.githooks/checks/denylist.sh" --history "$M" $dl_flag 2>&1)
 dl_rc=$?
 if [ "$dl_rc" -ne 0 ]; then
   fail denylist-history "$dl_out"
 elif printf '%s\n' "$dl_out" | grep -q 'skipped: no entries'; then
-  skip denylist-history "no entries"
+  if [ "$REHEARSE" -eq 1 ]; then skip denylist-history "no entries"
+  else fail denylist-history "no deny-list entries were loaded"; fi
+elif printf '%s\n' "$dl_out" | grep -q 'no local deny-list entries'; then
+  pass denylist-history "0 matches, host-name entries only, no local list (rehearsal)"
 else
-  pass denylist-history "0 added lines match"
+  pass denylist-history "0 matches"
 fi
 
 # ---- inventory: the live repository against the reviewed baseline ----

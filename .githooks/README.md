@@ -66,6 +66,10 @@ six or more characters that are not on a short generic list become entries. The
 file sits inside `.git`, so it is never committed. The check prints counts and file
 names only, never an entry and never a matched line.
 
+The pre-flip script (`scripts/prepublish-check.sh`) fails when that file is missing or
+holds no usable entry, because a scan without the owner's entries proves nothing. Only a
+`--rehearse` run may go ahead on host names alone, and it says so.
+
 ## Limits
 
 - The hooks are a safety net, not enforcement. `git commit --no-verify` and

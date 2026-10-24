@@ -10,12 +10,22 @@
 # and a file name that itself holds an entry is shown as "(file name)".
 # Usage: denylist.sh --staged         check the staged diff (pre-commit)
 #        denylist.sh RANGES_FILE      check each "ref<TAB>range" line (pre-push fan-out)
-#        denylist.sh --history GITDIR check every added line, file name and message in all refs
-#                                     of GITDIR (pre-flip scan;
-#                                     the entries still come from the repository you run it in)
+#        denylist.sh --history GITDIR [--allow-no-local]
+#                                     check every added line, file name and message in all refs
+#                                     of GITDIR (pre-flip scan; the entries still come from the
+#                                     repository you run it in). The final gate must prove the
+#                                     owner's entries were loaded: when the local deny list is
+#                                     missing or holds no usable entry it exits 3 without
+#                                     scanning, unless --allow-no-local (rehearsal) is given.
 mode=$1
 histdir=
+allow_no_local=0
 if [ "$mode" = --history ]; then
+  case ${3:-} in
+    '') ;;
+    --allow-no-local) allow_no_local=1 ;;
+    *) echo "denylist check FAILED (history): unknown option" >&2; exit 1 ;;
+  esac
   if [ -n "$2" ] && [ -d "$2" ]; then histdir=$(cd "$2" && pwd -P); fi
   [ -n "$histdir" ] || { echo "denylist check FAILED (history): git directory not readable" >&2; exit 1; }
 fi
@@ -38,6 +48,17 @@ if [ -n "$extra" ] && [ -r "$extra" ]; then
   grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$extra" >> "$extraraw"
   # grep status 1 only means "no entry lines"; above 1 is a read error and must not pass.
   [ $? -le 1 ] || { echo "denylist check FAILED: could not read the local deny list" >&2; exit 1; }
+fi
+# The pre-flip scan must tell "no hits" from "the owner's entries were never loaded": count
+# the usable local-file entries (a count only, never the content).
+local_n=$(awk '{ sub(/\r$/, ""); if (length($0) >= 4) c++ } END { print c + 0 }' "$extraraw") \
+  || { echo "denylist check FAILED: could not count the local deny-list entries" >&2; exit 1; }
+if [ "$mode" = --history ] && [ "$local_n" -eq 0 ]; then
+  if [ "$allow_no_local" -eq 0 ]; then
+    echo "denylist check FAILED (history): the local deny list is missing or holds no usable entry, so the owner's entries were not checked" >&2
+    exit 3
+  fi
+  echo "denylist check note (history): no local deny-list entries, host-name entries only" >&2
 fi
 # Every step that builds the list is checked: a failed awk or sort would leave an empty list
 # and the "no entries" skip below would then approve everything.

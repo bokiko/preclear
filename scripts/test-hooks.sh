@@ -452,6 +452,29 @@ case_denylist_paths_and_messages() {
   fi
 }
 
+# The pre-flip scan must not pass when the owner's entries were never loaded: with no local
+# list it exits 3 without scanning, a rehearsal may opt out, and a present list passes.
+case_denylist_history_requires_local_list() {
+  deny_file="$W/.git/info/preclear-deny.txt"
+  why=
+  : > "$deny_file"
+  out=$(cd "$W" && sh .githooks/checks/denylist.sh --history "$W/.git" 2>&1); rc=$?
+  if [ "$rc" -ne 3 ] || ! printf '%s\n' "$out" | grep -q 'local deny list is missing or holds no usable entry'
+  then why="$why an empty local list did not exit 3 (exit $rc);"; fi
+  rm -f "$deny_file"
+  out=$(cd "$W" && sh .githooks/checks/denylist.sh --history "$W/.git" 2>&1); rc=$?
+  if [ "$rc" -ne 3 ]; then why="$why a missing local list did not exit 3 (exit $rc);"; fi
+  out=$(cd "$W" && sh .githooks/checks/denylist.sh --history "$W/.git" --allow-no-local 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then why="$why the rehearsal option did not allow a missing list (exit $rc);"; fi
+  printf '%s\n' "zxqvbnmw" > "$deny_file"
+  out=$(cd "$W" && sh .githooks/checks/denylist.sh --history "$W/.git" 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then why="$why a present local list on clean history did not pass (exit $rc);"; fi
+  : > "$deny_file"
+  if [ -z "$why" ]; then pass denylist-history-requires-local-list
+  else fail denylist-history-requires-local-list "$why"; printf '%s\n' "$out" | tail -n 4
+  fi
+}
+
 case_denylist_awk_failure_fails() {
   real_awk=$(command -v awk)
   head_before=$(git -C "$W" rev-parse HEAD)
@@ -699,6 +722,7 @@ case_bare_home_path_precommit
 case_identifier_false_positive_guards
 case_denylist_precommit
 case_denylist_paths_and_messages
+case_denylist_history_requires_local_list
 case_denylist_awk_failure_fails
 case_denylist_hostname_entries
 case_fail_closed_no_scanner
