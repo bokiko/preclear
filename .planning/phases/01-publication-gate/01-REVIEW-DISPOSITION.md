@@ -95,13 +95,13 @@ recorded: 2026-10-24T14:35:30.262Z
 | CR-01 | critical | fixed | 01-REVIEW-FIX.md |
 | CR-02 | critical | fixed | 01-REVIEW-FIX.md |
 | CR-03 | critical | fixed | 01-REVIEW-FIX.md |
-| WR-01 | warning | open | - |
-| WR-02 | warning | open | - |
+| WR-01 | warning | fixed | 01-REVIEW-FIX.md (commit titled differently; reconciled by hand) |
+| WR-02 | warning | fixed | 01-REVIEW-FIX.md (commit titled differently; reconciled by hand) |
 | WR-03 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-04 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-05 | warning | fixed | 01-REVIEW-FIX.md |
 | WR-06 | warning | fixed | 01-REVIEW-FIX.md |
-| WR-07 | warning | open | - |
+| WR-07 | warning | fixed | 01-REVIEW-FIX.md (commit titled differently; reconciled by hand) |
 | WR-08 | warning | fixed | 01-REVIEW-FIX.md |
 | IN-01 | info | open | - |
 | IN-02 | info | open | - |
