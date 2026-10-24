@@ -61,8 +61,11 @@ Not in this phase: driving any matrix row (Phase 3), the row 7 rerun and row 11 
   STUB-04 allows. Conflict injection (exit 3) and call logging live in the wrapper outside the
   stub, never inside it (roadmap decision, STUB-04).
 - **D-09:** The stub refuses to run without `CKPT_HOME` (distinct non-zero exit), keeps all state
-  under it, writes atomically via `os.replace`, holds an `fcntl.flock` lock, and brands every
-  output line that a model could read with a stub marker (STUB-02, STUB-05).
+  under it, writes atomically via `os.replace`, holds an `fcntl.flock` lock, and brands itself
+  as stub-backed without changing the stdout contract the adapter parses: one stub-marker line on
+  stderr per call (stripped by the replay suite) plus a stub banner in `--version` output. stdout
+  stays byte-identical to the committed decisive outputs (STUB-02, STUB-05). *(Refined after
+  research: branding every stdout line would break the adapter's parse of `status` and `lint`.)*
 
 ### Self-test UX (Claude's call)
 - **D-10:** One bash 3.2 entry shim `tests/harness/selftest` that `exec`s
@@ -82,8 +85,9 @@ Not in this phase: driving any matrix row (Phase 3), the row 7 rerun and row 11 
   that every identifier rule in `.gitleaks.toml` (home paths, hostnames, private IPs, emails,
   session ids where applicable) has a counterpart in the Python list, so the two cannot drift
   silently.
-- **D-15:** Replacement tokens are angle-bracket placeholders: `<HOME>`, `<USER>`, `<HOST>`,
-  `<TMP>`, `<REPO>`, matching the shape of the committed sanitized evidence. The deny-list is
+- **D-15:** Replacement tokens are lower-case angle-bracket placeholders: `<home>`, `<user>`,
+  `<host>`, `<tmp>`, `<repo>`, exactly the form the committed sanitized evidence already uses
+  (research confirmed the evidence is lower-case; the tokens must match it byte for byte). The deny-list is
   built at run time from the live machine (raw, realpath, dash-slug and URL-encoded home forms,
   user, hostname, temp roots) and, when present, from the local file
   `.git/info/preclear-deny.txt`, whose contents are never printed or committed (EVID-02).
