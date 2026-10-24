@@ -13,12 +13,12 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Publication
 
 - [x] **PUB-01**: Owner decisions are recorded in `PROJECT.md` Key Decisions: no history rewrite, `bokiko <bokiko@gmail.com>` is the public identity, row 7 ships as a disclosed known issue
-- [ ] **PUB-02**: A secret and identifier scan (gitleaks plus custom rules for home paths, hostnames, private IPs) over the full history and tree of a fresh `--mirror` clone reports zero findings beyond the two accepted ones (ten home-path lines in d437af2, author email)
+- [x] **PUB-02**: A secret and identifier scan (gitleaks plus custom rules for home paths, hostnames, private IPs) over the full history and tree of a fresh `--mirror` clone reports zero findings beyond the two accepted ones (ten home-path lines in d437af2, author email)
 - [x] **PUB-03**: Pre-commit and pre-push hooks run the same scan on new content and are proven by a seeded fake leak that they block; the hook configuration is committed so a clone can enable it
 - [x] **PUB-04**: The repo-local git identity is pinned to the public identity with `user.useConfigOnly`, and a pre-push check refuses commits under any other identity or carrying AI attribution trailers
-- [ ] **PUB-05**: A live-repo inventory (refs, tags, hooks, issues, PRs, deploy keys, Actions history, wiki, pages) is recorded immediately before the flip and shows nothing unreviewed
+- [x] **PUB-05**: A live-repo inventory (refs, tags, hooks, issues, PRs, deploy keys, Actions history, wiki, pages) is recorded immediately before the flip and shows nothing unreviewed
 - [x] **PUB-06**: Row 7's known defect, the carried-forward rows (1, 2, 3c, 4b on the pre-fix digest) and the unexercised NUL `-z` form are disclosed in README or CHANGELOG before the flip
-- [ ] **PUB-07**: `gh repo edit --visibility public` runs only after bokiko's explicit go-word in the conversation, never inside an autonomous phase or a script; secret scanning and push protection are enabled right after
+- [x] **PUB-07**: `gh repo edit --visibility public` runs only after bokiko's explicit go-word in the conversation, never inside an autonomous phase or a script; secret scanning and push protection are enabled right after
 
 ### Harness
 
@@ -101,12 +101,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PUB-01 | Phase 1 | Complete |
-| PUB-02 | Phase 1 | Pending |
+| PUB-02 | Phase 1 | Complete |
 | PUB-03 | Phase 1 | Complete |
 | PUB-04 | Phase 1 | Complete |
-| PUB-05 | Phase 1 | Pending |
+| PUB-05 | Phase 1 | Complete |
 | PUB-06 | Phase 1 | Complete |
-| PUB-07 | Phase 1 | Pending |
+| PUB-07 | Phase 1 | Complete |
 | HARN-01 | Phase 3 | Pending |
 | HARN-02 | Phase 3 | Pending |
 | HARN-03 | Phase 2 | Pending |
