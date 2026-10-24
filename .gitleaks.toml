@@ -6,7 +6,7 @@ useDefault = true
 [[rules]]
 id = "home-path-unix"
 description = "Home-folder path with a user name segment (macOS or Linux)"
-regex = '''/(?:Users|home)/[A-Za-z0-9._-]{1,64}/'''
+regex = '''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[/\s"'`:;,)\]]|$)'''
 tags = ["identifier", "path"]
 
 [[rules]]

@@ -337,6 +337,32 @@ case_identifiers_precommit() {
   reset_w "$head_before"; rm -f "$W/identifiers.txt"
 }
 
+# A bare home directory (no slash after the user name) leaks the name just as a longer path
+# does: at the end of a line, before a space, before a quote and at the end of the file.
+case_bare_home_path_precommit() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  why=
+  id_a=Users; id_b=devname
+  for form in eol space quote eof; do
+    case $form in
+      eol) printf 'HOME=/%s/%s\nnext line\n' "$id_a" "$id_b" > "$W/bare-home.txt" ;;
+      space) printf 'cd /%s/%s && ls\n' "$id_a" "$id_b" > "$W/bare-home.txt" ;;
+      quote) printf 'cd "/%s/%s"\n' "$id_a" "$id_b" > "$W/bare-home.txt" ;;
+      eof) printf 'HOME=/%s/%s' "$id_a" "$id_b" > "$W/bare-home.txt" ;;
+    esac
+    git -C "$W" add bare-home.txt
+    count_before=$(git -C "$W" rev-list --count HEAD)
+    out=$(scratch_commit "$W" "Add a bare home path" 2>&1); rc=$?
+    count_after=$(git -C "$W" rev-list --count HEAD)
+    if [ "$rc" -eq 0 ] || [ "$count_before" != "$count_after" ] || ! printf '%s\n' "$out" | grep -q 'home-path-unix'
+    then why="$why bare form '$form' not refused (exit $rc);"; fi
+    reset_w "$head_before"; rm -f "$W/bare-home.txt"
+  done
+  if [ -z "$why" ]; then pass bare-homedir-precommit
+  else fail bare-homedir-precommit "$why"
+  fi
+}
+
 case_identifier_false_positive_guards() {
   head_before=$(git -C "$W" rev-parse HEAD)
   count_before=$(git -C "$W" rev-list --count HEAD)
@@ -507,6 +533,7 @@ case_prepush_nonexecutable_check_fail_closed
 case_unpinned_skips_identity
 case_leak_seed_precommit
 case_identifiers_precommit
+case_bare_home_path_precommit
 case_identifier_false_positive_guards
 case_denylist_precommit
 case_fail_closed_no_scanner
