@@ -307,7 +307,7 @@ mentions an audit record that is not part of this repository. The reproducible c
 - [x] Bound-ledger backend (`checkpoint-v1`) accepted after review (2026-10-19)
 - [x] Twelve-row publication matrix run and reviewed (2026-10-20)
 - [ ] Clean rerun of publication row 7 (unsupported Do-not-redo entry)
-- [ ] Public release
+- [x] Public release
 
 ---
 
