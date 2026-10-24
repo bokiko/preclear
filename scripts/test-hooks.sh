@@ -363,12 +363,30 @@ case_bare_home_path_precommit() {
   fi
 }
 
+# Only the two role addresses of the vendor domain are exempt; a named person's address at the
+# same domain is still an email finding.
+case_named_vendor_address_refused() {
+  head_before=$(git -C "$W" rev-parse HEAD)
+  count_before=$(git -C "$W" rev-list --count HEAD)
+  vend_a=anthropic; vend_b=com
+  printf 'mail=%s@%s.%s\n' jane.doe "$vend_a" "$vend_b" > "$W/vendor-person.txt"
+  git -C "$W" add vendor-person.txt
+  out=$(scratch_commit "$W" "Add a named vendor address" 2>&1); rc=$?
+  count_after=$(git -C "$W" rev-list --count HEAD)
+  if [ "$rc" -ne 0 ] && [ "$count_before" = "$count_after" ] && printf '%s\n' "$out" | grep -q 'email-address'
+  then pass named-vendor-address-refused
+  else fail named-vendor-address-refused "exit $rc, history count $count_before -> $count_after, expected a refusal naming rule email-address"; printf '%s\n' "$out" | tail -n 6
+  fi
+  reset_w "$head_before"; rm -f "$W/vendor-person.txt"
+}
+
 case_identifier_false_positive_guards() {
   head_before=$(git -C "$W" rev-parse HEAD)
   count_before=$(git -C "$W" rev-list --count HEAD)
   {
     printf 'contact: someone@example.com\n'
     printf 'contact: support@anthropic.com\n'
+    printf 'trailer-like: noreply@anthropic.com\n'
     printf 'settings file: settings.local.json\n'
     printf 'dependency: some-package@0.2.25\n'
     printf 'prose: macOS keeps homes under /Users/ and Linux under /home/ in general.\n'
@@ -719,6 +737,7 @@ case_unpinned_skips_identity
 case_leak_seed_precommit
 case_identifiers_precommit
 case_bare_home_path_precommit
+case_named_vendor_address_refused
 case_identifier_false_positive_guards
 case_denylist_precommit
 case_denylist_paths_and_messages

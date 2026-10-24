@@ -49,7 +49,10 @@ regexes = ['''^bokiko@gmail\.com$''']
 regexTarget = "match"
 
 [[allowlists]]
-description = "Reserved or role-account domains are not personal identifiers"
+description = "Reserved domains and two exact role addresses are not personal identifiers"
 targetRules = ["email-address"]
-regexes = ['''@(?:(?:[A-Za-z0-9-]+\.)*example\.(?:com|org|net|test)|users\.noreply\.github\.com|anthropic\.com)$''']
+regexes = [
+  '''@(?:(?:[A-Za-z0-9-]+\.)*example\.(?:com|org|net|test)|users\.noreply\.github\.com)$''',
+  '''^(?i:noreply|support)@anthropic\.com$''',
+]
 regexTarget = "match"
