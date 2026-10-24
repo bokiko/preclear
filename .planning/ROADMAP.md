@@ -20,7 +20,7 @@ what the model says about itself.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Publication Gate** - Decisions recorded, identity and leak gates live, history scanned, repository public on bokiko's word
+- [x] **Phase 1: Publication Gate** - Decisions recorded, identity and leak gates live, history scanned, repository public on bokiko's word (completed 2026-10-24)
 - [ ] **Phase 2: Model-Free Foundation and Stub** - Spikes decided, test-only stub helper, sanitizer, leak gate and a zero-token self-test suite
 - [ ] **Phase 3: Walking Skeleton (Row 1)** - One row run end to end from one command, filed as sanitized evidence, compared with the committed row
 - [ ] **Phase 4: Full Matrix, Row 7 and Review** - Row waves, row 7 three times, the full matrix from a clean clone as a new baseline, Codex review, docs
@@ -40,7 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The README or CHANGELOG discloses row 7's known defect, the carried-forward rows (1, 2, 3c, 4b on the pre-fix digest) and the never-executed NUL `-z` form, and this disclosure is committed before the flip. A recorded live-repo inventory (refs, tags, hooks, issues, PRs, deploy keys, Actions history, wiki, pages) taken in the same session as the flip shows nothing unreviewed. (PUB-05, PUB-06)
   5. After bokiko's explicit go-word, `gh repo view` reports the repository as public, and secret scanning and push protection are reported enabled right after. Before that word the repository is still private. (PUB-07)
 
-**Plans:** 4/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -135,7 +135,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Publication Gate | 4/4 | In Progress | - |
+| 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 0/3 | Not started | - |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
