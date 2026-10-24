@@ -239,6 +239,35 @@ case_attribution_pattern_fail_closed() {
   fi
 }
 
+# A check that lost its executable bit, or a checks directory with nothing in it, must refuse
+# the push (fail closed) and not approve it silently.
+case_prepush_nonexecutable_check_fail_closed() {
+  assert_scratch "$W"
+  head_before=$(git -C "$W" rev-parse HEAD)
+  why=
+  for state in nonexecutable no-checks; do
+    case $state in
+      nonexecutable) chmod -x "$W/.githooks/checks/leaks.sh" ;;
+      *) mv "$W/.githooks/checks" "$W/.githooks/checks.away" ;;
+    esac
+    printf 'note\n' > "$W/exec-note.txt"
+    git -C "$W" add exec-note.txt
+    scratch_commit "$W" "Add a benign note" skip
+    bad_sha=$(git -C "$W" rev-parse HEAD)
+    out=$(push_in "$W" origin main 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'pre-push FAILED' || ! absent_on_remote "$bad_sha"
+    then why="$why pre-push did not refuse for the $state case (exit $rc);"; fi
+    case $state in
+      nonexecutable) chmod +x "$W/.githooks/checks/leaks.sh" ;;
+      *) mv "$W/.githooks/checks.away" "$W/.githooks/checks" ;;
+    esac
+    reset_w "$head_before"; rm -f "$W/exec-note.txt"
+  done
+  if [ -z "$why" ]; then pass prepush-nonexecutable-check-fail-closed
+  else fail prepush-nonexecutable-check-fail-closed "$why"; printf '%s\n' "$out" | tail -n 6
+  fi
+}
+
 case_unpinned_skips_identity() {
   git clone -q "$R" "$W2" || { fail unpinned-skips-identity "clone of the throwaway remote failed"; return; }
   git -C "$W2" config user.name Intruder
@@ -474,6 +503,7 @@ case_identity_wrong_tagger
 case_trailer_commit_msg
 case_trailer_bypassed_prepush
 case_attribution_pattern_fail_closed
+case_prepush_nonexecutable_check_fail_closed
 case_unpinned_skips_identity
 case_leak_seed_precommit
 case_identifiers_precommit

@@ -24,8 +24,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 [ -s "$ranges" ] || exit 0
 rc=0
+# Fail closed: a check that is present but not executable (lost mode bit after a zip download
+# or a copy), or no check at all, refuses the push instead of silently approving it.
+found=0
 for check in "$here"/checks/*.sh; do
-  [ -x "$check" ] || continue
+  [ -e "$check" ] || continue
+  found=1
+  if [ ! -x "$check" ]; then
+    echo "pre-push FAILED: $check is not executable" >&2
+    rc=1
+    continue
+  fi
   "$check" "$ranges" || rc=1
 done
+[ "$found" -eq 1 ] || { echo "pre-push FAILED: no checks found under $here/checks" >&2; rc=1; }
 exit $rc
