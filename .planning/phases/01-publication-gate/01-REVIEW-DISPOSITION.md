@@ -17,11 +17,11 @@ findings:
     title: "home-folder path rule does not match a path with no trailing slash"
   - id: WR-01
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "relative `--source` and `--record` are resolved after the script changes directory"
   - id: WR-02
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "the attribution check passes when `git log` fails"
   - id: WR-03
     severity: warning
@@ -41,7 +41,7 @@ findings:
     title: "host-name entries of short common words block unrelated commits"
   - id: WR-07
     severity: warning
-    disposition: open
+    disposition: fixed
     title: "the whole `anthropic.com` domain is exempt from the email rule"
   - id: WR-08
     severity: warning
