@@ -28,10 +28,10 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 - ✓ Large or hostile `git status` captured to a sidecar with full escaping, quoted-porcelain fallback documented when NUL capture is refused; concurrent change during capture detected and marked — existing (rows 10, 11)
 - ✓ Hard rules: git read-only, never delete, never run `/clear`, never bypass a hook or write a secret — existing (SKILL.md Hard rules, every row)
 - ✓ Repository follows the owner's RepoFix standard: wave header and footer, badge rows, feature and tech tables, mermaid, structure tree, issue and PR templates — existing (commit a68da30)
+- ✓ The repository is public on GitHub after the owner's three audit decisions and his explicit go-word, with identity, leak and attribution hooks, a full-history scan, a committed disclosure of row 7 and a recorded live inventory — Phase 1 (PUB-01 to PUB-07; flip 2026-10-24, secret scanning and push protection enabled)
 
 ### Active
 
-- [ ] The repository is public on GitHub, after the owner has explicitly decided the three open audit items (historical home paths in d437af2, public author identity, row 7 known defect) and explicitly approved the visibility change
 - [ ] A stranger with Claude Code can clone the repo and rerun the full acceptance matrix (three layouts plus twelve publication rows) from the committed harness, without the owner's private checkpoint helper
 - [ ] A test-only stub helper in `tests/` implements the `checkpoint-v1` interface described in `references/checkpoint-v1.md` closely enough that the backend rows exercise the same branches they exercised against the real helper
 - [ ] Row 7 has a clean rerun whose printed checkpoint carries no unsupported Do-not-redo entry
@@ -68,7 +68,7 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Publish first, harness after | Repo is audited and ready; harness work can land as public commits | — Pending |
+| Publish first, harness after | Repo is audited and ready; harness work can land as public commits | Good — Phase 1 published 2026-10-24 |
 | Ship a test-only stub helper for backend rows | Lets strangers run the full matrix without the private helper; real helper stays private | — Pending |
 | Done means a full matrix rerun from a clean clone | Committed scripts alone would not prove reproducibility | — Pending |
 | No CI this milestone | API-key secret and per-run token cost; local reproducibility first | — Pending |
@@ -78,6 +78,13 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 | Row 10 keeps the quoted-porcelain fallback; no policy exception for the NUL form (2026-10-21) | The fallback is documented behaviour; widening headless policy for one row proves less than it costs | — Pending |
 | Rerun pins one full model id and is labelled a new baseline (2026-10-21) | The 2026-10-20 evidence never recorded its model, so replication is impossible to claim | — Pending |
 | Conflict injection and logging composed outside the stub (2026-10-21) | Three of four research files agree; the conflict row then proves the real hash guard | — Pending |
+| Visibility flip on bokiko's own go-word (2026-10-24) | bokiko gave the exact go-word in his own message; the main conversation ran the flip, never a subagent; flip tip 9a794e7, read-back 55835ad, secret scanning and push protection enabled | Decided 2026-10-24 |
+| gitleaks stays on 8.30.0 (2026-10-24) | The pre-flip scan and the hooks were proven on this version; no reason to move it at the checkpoint | Decided 2026-10-24 |
+| The two Claude Code files are published (2026-10-24) | `.claude/settings.json` (attribution suppression) and `.claude/CLAUDE.md` (no-trailer rule) are accepted as public files | Decided 2026-10-24 |
+| 154 session-id-shaped UUIDs in evidence are accepted (2026-10-24) | They are identifiers, not credentials; no decisions line was requested | Decided 2026-10-24 |
+| The shipped-digest-gap README bullet is published as drafted (2026-10-24) | Facts were verified against SKILL.md and the evidence tree; the bullet discloses that the shipped skill digest was never run by a matrix row | Decided 2026-10-24 |
+| Eleven critical and warning review findings fixed after the flip (2026-10-24) | Hooks now fail closed on missing pattern files, non-executable checks and failed git calls; 29 test cases pass | Done 2026-10-24 |
+| Default mode of `scripts/prepublish-check.sh` requires local deny-list entries (2026-10-24) | An empty deny list no longer passes silently; `--rehearse` keeps the old behaviour for dry runs | Done 2026-10-24 |
 
 ## Evolution
 
@@ -97,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-21 after initialization*
+*Last updated: 2026-10-24 after Phase 1*
