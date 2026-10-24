@@ -70,12 +70,26 @@ Plans:
   4. The spike findings (isolation mode, flag semantics, `init` manifest, session-id handling) are committed with a real captured stream-json fixture. One committed flag table pins every `claude -p` behaviour. The version gate refuses a simulated untested version with a distinct exit code. The allowlist self-test matches the skill's exact commands taken from committed traces. A synthetic `permission_denied` event or `permission_denials` entry fails a row, and a reply that merely contains the word "denied" does not. (HARN-04, HARN-06)
   5. Run-root creation is exclusive: a second creation of the same path is an error, and nothing in the harness deletes or overwrites a run root. The sanitizer builds its deny-list at run time from the live machine, and a seeded leak makes both the leak gate and `promote` refuse to copy into `tests/evidence/`. A scan of the harness imports finds only the standard library, and the bash entry shims run under bash 3.2. (HARN-03, HARN-14, EVID-02, EVID-03)
 
-**Plans:** 3 plans
+**Plans:** 8 plans
 
 Plans:
-- [ ] 02-01: Spikes S1 (isolation) and S2 (stream shape, policy probe); flag table and version gate; allowlist self-test; parser fixture (HARN-04, HARN-06)
-- [ ] 02-02: Mine committed wrapper logs; single-file stub; logging and conflict wrapper; branch table; replay conformance suite (STUB-01 to STUB-07)
-- [ ] 02-03: Exclusive run-root allocator; NUL-safe snapshots and manifests; measurer; runtime-built sanitizer; leak gate and `promote`; self-test suite wiring (HARN-03, HARN-08, HARN-14, EVID-01, EVID-02, EVID-03, EVID-07)
+**Wave 1**
+- [ ] 02-01-PLAN.md — Tracer: the `tests/harness/selftest` shim runs green with `claude` absent, also when `claude` shares a directory with python3 and git, and preflight has distinct exit codes; flag table, call builder, environment scrub, allowlist builder, exact-match version gate and the isolation sentence; strict stream parser with structured denial detection (HARN-04, HARN-06, EVID-07)
+- [ ] 02-02-PLAN.md — Tracer: mine the committed wrapper logs and replay `status` against the stub; single-file `checkpoint-v1` stub core (status, show, validate, update with the conflict path, lint, bind), exits 0, 2, 3, 4 and 64; replay of all 15 recorded calls (STUB-01, STUB-02, STUB-03)
+- [ ] 02-03-PLAN.md — Tracer: exclusive run-root allocator and newline-safe snapshot manifest; heading-inclusive byte measurer (actual/cap); tree copy, read-only git status capture, no-delete static scan (HARN-03, HARN-08, EVID-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-04-PLAN.md — Tracer: row 2 double-conflict replay through the logging and conflict wrapper outside the stub, which also refuses bind, create and init with exit 71; allowlist matcher model tested on committed traces (bind, create, init never model-facing, the env-prefixed route recorded); branch table with UNCONFIRMED marks and the hash-derivation row; frozen-reference digest check (STUB-04, STUB-05, STUB-06, STUB-07, HARN-06)
+- [ ] 02-05-PLAN.md — Tracer: seeded leak refused by the gate and by `promote`; runtime-built sanitizer with lower-case tokens; fail-closed leak gate with gitleaks parity; hardened `promote` (EVID-02, EVID-03)
+- [ ] 02-06-PLAN.md — Tracer: stub write guard, exit 5 kill switch and `note`; lock with the exit 6 timeout switch, atomic-write failure handling, `handoff`, `create`, `init`; boundary, encoding, precision, concurrency, read-only, ordering and containment proofs, and the two-switch inventory (STUB-01, STUB-02, STUB-04)
+
+**Wave 3** *(blocked on Wave 2 completion; needs no login and spends nothing)*
+- [ ] 02-07-PLAN.md — Tracer: the real shim runs every module's tests under bash 3.2 with a tripwire `claude`, alone and sharing a directory with python3 and git; standard-library, shadowing, bash and exit-code agreement tests; stranger README with tables tied to the code; the model-free phase gate (HARN-14, EVID-07)
+
+**Wave 4** *(blocked on Wave 3 completion; autonomous: false)*
+- [ ] 02-08-PLAN.md — Spikes S1 and S2: driver and zero-token dry run with a login-probe record, one-time manual login by bokiko (blocking), measured isolation capture that stops and asks bokiko if the instruction audit cannot be asserted, real stream fixture, seven-command policy probe, resume turn, tested-version seed, committed findings, README flag-table regeneration and gate rerun; total spend at most 5 USD (HARN-04, HARN-06)
+
+*Plan count note: the earlier three-plan outline (02-01 spikes and flag table, 02-02 stub, 02-03 foundation and wiring) could not fit the 50 percent context target, the 3-task limit and the checkpoint-isolation rule, so each outline plan was split by concern. A plan check then reshaped the seven-plan split: the stub's completion became its own plan (02-06) to keep 02-02 inside the context budget, and the README and model-free gate (02-07) now come before the login-gated spikes (02-08), so finishing the model-free work never waits on bokiko's login. No requirement or decision moved.*
 
 ### Phase 3: Walking Skeleton (Row 1)
 
@@ -136,6 +150,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
-| 2. Model-Free Foundation and Stub | 0/3 | Not started | - |
+| 2. Model-Free Foundation and Stub | 0/8 | Not started | - |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |

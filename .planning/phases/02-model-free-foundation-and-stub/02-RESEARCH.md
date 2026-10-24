@@ -615,21 +615,27 @@ CLAUDE_CONFIG_DIR="$harness_cfg" claude auth status --json   # exit 1 and logged
 | A10 | `show` and `update` trim only trailing newlines from bodies | Stub contract | Whitespace edge cases differ from the real build; listed UNCONFIRMED |
 | A11 | Keychain entry for a recreated config path may persist or be reused | S1 guide | Run guide wording only |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **How to satisfy D-09 (brand every model-readable output line) without breaking the adapter's parse of `status` line 1 and `ledger lint OK`?**
    - What we know: the reference parses line 1 between `→ ` and an optional ` (`, and treats any non-matching output as failure.
    - What's unclear: whether bokiko meant a literal per-line marker.
    - Recommendation: one stderr line per call, stripped in replay, plus banner and digest. Ask bokiko to confirm during planning. If a literal per-line brand is wanted, the adapter would have to change, which STUB-07 forbids.
+   - RESOLVED: CONTEXT D-09 (refined after this research) takes the recommendation: one stub-marker line on stderr per call plus a banner in `--version`, stdout unchanged. Implemented in plan 02-02 task 1 and listed as a STUB-ONLY row of the branch table in plan 02-04 task 3.
 2. **Token case: D-15 names `<HOME>`, `<REPO>`; the committed evidence and `CONVENTIONS.md` use `<home>`, `<repo>`, `<run>`, `<helper>`, `<auto-memory-root>`.**
    - Recommendation: emit the D-15 set verbatim, accept lowercase tokens as safe in the leak gate, and have the Phase 4 comparer normalize case. Confirm with bokiko.
+   - RESOLVED: CONTEXT D-15 (refined after this research) fixes lower-case tokens that match the committed evidence byte for byte, so no case normalisation is needed later. Implemented in plan 02-05 (FA-1 and the sanitizer task, TOKENS constant).
 3. **D-02 says the init event lists instructions. It does not.**
    - Recommendation: the hook-based audit above; record the correction in the S1 findings.
+   - RESOLVED: plan 02-08 (FA-1 and task 3) uses the InstructionsLoaded hook for the audit and records the correction in the S1 findings; if the hook cannot be observed in print mode the task stops and asks bokiko instead of weakening D-02 (plan 02-08 FA-10).
 4. **Should the policy builder add `--add-dir` for the wrapper directory?**
    - What we know: out-of-project reads of the wrapper directory were blocked in the evidence.
    - Recommendation: do not add by default, since it changes the baseline; decide per row in Phase 3.
+   - RESOLVED: plan 02-01 FA-6 keeps `--add-dir` out of the pin set; the flag table lists it as not pinned with this reason, and Phase 3 decides per row.
 5. **`CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token` is a documented alternative to a Keychain login** [CITED: authentication]. D-03 locks the manual login, so this is only an option the run guide could mention if bokiko wants it; it moves a secret into the environment.
+   - RESOLVED: plan 02-01 FA-7 does not plan `claude setup-token`, because D-03 locks the manual login into the harness-owned config directory.
 6. **Linux behaviour of the config-directory login** (file under the directory instead of the Keychain) is documented but untested here.
+   - RESOLVED as a recorded limit: plan 02-08 carries it as a backstop truth (documented, untested) and plan 02-07's README states macOS as verified and Linux as unverified in its Platforms section.
 
 ## Environment Availability
 
