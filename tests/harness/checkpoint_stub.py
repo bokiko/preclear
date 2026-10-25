@@ -106,7 +106,11 @@ EXIT_INTERNAL = 1
 EXIT_USAGE = 2
 EXIT_CONFLICT = 3
 EXIT_INVALID = 4
+EXIT_KILL = 5
+EXIT_LOCK = 6
 EXIT_NO_HOME = 64
+
+KILL_SWITCH_VAR = "CKPT_STUB_KILL_SWITCH"
 
 BEGIN_RE = re.compile(r"^<!-- CHECKPOINT:BEGIN updated: (\S+) by: (\S+) -->$")
 END_LINE = "<!-- CHECKPOINT:END -->"
@@ -115,7 +119,11 @@ SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{7,63}$")
 LEDGER_GLOB_RE = re.compile(r"^CONTINUITY_CLAUDE-[^/]+\.md$")
 ARROW = "→"
 
-NOT_IMPLEMENTED = ("note", "handoff", "create", "init")
+HISTORY_RE = re.compile(r"(?m)^## History[ \t]*$")
+NEXT_HEADING_RE = re.compile(r"(?m)^## ")
+BEGIN_LINE_RE = re.compile(r"(?m)^<!-- CHECKPOINT:BEGIN [^\n]*$")
+
+NOT_IMPLEMENTED = ("handoff", "create", "init")
 
 
 class Exit(Exception):
@@ -372,8 +380,40 @@ def audit(ledger: str, ctx: Context, verb: str, section=None) -> None:
 
 
 def guard_write(ctx: Context) -> None:
-    """Every write verb calls this first. Plain pass-through until the stub completion."""
-    return None
+    """Every write verb calls this first, before any lock or file access.
+
+    The labelled kill switch: CKPT_STUB_KILL_SWITCH equal to 1 refuses the write
+    with exit 5. Any other value, including empty and 0, leaves it off.
+    """
+    if os.environ.get(KILL_SWITCH_VAR) == "1":
+        raise Exit(EXIT_KILL, "checkpoint: kill switch active")
+
+
+def append_history(text: str, entry: str) -> str:
+    """Append entry under ## History; every byte up to and including the end marker is kept."""
+    begin = BEGIN_LINE_RE.search(text)
+    end = text.find("\n" + END_LINE, begin.end()) if begin else -1
+    if end < 0:
+        raise Exit(EXIT_USAGE, "checkpoint: no checkpoint block")
+    cut = end + 1 + len(END_LINE)
+    head, tail = text[:cut], text[cut:]
+    found = HISTORY_RE.search(tail)
+    if found is None:
+        before, after = tail, ""
+        if not before.endswith("\n"):
+            before += "\n"
+        if not before.endswith("\n\n"):
+            before += "\n"
+        before += "## History\n"
+    else:
+        following = NEXT_HEADING_RE.search(tail, found.end())
+        split = following.start() if following else len(tail)
+        before, after = tail[:split], tail[split:]
+    if not before.endswith("\n"):
+        before += "\n"
+    if not before.endswith("\n\n"):
+        before += "\n"
+    return head + before + entry + after
 
 
 # ------------------------------------------------------------------------ verbs
@@ -525,6 +565,21 @@ def verb_update(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def verb_note(ctx: Context, args) -> int:
+    guard_write(ctx)
+    ledger, _ = resolve_ledger(ctx, args.ledger)
+    text, parsed = load_ledger(ledger)
+    if parsed is None:
+        raise Exit(EXIT_USAGE, "checkpoint: no checkpoint block in " + ledger)
+    body = read_input_file(args.source).rstrip("\n")
+    entry = "### %s (%s)\n%s\n\n" % (utc_iso_ms(time.time_ns()), ctx.id8, body)
+    mode = os.stat(ledger).st_mode & 0o777
+    atomic_write(ledger, append_history(text, entry).encode("utf-8"), mode)
+    audit(ledger, ctx, "note")
+    out("noted in %s\n" % ledger)
+    return EXIT_OK
+
+
 def verb_lint(ctx: Context, args) -> int:
     warnings = []
     for root in sorted(load_roots(ctx), key=os.fsencode):
@@ -584,6 +639,7 @@ VERBS = {
     "show": verb_show,
     "validate": verb_validate,
     "update": verb_update,
+    "note": verb_note,
     "lint": verb_lint,
     "bind": verb_bind,
 }
@@ -632,8 +688,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--expect-section", required=True)
     p.add_argument("--from", dest="source", required=True)
     p.add_argument("--ledger")
-    p = verb("note", "append to the ledger history (later plan)")
-    p.add_argument("--from", dest="source")
+    p = verb("note", "append to the ledger history")
+    p.add_argument("--from", dest="source", required=True)
+    p.add_argument("--ledger")
     verb("lint", "scan the registered ledgers")
     p = verb("handoff", "write an immutable snapshot (later plan)")
     p.add_argument("--from", dest="source")
