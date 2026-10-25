@@ -334,7 +334,7 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(rig.ledger, parse_show(out)["header"]["ledger"])
 
     def test_committed_path_free_hashes_reproduce_from_the_committed_ledger(self) -> None:
-        rig = Rig(bind=False)
+        rig = Rig()
         committed = os.path.join(EVIDENCE, "row2-double-conflict", "snap-0-setup", "CONTINUITY_CLAUDE-widget-export.md")
         with open(committed, "rb") as handle:
             data = handle.read()

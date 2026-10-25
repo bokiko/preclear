@@ -7,6 +7,10 @@ argv is run in order. Where the committed exit 3 came from a concurrent writer,
 this test plays that writer (test-side, outside the stub), taking its body from
 the committed conflict file.
 
+One input is not the snapshot copy: the snapshot holds the model's last goal.md, so an
+update with a recorded exit 3 is given the text the committed conflict file records under
+Yours (not applied), which is what that call presented.
+
 The comparison against committed outputs applies one normalisation to both sides.
 The normalisation (nothing else is masked):
 
@@ -160,6 +164,10 @@ def conflict_kept(text: str) -> str:
     return text.split("\n## Current (kept)\n", 1)[1].rstrip("\n")
 
 
+def conflict_yours(text: str) -> str:
+    return text.split("\n## Yours (not applied)\n", 1)[1].split("\n\n## Current (kept)\n", 1)[0]
+
+
 def committed_trace_result(miner, output: dict) -> str:
     calls = miner.parse_trace(read_text(repo_path(output["path"])))
     record = calls[output["bash_index"] - 1]
@@ -242,6 +250,27 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(injected[k], normalise(out, state["ledgers"]))
         state["injections"] = k + 1
 
+    def present_historic_input(self, state, case, call, argv) -> None:
+        """Give an exit 3 update the input file the model presented at that call.
+
+        The snapshot copy of the input file is the model's last version of it; the
+        model rewrote goal.md after reading the first conflict, so the snapshot holds
+        what the second update presented. What each conflicting update presented is
+        recorded in the committed conflict file under Yours (not applied).
+        """
+        k = state["conflicts"]
+        yours = conflict_yours(read_text(repo_path(case["conflict_files"][k])))
+        item = call["inputs"][0]
+        snapshot = read_text(repo_path(item["source"])).rstrip("\n")
+        if k == len(case["conflict_files"]) - 1:
+            self.assertEqual(snapshot, yours, "the last conflicting update presented the snapshot input")
+        else:
+            self.assertNotEqual(snapshot, yours)
+            self.assertTrue(snapshot.startswith(yours))
+        dest = os.path.join(state["project"], *item["replay_path"].split("/"))
+        with open(dest, "wb") as handle:
+            handle.write((yours + "\n").encode("utf-8"))
+
     def check_conflict_file(self, state, case) -> None:
         k = state["conflicts"]
         committed_rel = case["conflict_files"][k]
@@ -304,6 +333,7 @@ class ReplayTests(unittest.TestCase):
             argv[item["index"]] = item["replay_path"]
         label = "%s call %d (%s)" % (case["row"], call["position"], call["argv"][0])
         if argv[0] == "update" and call["exit"] == 3:
+            self.present_historic_input(state, case, call, argv)
             self.inject(state, case, argv[argv.index("--section") + 1])
         code, out, err = self.stub(state, case, argv)
         ReplayTests.calls_replayed += 1

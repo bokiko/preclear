@@ -30,11 +30,10 @@ Session identity: --session (before or after the verb), else the
 CLAUDE_CODE_SESSION_ID variable, else exit 2. The short id is the first eight
 characters.
 
-Verbs implemented in this build step: status (model-facing) and bind (driver only,
-needed to build state). show, validate, update and lint follow in the next step of
-the same plan; note, handoff, create and init exit 1 ("not implemented in this build
-step") until the stub completion in a later plan fills them, the two labelled exit 5
-and 6 switches and the lock with them.
+Verbs implemented here: status, show, validate, update, lint (model-facing) and
+bind (driver only, needed to build state). note, handoff, create and init exit 1
+("not implemented in this build step"); the stub completion in a later plan fills
+them, the two labelled exit 5 and 6 switches and the lock with them.
 
 Exit codes: 0 ok, 1 internal error, 2 usage or validation (including no
 checkpoint block), 3 conflict, 4 invalid checkpoint, 5 kill switch (later plan),
@@ -116,7 +115,7 @@ SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{7,63}$")
 LEDGER_GLOB_RE = re.compile(r"^CONTINUITY_CLAUDE-[^/]+\.md$")
 ARROW = "→"
 
-NOT_IMPLEMENTED = ("show", "validate", "update", "note", "lint", "handoff", "create", "init")
+NOT_IMPLEMENTED = ("note", "handoff", "create", "init")
 
 
 class Exit(Exception):
@@ -405,10 +404,156 @@ def verb_status(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def verb_show(ctx: Context, args) -> int:
+    wanted = None
+    if args.section:
+        wanted = args.section[0]
+        if wanted not in SECTIONS:
+            raise Exit(EXIT_USAGE, 'checkpoint: unknown section "%s"' % wanted)
+    ledger, _ = resolve_ledger(ctx, args.ledger)
+    text, parsed = load_ledger(ledger)
+    if parsed is None:
+        raise Exit(EXIT_USAGE, "checkpoint: no checkpoint block in " + ledger)
+    _, updated, by, sections, _ = parsed
+    fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    out("ledger: %s\n" % ledger)
+    out("file-fingerprint: %s\n" % fingerprint)
+    out("checkpoint-updated: %s by %s\n" % (updated, by))
+    out("\n")
+    for name, body in sections:
+        if wanted is not None and name != wanted:
+            continue
+        out("## %s\n" % name)
+        out("section-hash: %s\n" % section_hash(body))
+        if body:
+            out(body + "\n")
+        out("\n")
+    return EXIT_OK
 
 
+def read_input_file(path: str) -> str:
+    try:
+        return read_text_strict(path)
+    except UnicodeDecodeError:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: input is not valid UTF-8")
+    except OSError:
+        raise Exit(EXIT_USAGE, "checkpoint: cannot read " + path)
 
 
+def verb_validate(ctx: Context, args) -> int:
+    text = read_input_file(args.source)
+    lines = text.rstrip("\n").split("\n")
+    if not BEGIN_RE.match(lines[0]):
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: missing begin marker")
+    if lines[-1] != END_LINE or len(lines) < 2:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: missing end marker")
+    sections = parse_block_lines(lines[1:-1])
+    if sections is None:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: text before the first section")
+    updated = utc_iso_ms(time.time_ns())
+    reason = check_block(updated, ctx.id8, sections)
+    if reason:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: " + reason)
+    size = len(render_block(updated, ctx.id8, sections).encode("utf-8"))
+    out("valid checkpoint: %d bytes, Authorization %d chars\n" % (size, len(dict(sections)[AUTH])))
+    return EXIT_OK
+
+
+def write_conflict(ledger: str, ctx: Context, name: str, base_hash: str, current: str, yours: str, kept: str) -> str:
+    content = (
+        '# Conflict on section "%s"\n' % name
+        + "ledger: %s\n" % ledger
+        + "your base hash: %s\n" % base_hash
+        + "current hash: %s\n" % current
+        + "\n## Yours (not applied)\n%s\n" % yours
+        + "\n## Current (kept)\n%s\n" % kept
+    )
+    ns = time.time_ns()
+    while True:
+        target = "%s.conflict-%s-%s.md" % (ledger, conflict_stamp(ns), ctx.id8)
+        try:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            ns += 1000000
+            continue
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        return target
+
+
+def verb_update(ctx: Context, args) -> int:
+    guard_write(ctx)
+    name = args.section
+    if name not in SECTIONS:
+        raise Exit(EXIT_USAGE, 'checkpoint: unknown section "%s"' % name)
+    if not HASH_RE.match(args.expect_section):
+        raise Exit(EXIT_USAGE, "checkpoint: --expect-section must be 64 lowercase hex characters")
+    ledger, _ = resolve_ledger(ctx, args.ledger)
+    _, parsed = load_ledger(ledger)
+    if parsed is None:
+        raise Exit(EXIT_USAGE, "checkpoint: no checkpoint block in " + ledger)
+    pre, _, _, sections, post = parsed
+    new_body_raw = read_input_file(args.source)
+    reason = check_sections(sections)
+    if reason:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: ledger block: " + reason)
+    current_body = dict(sections)[name]
+    current_hash = section_hash(current_body)
+    if current_hash != args.expect_section:
+        target = write_conflict(
+            ledger, ctx, name, args.expect_section, current_hash, new_body_raw.rstrip("\n"), current_body
+        )
+        raise Exit(
+            EXIT_CONFLICT,
+            'checkpoint: conflict: "%s" changed since your read. Nothing written. Details: %s' % (name, target),
+        )
+    new_body = new_body_raw.rstrip("\n")
+    if any(line.startswith("## ") for line in new_body.split("\n")):
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: body contains a section heading line")
+    updated_sections = [(n, new_body if n == name else b) for n, b in sections]
+    updated = utc_iso_ms(time.time_ns())
+    reason = check_block(updated, ctx.id8, updated_sections)
+    if reason:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: " + reason)
+    block = render_block(updated, ctx.id8, updated_sections)
+    mode = os.stat(ledger).st_mode & 0o777
+    atomic_write(ledger, (pre + block + post).encode("utf-8"), mode)
+    audit(ledger, ctx, "update", name)
+    out('updated "%s" in %s\n' % (name, ledger))
+    return EXIT_OK
+
+
+def verb_lint(ctx: Context, args) -> int:
+    warnings = []
+    for root in sorted(load_roots(ctx), key=os.fsencode):
+        if not is_within(root, ctx.home) or not os.path.isdir(root):
+            continue
+        for fname in sorted(os.listdir(root), key=os.fsencode):
+            path = os.path.join(root, fname)
+            if not LEDGER_GLOB_RE.match(fname) or ".conflict-" in fname or not os.path.isfile(path):
+                continue
+            try:
+                text = read_text_strict(path)
+            except (OSError, UnicodeDecodeError):
+                warnings.append("warning: %s: ledger is unreadable or not UTF-8" % path)
+                continue
+            parsed = parse_ledger(text)
+            if parsed is None:
+                warnings.append("warning: %s: no checkpoint block" % path)
+                continue
+            _, updated, by, sections, _ = parsed
+            reason = check_block(updated, by, sections)
+            if reason:
+                warnings.append("warning: %s: %s" % (path, reason))
+            elif not text.startswith("# CONTINUITY"):
+                warnings.append("warning: %s: first line is not a CONTINUITY title" % path)
+    if not warnings:
+        out("ledger lint OK\n")
+    else:
+        out("\n".join(warnings) + "\n")
+    return EXIT_OK
 
 
 def verb_bind(ctx: Context, args) -> int:
@@ -436,6 +581,10 @@ def verb_bind(ctx: Context, args) -> int:
 
 VERBS = {
     "status": verb_status,
+    "show": verb_show,
+    "validate": verb_validate,
+    "update": verb_update,
+    "lint": verb_lint,
     "bind": verb_bind,
 }
 
