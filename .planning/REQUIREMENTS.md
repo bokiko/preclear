@@ -35,7 +35,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **HARN-11**: Row 11's injector triggers on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls, and wrapper log lines are correlated with `tool_use` ids
 - [ ] **HARN-12**: Row 7's preflight proves the `chmod` denial is effective or marks the row SKIPPED
 - [ ] **HARN-13**: Everything new lives under `tests/harness/`; `SKILL.md`, `references/` and `tests/fixtures/` are unchanged unless a rerun exposes a defect, and `SKILL.md` stays at or under 12,000 bytes
-- [ ] **HARN-14**: The harness needs no install beyond Claude Code, git and Python 3 (standard library only); shell is limited to bash 3.2-compatible entry shims and the model-facing wrapper
+- [x] **HARN-14**: The harness needs no install beyond Claude Code, git and Python 3 (standard library only); shell is limited to bash 3.2-compatible entry shims and the model-facing wrapper
 
 ### Stub helper
 
@@ -120,7 +120,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-11 | Phase 4 | Pending |
 | HARN-12 | Phase 4 | Pending |
 | HARN-13 | Phase 3 | Pending |
-| HARN-14 | Phase 2 | Pending |
+| HARN-14 | Phase 2 | Complete |
 | STUB-01 | Phase 2 | Complete |
 | STUB-02 | Phase 2 | Complete |
 | STUB-03 | Phase 2 | Complete |
