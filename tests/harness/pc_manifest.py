@@ -42,7 +42,14 @@ def _raise(error):
     raise error
 
 
-def tree_manifest(root):
+GIT_ENV_OVERRIDES = {}
+
+
+def capture_git_status(project_dir, git):
+    return (b"", b"")
+
+
+def tree_manifest(root, refuse_under=()):
     """Return the entries of ROOT sorted by raw relative path bytes.
 
     Never follows symlinks. A missing or non-directory root raises ManifestError; an

@@ -102,6 +102,10 @@ def write_exclusive(path, data, mode):
         os.close(fd)
 
 
+def copy_tree_exclusive(src, dst):
+    return None
+
+
 def main(argv):
     if len(argv) != 2:
         sys.stderr.write("usage: pc_runroot.py PARENT NAME\n")
