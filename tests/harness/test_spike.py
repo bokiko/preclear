@@ -106,6 +106,7 @@ def make_repo(base: str) -> str:
     os.makedirs(harness)
     shutil.copy2(os.path.join(HARNESS_DIR, "checkpoint-wrapper"), os.path.join(harness, "checkpoint-wrapper"))
     shutil.copy2(os.path.join(HARNESS_DIR, "checkpoint_stub.py"), os.path.join(harness, "checkpoint_stub.py"))
+    shutil.copy2(os.path.join(HARNESS_DIR, "pc_hooklog.py"), os.path.join(harness, "pc_hooklog.py"))
     setup = os.path.join(repo, ROW2_SETUP)
     os.makedirs(setup)
     shutil.copyfile(os.path.join(ROOT, ROW2_SETUP, LEDGER_NAME), os.path.join(setup, LEDGER_NAME))
