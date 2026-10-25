@@ -70,7 +70,7 @@ Plans:
   4. The spike findings (isolation mode, flag semantics, `init` manifest, session-id handling) are committed with a real captured stream-json fixture. One committed flag table pins every `claude -p` behaviour. The version gate refuses a simulated untested version with a distinct exit code. The allowlist self-test matches the skill's exact commands taken from committed traces. A synthetic `permission_denied` event or `permission_denials` entry fails a row, and a reply that merely contains the word "denied" does not. (HARN-04, HARN-06)
   5. Run-root creation is exclusive: a second creation of the same path is an error, and nothing in the harness deletes or overwrites a run root. The sanitizer builds its deny-list at run time from the live machine, and a seeded leak makes both the leak gate and `promote` refuse to copy into `tests/evidence/`. A scan of the harness imports finds only the standard library, and the bash entry shims run under bash 3.2. (HARN-03, HARN-14, EVID-02, EVID-03)
 
-**Plans:** 3/8 plans executed
+**Plans:** 6/8 plans executed
 
 Plans:
 **Wave 1**
@@ -79,9 +79,9 @@ Plans:
 - [x] 02-03-PLAN.md — Tracer: exclusive run-root allocator and newline-safe snapshot manifest; heading-inclusive byte measurer (actual/cap); tree copy, read-only git status capture, no-delete static scan (HARN-03, HARN-08, EVID-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 02-04-PLAN.md — Tracer: row 2 double-conflict replay through the logging and conflict wrapper outside the stub, which also refuses bind, create and init with exit 71; allowlist matcher model tested on committed traces (bind, create, init never model-facing, the env-prefixed route recorded); branch table with UNCONFIRMED marks and the hash-derivation row; frozen-reference digest check (STUB-04, STUB-05, STUB-06, STUB-07, HARN-06)
-- [ ] 02-05-PLAN.md — Tracer: seeded leak refused by the gate and by `promote`; runtime-built sanitizer with lower-case tokens; fail-closed leak gate with gitleaks parity; hardened `promote` (EVID-02, EVID-03)
-- [ ] 02-06-PLAN.md — Tracer: stub write guard, exit 5 kill switch and `note`; lock with the exit 6 timeout switch, atomic-write failure handling, `handoff`, `create`, `init`; boundary, encoding, precision, concurrency, read-only, ordering and containment proofs, and the two-switch inventory (STUB-01, STUB-02, STUB-04)
+- [x] 02-04-PLAN.md — Tracer: row 2 double-conflict replay through the logging and conflict wrapper outside the stub, which also refuses bind, create and init with exit 71; allowlist matcher model tested on committed traces (bind, create, init never model-facing, the env-prefixed route recorded); branch table with UNCONFIRMED marks and the hash-derivation row; frozen-reference digest check (STUB-04, STUB-05, STUB-06, STUB-07, HARN-06)
+- [x] 02-05-PLAN.md — Tracer: seeded leak refused by the gate and by `promote`; runtime-built sanitizer with lower-case tokens; fail-closed leak gate with gitleaks parity; hardened `promote` (EVID-02, EVID-03)
+- [x] 02-06-PLAN.md — Tracer: stub write guard, exit 5 kill switch and `note`; lock with the exit 6 timeout switch, atomic-write failure handling, `handoff`, `create`, `init`; boundary, encoding, precision, concurrency, read-only, ordering and containment proofs, and the two-switch inventory (STUB-01, STUB-02, STUB-04)
 
 **Wave 3** *(blocked on Wave 2 completion; needs no login and spends nothing)*
 - [ ] 02-07-PLAN.md — Tracer: the real shim runs every module's tests under bash 3.2 with a tripwire `claude`, alone and sharing a directory with python3 and git; standard-library, shadowing, bash and exit-code agreement tests; stranger README with tables tied to the code; the model-free phase gate (HARN-14, EVID-07)
@@ -150,6 +150,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
-| 2. Model-Free Foundation and Stub | 3/8 | In Progress | - |
+| 2. Model-Free Foundation and Stub | 6/8 | In Progress | - |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |

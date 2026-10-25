@@ -27,7 +27,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **HARN-03**: Every run root is created exclusively and never overwritten or deleted by the harness; a collision is an error
 - [ ] **HARN-04**: Every `claude -p` invocation pins its behaviour explicitly (`--output-format stream-json --verbose`, `--setting-sources project,local`, `--settings` with an absolute realpath `autoMemoryDirectory`, `--session-id`, `--permission-mode default`, `--allowedTools` as a literal list, one full model id, `--max-turns`, `--max-budget-usd`, `DISABLE_AUTOUPDATER=1`) and a version gate refuses an untested Claude Code version
 - [ ] **HARN-05**: Each run records provenance: Claude Code version, `init.model`, skill and adapter digests, harness version, isolation mode, tool set, allowlist, and per-stage usage and `total_cost_usd`
-- [ ] **HARN-06**: The allowlist is checked against the skill's exact commands by a self-test, and any unexpected `permission_denied` event or `result.permission_denials` entry fails the row; refusals are never detected by substring on the reply
+- [x] **HARN-06**: The allowlist is checked against the skill's exact commands by a self-test, and any unexpected `permission_denied` event or `result.permission_denials` entry fails the row; refusals are never detected by substring on the reply
 - [ ] **HARN-07**: The `system/init` manifest (skills, permission mode, memory paths) is asserted every run, and the isolation mode in force (default or strict) is recorded per row after spike S1 decides which the matrix claims
 - [x] **HARN-08**: Snapshots and manifests are filename-safe (newline and non-Latin names survive) and are taken before and after every stage
 - [ ] **HARN-09**: Write-boundary and git-read-only assertions are mechanical: zero writes outside approved roots, no git mutation, derived from snapshots and traces rather than the model's claims
@@ -39,19 +39,19 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Stub helper
 
-- [ ] **STUB-01**: A single-file Python stub under `tests/harness/` implements the `checkpoint-v1` interface in `references/checkpoint-v1.md`: `status`, `show`, `validate`, `update`, `note`, `lint`, `handoff`, exit codes 0 to 6, 64-char lowercase sha256 section hashes, six-section and byte-cap validation, atomic writes and a lock
-- [ ] **STUB-02**: The stub refuses to run without `CKPT_HOME` and keeps all state under it, so every run is isolated
+- [x] **STUB-01**: A single-file Python stub under `tests/harness/` implements the `checkpoint-v1` interface in `references/checkpoint-v1.md`: `status`, `show`, `validate`, `update`, `note`, `lint`, `handoff`, exit codes 0 to 6, 64-char lowercase sha256 section hashes, six-section and byte-cap validation, atomic writes and a lock
+- [x] **STUB-02**: The stub refuses to run without `CKPT_HOME` and keeps all state under it, so every run is isolated
 - [x] **STUB-03**: The observable contract is mined from every committed `wrapper-calls.log` and decisive output in `tests/evidence/`, and a replay conformance suite reruns those argv sequences against the stub with zero model tokens
-- [ ] **STUB-04**: Conflict injection and call logging are composed outside the stub by a wrapper, so the conflict row proves the real hash guard; stub-internal switches exist only for exits 5 and 6 and are labelled
-- [ ] **STUB-05**: A branch table lists every exit code and status shape the rows need and marks `handoff`, `note`, exit 5 and exit 6 as UNCONFIRMED against the real build; the stub brands its output as stub-backed
-- [ ] **STUB-06**: `bind`, `create` and `init` are never in any model-facing allowlist; only the driver may call them
-- [ ] **STUB-07**: `references/checkpoint-v1.md` is not edited for the stub; stub documentation lives under `tests/`
+- [x] **STUB-04**: Conflict injection and call logging are composed outside the stub by a wrapper, so the conflict row proves the real hash guard; stub-internal switches exist only for exits 5 and 6 and are labelled
+- [x] **STUB-05**: A branch table lists every exit code and status shape the rows need and marks `handoff`, `note`, exit 5 and exit 6 as UNCONFIRMED against the real build; the stub brands its output as stub-backed
+- [x] **STUB-06**: `bind`, `create` and `init` are never in any model-facing allowlist; only the driver may call them
+- [x] **STUB-07**: `references/checkpoint-v1.md` is not edited for the stub; stub documentation lives under `tests/`
 
 ### Evidence
 
 - [x] **EVID-01**: Byte measurement runs on original files before any sanitizing, per section heading-inclusive, against the same caps as the committed evidence
-- [ ] **EVID-02**: A sanitizer builds its deny-list at run time from the live machine (raw, realpath, dash-slug and URL-encoded home forms, user, hostname, temp roots) and sanitizes at write time
-- [ ] **EVID-03**: A fail-closed leak gate scans every file before it is filed; a `promote` step refuses to copy anything into `tests/evidence/` on a scan failure
+- [x] **EVID-02**: A sanitizer builds its deny-list at run time from the live machine (raw, realpath, dash-slug and URL-encoded home forms, user, hostname, temp roots) and sanitizes at write time
+- [x] **EVID-03**: A fail-closed leak gate scans every file before it is filed; a `promote` step refuses to copy anything into `tests/evidence/` on a scan failure
 - [ ] **EVID-04**: Filed rows follow the committed per-row file set (README, tools, digests, short and full traces, snapshots, measurements) plus `mechanical-checks.md`, `usage.txt`, `model-id.txt`, `isolation-mode.txt`, `harness-version.txt`, and are written with exclusive creation into a new dated folder
 - [ ] **EVID-05**: The harness never prints a verdict; each row ends with `Reviewer verdict: PENDING` and a reviewer checklist of mechanical facts
 - [ ] **EVID-06**: A read-only structural comparer reports per-row differences between a rerun and `tests/evidence/publication-2026-10-20/` without editing either
@@ -112,7 +112,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-03 | Phase 2 | Complete |
 | HARN-04 | Phase 2 | Pending |
 | HARN-05 | Phase 3 | Pending |
-| HARN-06 | Phase 2 | Pending |
+| HARN-06 | Phase 2 | Complete |
 | HARN-07 | Phase 3 | Pending |
 | HARN-08 | Phase 2 | Complete |
 | HARN-09 | Phase 3 | Pending |
@@ -121,16 +121,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-12 | Phase 4 | Pending |
 | HARN-13 | Phase 3 | Pending |
 | HARN-14 | Phase 2 | Pending |
-| STUB-01 | Phase 2 | Pending |
-| STUB-02 | Phase 2 | Pending |
+| STUB-01 | Phase 2 | Complete |
+| STUB-02 | Phase 2 | Complete |
 | STUB-03 | Phase 2 | Complete |
-| STUB-04 | Phase 2 | Pending |
-| STUB-05 | Phase 2 | Pending |
-| STUB-06 | Phase 2 | Pending |
-| STUB-07 | Phase 2 | Pending |
+| STUB-04 | Phase 2 | Complete |
+| STUB-05 | Phase 2 | Complete |
+| STUB-06 | Phase 2 | Complete |
+| STUB-07 | Phase 2 | Complete |
 | EVID-01 | Phase 2 | Complete |
-| EVID-02 | Phase 2 | Pending |
-| EVID-03 | Phase 2 | Pending |
+| EVID-02 | Phase 2 | Complete |
+| EVID-03 | Phase 2 | Complete |
 | EVID-04 | Phase 3 | Pending |
 | EVID-05 | Phase 3 | Pending |
 | EVID-06 | Phase 3 | Pending |
