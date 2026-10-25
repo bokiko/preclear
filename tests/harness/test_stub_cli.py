@@ -7,7 +7,10 @@ test and their paths are never printed.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib
+import io
 import json
 import os
 import re
@@ -15,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -714,6 +718,206 @@ class KillSwitchTests(unittest.TestCase):
             args = ["update", "--section", "Next action", "--expect-section", hashes["Next action"], "--from", body]
             code, out, err = rig.run(args, env_extra={KILL_SWITCH: value})
             self.assertEqual(0, code, (value, err))
+
+
+HANDOFF_NAME = re.compile(r"^handoff-\d{8}T\d{9}Z-%s\.md$" % ID8)
+
+
+def run_in_process(args, home, session=SESSION, patches=None):
+    """Run checkpoint_stub.main inside this process; return (code, stdout, stderr)."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    module = importlib.import_module("checkpoint_stub")
+    env = {"CKPT_HOME": home, "CLAUDE_CODE_SESSION_ID": session}
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(stdout), \
+            contextlib.redirect_stderr(stderr), contextlib.ExitStack() as stack:
+        for target, kwargs in (patches or []):
+            stack.enter_context(mock.patch(target, **kwargs))
+        code = module.main(list(args))
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
+class HandoffTests(unittest.TestCase):
+    def test_handoff_writes_one_new_file_under_the_handoffs_folder(self) -> None:
+        rig = Rig()
+        body = rig.file("h.md", "Frozen copy.\n\nWith a trailing blank line.\n\n")
+        code, out, err = rig.run(["handoff", "--from", body])
+        self.assertEqual(0, code, err)
+        folder = os.path.join(rig.home, "handoffs")
+        names = os.listdir(folder)
+        self.assertEqual(1, len(names), names)
+        self.assertRegex(names[0], HANDOFF_NAME)
+        self.assertEqual("handoff written: %s\n" % os.path.join(folder, names[0]), out)
+        self.assertEqual(b"Frozen copy.\n\nWith a trailing blank line.\n\n", rig.read(os.path.join(folder, names[0])))
+
+    def test_handoff_never_overwrites_an_earlier_snapshot(self) -> None:
+        rig = Rig()
+        first = rig.file("one.md", "First snapshot.")
+        second = rig.file("two.md", "Second snapshot.")
+        self.assertEqual(0, rig.run(["handoff", "--from", first])[0])
+        folder = os.path.join(rig.home, "handoffs")
+        (name_one,) = os.listdir(folder)
+        before = rig.read(os.path.join(folder, name_one))
+        self.assertEqual(0, rig.run(["handoff", "--from", second])[0])
+        names = sorted(os.listdir(folder))
+        self.assertEqual(2, len(names), names)
+        self.assertEqual(before, rig.read(os.path.join(folder, name_one)))
+
+    def test_handoff_name_collision_moves_one_millisecond_on(self) -> None:
+        rig = Rig()
+        body = rig.file("h.md", "Same instant.")
+        edge = 1760915427227000000
+        patches = [("time.time_ns", {"return_value": edge})]
+        for _ in range(2):
+            code, out, err = run_in_process(["handoff", "--from", body], rig.home, patches=patches)
+            self.assertEqual(0, code, err)
+        names = sorted(os.listdir(os.path.join(rig.home, "handoffs")))
+        self.assertEqual(2, len(names), names)
+        stamps = [n.split("-")[1] for n in names]
+        self.assertEqual(int(stamps[0][-4:-1]) + 1, int(stamps[1][-4:-1]))
+
+    def test_handoff_without_a_binding_or_ledger_exits_2(self) -> None:
+        rig = Rig(bind=False)
+        body = rig.file("h.md", "x")
+        code, out, err = rig.run(["handoff", "--from", body])
+        self.assertEqual(2, code)
+        self.assertFalse(os.path.exists(os.path.join(rig.home, "handoffs")))
+
+
+class DriverVerbTests(unittest.TestCase):
+    def test_driver_create_init_and_bind_build_a_bound_checkpointed_ledger(self) -> None:
+        rig = Rig(bind=False)
+        code, out, err = rig.run(["create", "--task", "widget"])
+        self.assertEqual(0, code, err)
+        path = os.path.join(rig.ledgers, "CONTINUITY_CLAUDE-widget.md")
+        self.assertEqual("created %s\n" % path, out)
+        self.assertEqual(b"# CONTINUITY \xe2\x80\x94 widget\n\n## History\n", rig.read(path))
+        with open(os.path.join(rig.home, "ledger-roots.json"), "r", encoding="utf-8") as handle:
+            self.assertEqual({"roots": [rig.ledgers]}, json.loads(handle.read()))
+        block = rig.file("block.md", block_text())
+        code, out, err = rig.run(["init", "--ledger", path, "--from", block])
+        self.assertEqual(0, code, err)
+        self.assertEqual("initialised %s\n" % path, out)
+        data = rig.read(path).decode("utf-8")
+        self.assertTrue(data.startswith("# CONTINUITY — widget\n\n<!-- CHECKPOINT:BEGIN updated: "))
+        self.assertTrue(data.endswith("<!-- CHECKPOINT:END -->\n\n## History\n"))
+        marker = re.search(r"<!-- CHECKPOINT:BEGIN updated: (\S+) by: (\S+) -->", data)
+        self.assertRegex(marker.group(1), ISO_MS)
+        self.assertEqual(ID8, marker.group(2))
+        code, out, err = rig.run(["bind", "--ledger", path])
+        self.assertEqual(0, code, err)
+        code, out, err = rig.run(["status"])
+        self.assertEqual(0, code, err)
+        self.assertEqual("session %s → %s" % (ID8, path), out.splitlines()[0])
+        self.assertEqual(body_for("Next action"), out.splitlines()[2][len("Next action: "):])
+        self.assertEqual((0, "ledger lint OK\n"), rig.run(["lint"])[:2])
+        self.assertEqual(0, rig.run(["show"])[0])
+
+    def test_driver_create_refuses_an_existing_ledger_and_a_path_like_task(self) -> None:
+        rig = Rig(bind=False)
+        self.assertEqual(0, rig.run(["create", "--task", "widget"])[0])
+        path = os.path.join(rig.ledgers, "CONTINUITY_CLAUDE-widget.md")
+        before = rig.read(path)
+        code, out, err = rig.run(["create", "--task", "widget"])
+        self.assertEqual((2, ""), (code, out))
+        self.assertEqual(before, rig.read(path))
+        for task in ("../escape", "a/b", "", ".hidden"):
+            self.assertEqual(2, rig.run(["create", "--task", task])[0], task)
+
+    def test_driver_verbs_refuse_a_root_or_ledger_outside_ckpt_home(self) -> None:
+        rig = Rig(bind=False)
+        outside = scratch()
+        link = os.path.join(rig.home, "linked-root")
+        os.symlink(outside, link)
+        before = tree_digest(rig.home)
+        for args in (["create", "--task", "x", "--root", outside], ["create", "--task", "x", "--root", link]):
+            code, out, err = rig.run(args)
+            self.assertEqual((2, ""), (code, out), args)
+        self.assertEqual([], os.listdir(outside))
+        foreign = os.path.join(outside, "CONTINUITY_CLAUDE-out.md")
+        with open(foreign, "wb") as handle:
+            handle.write(b"# CONTINUITY \xe2\x80\x94 out\n")
+        block = rig.file("block.md", block_text())
+        code, out, err = rig.run(["init", "--ledger", foreign, "--from", block])
+        self.assertEqual((2, ""), (code, out))
+        self.assertEqual(b"# CONTINUITY \xe2\x80\x94 out\n", rig.read(foreign))
+        self.assertEqual(before, tree_digest(rig.home))
+
+    def test_driver_init_refuses_a_ledger_with_a_block_and_an_invalid_block(self) -> None:
+        rig = Rig(bind=False)
+        self.assertEqual(0, rig.run(["create", "--task", "widget"])[0])
+        path = os.path.join(rig.ledgers, "CONTINUITY_CLAUDE-widget.md")
+        bad = rig.file("bad.md", block_text(names=SECTIONS[:5]))
+        before = rig.read(path)
+        code, out, err = rig.run(["init", "--ledger", path, "--from", bad])
+        self.assertEqual((4, ""), (code, out))
+        self.assertEqual(before, rig.read(path))
+        good = rig.file("good.md", block_text())
+        self.assertEqual(0, rig.run(["init", "--ledger", path, "--from", good])[0])
+        after = rig.read(path)
+        code, out, err = rig.run(["init", "--ledger", path, "--from", good])
+        self.assertEqual((2, ""), (code, out))
+        self.assertEqual(after, rig.read(path))
+        self.assertEqual(2, rig.run(["init", "--ledger", rig.ledger, "--from", good])[0])
+
+    def test_driver_kill_switch_stops_handoff_create_and_init(self) -> None:
+        rig = Rig()
+        blank = Rig(bind=False)
+        self.assertEqual(0, blank.run(["create", "--task", "widget"])[0])
+        body = rig.file("b.md", "Body.")
+        block = blank.file("block.md", block_text())
+        ledger = os.path.join(blank.ledgers, "CONTINUITY_CLAUDE-widget.md")
+        env = {KILL_SWITCH: "1"}
+        before, before_blank = tree_digest(rig.home), tree_digest(blank.home)
+        for target, args in (
+            (rig, ["handoff", "--from", body]),
+            (blank, ["create", "--task", "second"]),
+            (blank, ["init", "--ledger", ledger, "--from", block]),
+        ):
+            code, out, err = target.run(args, env_extra=env)
+            self.assertEqual((5, ""), (code, out), args[0])
+            self.assertEqual([BRAND, "checkpoint: kill switch active"], err.splitlines(), args[0])
+        self.assertEqual(before, tree_digest(rig.home))
+        self.assertEqual(before_blank, tree_digest(blank.home))
+
+    def test_driver_verbs_are_documented_as_driver_only(self) -> None:
+        with open(STUB, "r", encoding="utf-8") as handle:
+            head = handle.read().split('"""', 2)[1]
+        self.assertIn("bind, create and init", head)
+        for verb in ("bind", "create", "init"):
+            self.assertRegex(head, r"(?m)^\s+%s\s.*driver only" % verb, verb)
+
+
+class ReplaceFailureTests(unittest.TestCase):
+    def test_replace_failure_leaves_the_ledger_unchanged_and_exits_1_with_the_class_name(self) -> None:
+        rig = Rig()
+        hashes = rig.show_hashes()
+        body = rig.file("n.md", "Never lands.")
+        before = rig.read()
+        names_before = sorted(os.listdir(rig.ledgers))
+        patches = [("os.replace", {"side_effect": OSError("disk exploded at a secret path")})]
+        code, out, err = run_in_process(
+            ["update", "--section", "Next action", "--expect-section", hashes["Next action"], "--from", body],
+            rig.home,
+            patches=patches,
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("", out)
+        self.assertEqual("checkpoint: internal error: OSError", err.splitlines()[-1])
+        self.assertNotIn("secret", err)
+        self.assertEqual(before, rig.read())
+        self.assertEqual(names_before, sorted(os.listdir(rig.ledgers)))
+
+    def test_replace_failure_also_protects_note(self) -> None:
+        rig = Rig()
+        body = rig.file("n.md", "Never lands.")
+        before = rig.read()
+        patches = [("os.replace", {"side_effect": OSError("boom")})]
+        code, out, err = run_in_process(["note", "--from", body], rig.home, patches=patches)
+        self.assertEqual(1, code)
+        self.assertEqual(before, rig.read())
+        self.assertEqual(["CONTINUITY_CLAUDE-demo.md"], [n for n in os.listdir(rig.ledgers) if not n.startswith(".checkpoint-log")])
 
 
 class SourceHygieneTests(unittest.TestCase):
