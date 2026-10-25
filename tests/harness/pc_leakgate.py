@@ -10,10 +10,17 @@ matches is labelled "(file name)", the precedent set by .githooks/checks/denylis
 
 Every scanner failure fails closed. An exception inside a scan, an empty rule set, an
 unreadable deny file or unreadable input is ScannerError (exit 15), never a clean result. A
-NUL byte, undecodable bytes, a symlink, a special file and a file above MAX_FILE_BYTES are
-refusals, never skips. Each file is read once into memory and scanned as one buffer, so a leak
-at byte 0, at the very end or across any chunk boundary is found, and promote writes the same
-bytes it scanned.
+NUL byte, undecodable bytes, a symlink, a special file, a file above MAX_FILE_BYTES and a run of
+name characters above MAX_RUN are refusals, never skips. Each file is read once into memory and
+scanned as one buffer, so a leak at byte 0, at the very end or across any chunk boundary is
+found, and promote writes the same bytes it scanned.
+
+Rules: the six identifier rules and two allowlists are copied byte for byte from .gitleaks.toml
+(test_leakgate reads the TOML and asserts they are identical). Two Python-only rules (home paths
+of the superuser and Windows-style home paths) are an explicit named set: the commit hooks lack those
+two shapes, so the gate is stricter than the hooks there. The credential-shape list is a small
+documented subset: the default gitleaks secret rules cannot be mirrored in Python, and the
+commit hooks stay the second net for every other credential shape (D-14).
 
 CLI: python3 -E -s -B pc_leakgate.py [--repo-root R] [--deny-file F] scan PATH...
   exit 0 clean, 14 any finding or refusal (also when there are no files to scan), 15 scanner
@@ -60,7 +67,8 @@ Report = collections.namedtuple("Report", "findings files")
 Entry = collections.namedtuple("Entry", "rel kind data mode")
 
 
-def _make_rule(rule_id, pattern, secret_group=None):
+def make_rule(rule_id, pattern, secret_group=None):
+    """Compile one rule; an empty id or a pattern that does not compile is ScannerError."""
     if not rule_id:
         raise ScannerError(SCANNER_ERROR_TEXT)
     try:
@@ -73,19 +81,19 @@ def _make_rule(rule_id, pattern, secret_group=None):
 # The six identifier rules, byte for byte as in .gitleaks.toml (test_leakgate reads the TOML and
 # asserts the ids, patterns and secretGroup are identical, so the two cannot drift silently).
 RULES = (
-    _make_rule("home-path-unix", r'''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[/\s"'`:;,)\]]|$)'''),
-    _make_rule("home-path-dash-slug", r'''-(?:Users|home)-[A-Za-z0-9._]{1,64}-'''),
-    _make_rule("mac-temp-root", r'''/(?:private/)?var/folders/[A-Za-z0-9_]{2}/'''),
-    _make_rule(
+    make_rule("home-path-unix", r'''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[/\s"'`:;,)\]]|$)'''),
+    make_rule("home-path-dash-slug", r'''-(?:Users|home)-[A-Za-z0-9._]{1,64}-'''),
+    make_rule("mac-temp-root", r'''/(?:private/)?var/folders/[A-Za-z0-9_]{2}/'''),
+    make_rule(
         "private-ipv4",
         r'''(?:^|[^0-9.])((?:10\.[0-9]{1,3}|192\.168|172\.(?:1[6-9]|2[0-9]|3[01])|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.[0-9]{1,3}\.[0-9]{1,3})(?:[^0-9]|$)''',
         1,
     ),
-    _make_rule(
+    make_rule(
         "internal-hostname",
         r'''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)''',
     ),
-    _make_rule("email-address", r'''[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''),
+    make_rule("email-address", r'''[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''),
 )
 
 # The two email allowlists, as in .gitleaks.toml. The first holds under an AND condition: the
@@ -113,9 +121,39 @@ ALLOWLISTS = (
     ),
 )
 
-# Python-only extra rules and credential shapes (filled in by the next commit of this plan).
-PYTHON_ONLY_RULES = ()
-CREDENTIAL_RULES = ()
+# Python-only extra rules (FA-2): the superuser's home folder and Windows-style home paths. The commit
+# hooks do not have these two shapes (the gitleaks rule change is a Phase 4 hygiene item), so the
+# gate is stricter than the hooks there, never weaker. They are the explicit named set the parity
+# test allows.
+PYTHON_ONLY_RULES = (
+    make_rule("home-path-root", r'''(?<![A-Za-z0-9._-])/root(?:[/\s"'`:;,)\]]|$)'''),
+    make_rule("home-path-windows", r'''(?i)\b[a-z]:\\users\\[a-z0-9._-]{1,64}(?:[\\/\s"'`:;,)\]]|$)'''),
+)
+
+# Credential shapes: a small documented subset. The default gitleaks secret rules cannot be
+# mirrored in Python; these five shapes catch the common strays (a key or token that reached a
+# transcript through the environment) and the commit hooks stay the second net for everything
+# else (D-14). Each pattern's own source text cannot match itself.
+CREDENTIAL_RULES = (
+    make_rule("aws-access-key", r'''\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b'''),
+    make_rule("github-token", r'''\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b'''),
+    make_rule("anthropic-key", r'''\bsk-ant-[A-Za-z0-9_-]{20,}'''),
+    make_rule("private-key-header", r'''-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----'''),
+    make_rule("bearer-token", r'''(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{24,}'''),
+)
+
+# Over-long runs. The e-mail and host-name rules start a scan at every position of a run of name
+# characters, so a very long run makes a backtracking engine quadratic (the original rules run
+# on a linear-time engine). A run longer than this is refused, never skipped and never scanned.
+MAX_RUN = 1024
+_RUN_RE = re.compile(r"[A-Za-z0-9._%+-]+")
+
+
+def _has_long_run(text):
+    for match in _RUN_RE.finditer(text):
+        if match.end() - match.start() > MAX_RUN:
+            return True
+    return False
 
 
 def _active_rules():
@@ -188,9 +226,10 @@ def scan_bytes(label, data, deny_entries):
     """Scan one file's bytes and return [(rule id, count), ...] sorted by rule id.
 
     Refusals come first and are findings with their own ids: refused-oversize (above
-    MAX_FILE_BYTES, decided before decoding), refused-binary (a NUL byte) and
-    refused-undecodable (not strict UTF-8). An empty file has no findings. LABEL is the file's
-    relative path; it only feeds the path condition of the allowlists.
+    MAX_FILE_BYTES, decided before decoding), refused-binary (a NUL byte), refused-undecodable
+    (not strict UTF-8) and refused-longrun (a run of name characters above MAX_RUN). An empty
+    file has no findings. LABEL is the file's relative path; it only feeds the path condition
+    of the allowlists.
     """
     try:
         _active_rules()
@@ -203,6 +242,8 @@ def scan_bytes(label, data, deny_entries):
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             return [("refused-undecodable", 1)]
+        if _has_long_run(text):
+            return [("refused-longrun", 1)]
         counts = _count_text(text, _label_text(label), deny_regex)
         return sorted(counts.items())
     except ScannerError:
