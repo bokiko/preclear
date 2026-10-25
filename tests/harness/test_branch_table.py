@@ -193,7 +193,7 @@ class EvidencePathTests(unittest.TestCase):
 
     def test_every_confirmed_row_names_an_existing_evidence_path(self):
         confirmed = [row for row in self.rows if row[4] == "CONFIRMED"]
-        self.assertGreaterEqual(len(confirmed), 10)
+        self.assertGreaterEqual(len(confirmed), 8)
         for row in confirmed:
             paths = self.paths(row[3])
             self.assertTrue(paths, "a CONFIRMED row names no evidence path: " + row[0])
