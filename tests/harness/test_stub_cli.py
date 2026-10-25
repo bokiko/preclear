@@ -7,6 +7,7 @@ test and their paths are never printed.
 """
 from __future__ import annotations
 
+import calendar
 import contextlib
 import hashlib
 import importlib
@@ -920,16 +921,350 @@ class ReplaceFailureTests(unittest.TestCase):
         self.assertEqual(["CONTINUITY_CLAUDE-demo.md"], [n for n in os.listdir(rig.ledgers) if not n.startswith(".checkpoint-log")])
 
 
-class SourceHygieneTests(unittest.TestCase):
+EVIDENCE_NAME = "Evidence & key paths"
+AUTH_NAME = "Authorization boundaries"
+BLOCK_CAP = 4096
+CJK_CHAR = "中"
+
+
+def rendered_size(bodies=None) -> int:
+    """UTF-8 size of the block the stub renders: marker with a millisecond time, six sections, end marker."""
+    bodies = dict(bodies or {})
+    parts = ["## %s\n%s" % (name, bodies.get(name, body_for(name))) for name in SECTIONS]
+    text = (
+        "<!-- CHECKPOINT:BEGIN updated: 1970-01-01T00:00:00.000Z by: %s -->\n" % ID8
+        + "\n\n".join(parts)
+        + "\n<!-- CHECKPOINT:END -->"
+    )
+    return len(text.encode("utf-8"))
+
+
+def padding_for(total: int, bodies=None) -> str:
+    """An ASCII Evidence body that makes the rendered block exactly total bytes."""
+    base = dict(bodies or {})
+    base[EVIDENCE_NAME] = "x"
+    return "x" * (total - rendered_size(base) + 1)
+
+
+class BoundaryTests(unittest.TestCase):
+    def test_boundary_block_of_4096_bytes_passes_and_4097_is_rejected_by_validate_and_update(self) -> None:
+        rig = Rig()
+        for size, accepted in ((BLOCK_CAP, True), (BLOCK_CAP + 1, False)):
+            bodies = {EVIDENCE_NAME: padding_for(size)}
+            self.assertEqual(size, rendered_size(bodies))
+            code, out, err = rig.run(["validate", "--from", rig.file("candidate.md", block_text(bodies))])
+            if accepted:
+                self.assertEqual(0, code, err)
+                self.assertIn("valid checkpoint: %d bytes," % size, out)
+            else:
+                self.assertEqual((4, ""), (code, out))
+                self.assertIn("block is %d bytes (limit %d)" % (size, BLOCK_CAP), err)
+            before = rig.read()
+            hashes = rig.show_hashes()
+            body = rig.file("evidence.md", bodies[EVIDENCE_NAME] + "\n")
+            code, out, err = rig.run(["update", "--section", EVIDENCE_NAME, "--expect-section", hashes[EVIDENCE_NAME], "--from", body])
+            if accepted:
+                self.assertEqual(0, code, err)
+                self.assertEqual(hashlib.sha256(bodies[EVIDENCE_NAME].encode("utf-8")).hexdigest(), rig.show_hashes()[EVIDENCE_NAME])
+            else:
+                self.assertEqual((4, ""), (code, out))
+                self.assertEqual(before, rig.read())
+                self.assertEqual([], rig.conflicts())
+
+    def test_boundary_authorization_of_600_chars_passes_and_601_is_rejected_by_validate_and_update(self) -> None:
+        rig = Rig()
+        for length, accepted in ((600, True), (601, False)):
+            bodies = {AUTH_NAME: "a" * length}
+            code, out, err = rig.run(["validate", "--from", rig.file("candidate.md", block_text(bodies))])
+            if accepted:
+                self.assertEqual(0, code, err)
+                self.assertIn("Authorization 600 chars", out)
+            else:
+                self.assertEqual((4, ""), (code, out))
+                self.assertIn("Authorization boundaries is 601 chars (limit 600)", err)
+            before = rig.read()
+            hashes = rig.show_hashes()
+            body = rig.file("auth.md", "a" * length)
+            code, out, err = rig.run(["update", "--section", AUTH_NAME, "--expect-section", hashes[AUTH_NAME], "--from", body])
+            self.assertEqual(0 if accepted else 4, code, err)
+            if not accepted:
+                self.assertEqual(before, rig.read())
+
+    def test_boundary_authorization_must_be_non_empty_and_blank_counts_as_empty(self) -> None:
+        rig = Rig()
+        for body in ("", "   ", "\n\n"):
+            code, out, err = rig.run(["validate", "--from", rig.file("c.md", block_text({AUTH_NAME: body}))])
+            self.assertEqual(4, code, repr(body))
+            self.assertIn("Authorization boundaries is empty", err)
+
+    def test_boundary_limits_count_characters_for_authorization_and_bytes_for_the_block(self) -> None:
+        rig = Rig()
+        cjk = CJK_CHAR * 600
+        self.assertEqual(1800, len(cjk.encode("utf-8")))
+        bodies = {AUTH_NAME: cjk}
+        code, out, err = rig.run(["validate", "--from", rig.file("c.md", block_text(bodies))])
+        self.assertEqual(0, code, err)
+        self.assertIn("Authorization 600 chars", out)
+        self.assertIn("valid checkpoint: %d bytes," % rendered_size(bodies), out)
+        # The same body, in a block that would then be 4,097 bytes, is stopped by the byte cap.
+        over = {AUTH_NAME: cjk}
+        over[EVIDENCE_NAME] = padding_for(BLOCK_CAP + 1, over)
+        self.assertEqual(BLOCK_CAP + 1, rendered_size(over))
+        code, out, err = rig.run(["validate", "--from", rig.file("c2.md", block_text(over))])
+        self.assertEqual((4, ""), (code, out))
+        self.assertIn("block is %d bytes (limit %d)" % (BLOCK_CAP + 1, BLOCK_CAP), err)
+        self.assertNotIn("Authorization boundaries is", err)
+        # Through update: nothing is written when the byte cap stops it.
+        ledger_bodies = {AUTH_NAME: cjk}
+        rig2 = Rig(text=ledger_text(ledger_bodies))
+        before, hashes = rig2.read(), rig2.show_hashes()
+        body = rig2.file("e.md", over[EVIDENCE_NAME])
+        code, out, err = rig2.run(["update", "--section", EVIDENCE_NAME, "--expect-section", hashes[EVIDENCE_NAME], "--from", body])
+        self.assertEqual((4, ""), (code, out))
+        self.assertEqual(before, rig2.read())
+        self.assertEqual([], rig2.conflicts())
+
+
+class PrecisionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        self.stub = importlib.import_module("checkpoint_stub")
+
+    def test_precision_milliseconds_are_truncated_never_rounded(self) -> None:
+        seconds = calendar.timegm((2026, 10, 19, 23, 10, 27))
+        edge = seconds * 1000000000 + 227000000
+        cases = (
+            (edge - 1, "2026-10-19T23:10:27.226Z"),
+            (edge, "2026-10-19T23:10:27.227Z"),
+            (edge + 1, "2026-10-19T23:10:27.227Z"),
+            (edge + 999999, "2026-10-19T23:10:27.227Z"),
+            (edge + 1000000, "2026-10-19T23:10:27.228Z"),
+            (seconds * 1000000000, "2026-10-19T23:10:27.000Z"),
+            (seconds * 1000000000 - 1, "2026-10-19T23:10:26.999Z"),
+            (seconds * 1000000000 + 999999999, "2026-10-19T23:10:27.999Z"),
+        )
+        for ns, expected in cases:
+            self.assertEqual(expected, self.stub.utc_iso_ms(ns), ns)
+            self.assertRegex(self.stub.utc_iso_ms(ns), ISO_MS)
+
+    def test_precision_the_conflict_stamp_keeps_the_same_truncation(self) -> None:
+        seconds = calendar.timegm((2026, 10, 19, 23, 10, 27))
+        self.assertEqual("2026-10-19T23-10-27.227Z", self.stub.conflict_stamp(seconds * 1000000000 + 227999999))
+
+
+class ReadOnlyTests(unittest.TestCase):
+    def test_readonly_verbs_leave_every_byte_under_ckpt_home_unchanged(self) -> None:
+        rig = Rig()
+        good = rig.file("block.md", block_text())
+        before = tree_digest(rig.home)
+        for args in (["status"], ["show"], ["show", "--section", "Next action"], ["validate", "--from", good], ["lint"]):
+            self.assertEqual(0, rig.run(args)[0], args[0])
+        self.assertEqual(before, tree_digest(rig.home))
+
+    def test_readonly_show_and_status_print_the_same_bytes_twice(self) -> None:
+        rig = Rig()
+        for args in (["status"], ["show"], ["show", "--section", "Goal & current state"], ["lint"]):
+            first, second = rig.run(args), rig.run(args)
+            self.assertEqual(first, second, args[0])
+
+
+class OrderingTests(unittest.TestCase):
+    def test_ordering_lint_walks_roots_and_ledgers_in_byte_order_and_is_stable(self) -> None:
+        rig = Rig(bind=False)  # no bind, so no root is registered yet
+        names = ["zeta", "alpha", "Mid", "beta"]
+        tasks = ["delta", "Beta", "alpha", "Omega"]
+        breakers = [
+            lambda text: "# CONTINUITY — x\n\n## History\n",
+            lambda text: text.replace("## Authorization boundaries\n" + body_for("Authorization boundaries"), "## Authorization boundaries\n"),
+            lambda text: text.replace("# CONTINUITY", "# Notes", 1),
+            lambda text: text.replace("## Next action\n", "## Next action\n## Next action\n", 1),
+        ]
+        expected = []
+        counter = 0
+        for root_name in names:
+            root = os.path.join(rig.home, root_name)
+            for task in tasks[:2] if root_name in ("zeta", "Mid") else tasks[2:]:
+                code, out, err = rig.run(["create", "--task", task, "--root", root])
+                self.assertEqual(0, code, err)
+                path = os.path.join(root, "CONTINUITY_CLAUDE-%s.md" % task)
+                rig.write(path, breakers[counter % len(breakers)](ledger_text()))
+                counter += 1
+                expected.append(path)
+        expected.sort(key=lambda p: (os.fsencode(os.path.dirname(p)), os.fsencode(os.path.basename(p))))
+        runs = [rig.run(["lint"]) for _ in range(2)]
+        self.assertEqual(runs[0], runs[1])
+        code, out, err = runs[0]
+        self.assertEqual(0, code, err)
+        warned = [re.match(r"warning: (.*?): ", line).group(1) for line in out.splitlines()]
+        self.assertEqual(expected, warned)
+        self.assertEqual(len(expected), len(warned))
+
+
+class ContainmentTests(unittest.TestCase):
+    """Escape forms are refused for show, update, note and handoff, and refusal writes nothing."""
+
+    def attempts(self, rig, ledger):
+        hashes = rig.show_hashes()
+        body = rig.file("input.md", "Text.")
+        return (
+            ("show", ["show", "--ledger", ledger]),
+            ("update", ["update", "--ledger", ledger, "--section", "Next action", "--expect-section", hashes["Next action"], "--from", body]),
+            ("note", ["note", "--ledger", ledger, "--from", body]),
+            ("handoff", ["handoff", "--ledger", ledger, "--from", body]),
+        )
+
+    def make_outside(self, rig, name="CONTINUITY_CLAUDE-out.md"):
+        folder = scratch()
+        path = os.path.join(folder, name)
+        rig.write(path, ledger_text())
+        return folder, path
+
+    def assert_refused_everywhere(self, rig, ledger, watched, label):
+        attempts = self.attempts(rig, ledger)
+        before_home = tree_digest(rig.home)
+        before_files = [(p, rig.read(p)) for p in watched]
+        for verb, args in attempts:
+            before_attempt = tree_digest(rig.home)
+            code, out, err = rig.run(args)
+            self.assertEqual((2, ""), (code, out), "%s/%s" % (label, verb))
+            self.assertEqual(before_attempt, tree_digest(rig.home), "%s/%s" % (label, verb))
+        self.assertEqual(before_home, tree_digest(rig.home), label)
+        for path, data in before_files:
+            self.assertEqual(data, rig.read(path), label)
+
+    def register(self, rig, *folders) -> None:
+        """Hand-write ledger-roots.json so a folder outside CKPT_HOME is a registered root."""
+        roots = sorted([rig.ledgers] + list(folders))
+        rig.write(os.path.join(rig.home, "ledger-roots.json"), json.dumps({"roots": roots}, indent=2) + "\n")
+
+    def test_containment_sibling_directory_named_like_ckpt_home_plus_a_suffix_is_refused(self) -> None:
+        rig = Rig()
+        sibling = rig.home + "-evil"
+        os.mkdir(sibling)
+        path = os.path.join(sibling, "CONTINUITY_CLAUDE-evil.md")
+        rig.write(path, ledger_text())
+        self.assertTrue(sibling.startswith(rig.home), "the sibling must share the CKPT_HOME name as a prefix")
+        self.register(rig, sibling)
+        self.assert_refused_everywhere(rig, path, [path], "sibling-prefix")
+
+    def test_containment_dot_dot_traversal_after_resolution_is_refused(self) -> None:
+        rig = Rig()
+        folder, path = self.make_outside(rig)
+        depth = len(rig.ledgers.strip(os.sep).split(os.sep))
+        traversal = os.path.join(rig.ledgers, *([os.pardir] * depth), *path.strip(os.sep).split(os.sep))
+        self.assertIn(os.pardir, traversal)
+        self.assertEqual(os.path.realpath(path), os.path.realpath(traversal))
+        self.assert_refused_everywhere(rig, traversal, [path], "dot-dot")
+        unregistered = os.path.join(rig.home, "other")
+        os.mkdir(unregistered)
+        inside = os.path.join(unregistered, "CONTINUITY_CLAUDE-x.md")
+        rig.write(inside, ledger_text())
+        sideways = os.path.join(rig.ledgers, os.pardir, "other", "CONTINUITY_CLAUDE-x.md")
+        self.assert_refused_everywhere(rig, sideways, [inside], "dot-dot-sideways")
+
+    def test_containment_symlink_that_resolves_outside_is_refused(self) -> None:
+        rig = Rig()
+        folder, path = self.make_outside(rig)
+        link = os.path.join(rig.ledgers, "CONTINUITY_CLAUDE-link.md")
+        os.symlink(path, link)
+        self.assert_refused_everywhere(rig, link, [path], "file-symlink")
+        folder_link = os.path.join(rig.ledgers, "linked-folder")
+        os.symlink(folder, folder_link)
+        self.assert_refused_everywhere(rig, os.path.join(folder_link, "CONTINUITY_CLAUDE-out.md"), [path], "folder-symlink")
+        root_link = os.path.join(rig.home, "root-link")
+        os.symlink(folder, root_link)
+        self.register(rig, root_link)
+        self.assert_refused_everywhere(rig, os.path.join(root_link, "CONTINUITY_CLAUDE-out.md"), [path], "root-symlink")
+
+    def test_containment_ledger_outside_every_registered_root_is_refused(self) -> None:
+        rig = Rig()
+        unregistered = os.path.join(rig.home, "unregistered")
+        os.mkdir(unregistered)
+        inside = os.path.join(unregistered, "CONTINUITY_CLAUDE-u.md")
+        rig.write(inside, ledger_text())
+        self.assert_refused_everywhere(rig, inside, [inside], "unregistered-inside-home")
+        folder, path = self.make_outside(rig)
+        self.assert_refused_everywhere(rig, path, [path], "outside-home")
+
+    def test_containment_registered_root_outside_ckpt_home_is_refused(self) -> None:
+        rig = Rig()
+        folder, path = self.make_outside(rig)
+        self.register(rig, folder)
+        self.assert_refused_everywhere(rig, path, [path], "root-outside-home")
+        code, out, err = rig.run(["lint"])
+        self.assertEqual((0, "ledger lint OK\n"), (code, out), "an outside root is skipped by lint")
+
+    def test_containment_handoffs_folder_that_resolves_outside_is_refused(self) -> None:
+        rig = Rig()
+        outside = scratch()
+        os.symlink(outside, os.path.join(rig.home, "handoffs"))
+        body = rig.file("h.md", "x")
+        code, out, err = rig.run(["handoff", "--from", body])
+        self.assertEqual((2, ""), (code, out))
+        self.assertEqual([], os.listdir(outside))
+
+    def test_containment_a_ledger_inside_a_registered_root_still_works(self) -> None:
+        rig = Rig()
+        roundabout = os.path.join(rig.ledgers, os.pardir, "ledgers", "CONTINUITY_CLAUDE-demo.md")
+        for verb, args in self.attempts(rig, roundabout):
+            code, out, err = rig.run(args)
+            self.assertEqual(0, code, "%s: %s" % (verb, err))
+        second = os.path.join(rig.home, "second-root")
+        self.assertEqual(0, rig.run(["create", "--task", "other", "--root", second])[0])
+        other = os.path.join(second, "CONTINUITY_CLAUDE-other.md")
+        self.assertEqual(0, rig.run(["init", "--ledger", other, "--from", rig.file("block.md", block_text())])[0])
+        self.assertEqual(0, rig.run(["show", "--ledger", other])[0])
+
+
+class InventoryTests(unittest.TestCase):
+    CONCERNS = ("calls.log", "call log", "inject", "second writer", "writer2", "checkpoint-wrapper")
+    EXIT_TESTS = {
+        0: ("test_stub_cli", "ExitCodeTests", "test_exit_0_2_3_4_64_are_each_reachable"),
+        1: ("test_stub_cli", "ReplaceFailureTests", "test_replace_failure_leaves_the_ledger_unchanged_and_exits_1_with_the_class_name"),
+        2: ("test_stub_cli", "ExitCodeTests", "test_usage_errors_exit_2"),
+        3: ("test_stub_cli", "UpdateTests", "test_update_with_a_stale_hash_exits_3_and_writes_only_the_conflict_file"),
+        4: ("test_stub_cli", "ValidateTests", "test_missing_section_is_rejected"),
+        5: ("test_stub_cli", "KillSwitchTests", "test_kill_switch_stops_update_note_and_bind_with_exit_5_and_writes_nothing"),
+        6: ("test_stub_concurrency", "LockTests", "test_lock_contended_by_another_holder_exits_6_within_two_seconds"),
+        64: ("test_stub_cli", "NoCkptHomeTests", "test_unset_ckpt_home_exits_64"),
+    }
+
     def setUp(self) -> None:
         with open(STUB, "r", encoding="utf-8") as handle:
             self.source = handle.read()
 
-    def test_stub_has_no_call_log_and_no_injection(self) -> None:
-        for word in ("calls.log", "injection", "armed"):
-            self.assertNotIn(word, self.source, word)
-        names = set(re.findall(r"CKPT_STUB_[A-Z_]+", self.source))
-        self.assertLessEqual(names, {"CKPT_STUB_KILL_SWITCH", "CKPT_STUB_LOCK_TIMEOUT_MS"})
+    def test_inventory_the_stub_names_exactly_the_two_labelled_switches(self) -> None:
+        names = set(re.findall(r"CKPT_STUB_[A-Z0-9_]+", self.source))
+        self.assertEqual({"CKPT_STUB_KILL_SWITCH", "CKPT_STUB_LOCK_TIMEOUT_MS"}, names)
+        for name in sorted(names):
+            self.assertIn(name, self.source.split('"""', 2)[1], name + " must be listed in the docstring")
+
+    def test_inventory_the_stub_holds_none_of_the_wrapper_concerns(self) -> None:
+        lowered = self.source.lower()
+        for word in self.CONCERNS:
+            self.assertNotIn(word, lowered, word)
+        allowed = ("CKPT_HOME", "CLAUDE_CODE_SESSION_ID", "KILL_SWITCH_VAR", "LOCK_TIMEOUT_VAR")
+        lines = re.findall(r"os\.environ[^\n]*", self.source)
+        self.assertEqual(4, len(lines), lines)
+        for line in lines:
+            self.assertTrue(any(name in line for name in allowed), line)
+
+    def test_inventory_every_exit_code_has_a_producing_test_that_still_exists(self) -> None:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        self.assertEqual([0, 1, 2, 3, 4, 5, 6, 64], sorted(self.EXIT_TESTS))
+        for code, (module_name, class_name, method) in sorted(self.EXIT_TESTS.items()):
+            module = importlib.import_module(module_name)
+            cls = getattr(module, class_name, None)
+            self.assertIsNotNone(cls, "exit %d: %s.%s is gone" % (code, module_name, class_name))
+            self.assertTrue(callable(getattr(cls, method, None)), "exit %d: %s is gone" % (code, method))
+
+
+class SourceHygieneTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with open(STUB, "r", encoding="utf-8") as handle:
+            self.source = handle.read()
 
     def test_stub_imports_no_harness_module(self) -> None:
         self.assertIsNone(re.search(r"(?m)^\s*(import|from)\s+pc_", self.source))
