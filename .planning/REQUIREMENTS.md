@@ -24,12 +24,12 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [ ] **HARN-01**: A stranger runs one command under `tests/harness/` with `--list`, `--row <id>`, `--layout <name>`, `--all` and `--dry-run`; dry run prints the session count and spends no tokens
 - [ ] **HARN-02**: Preflight distinguishes SKIP, FAIL and BLOCKED with distinct exit codes, and a skipped row can never be read as a pass
-- [ ] **HARN-03**: Every run root is created exclusively and never overwritten or deleted by the harness; a collision is an error
+- [x] **HARN-03**: Every run root is created exclusively and never overwritten or deleted by the harness; a collision is an error
 - [ ] **HARN-04**: Every `claude -p` invocation pins its behaviour explicitly (`--output-format stream-json --verbose`, `--setting-sources project,local`, `--settings` with an absolute realpath `autoMemoryDirectory`, `--session-id`, `--permission-mode default`, `--allowedTools` as a literal list, one full model id, `--max-turns`, `--max-budget-usd`, `DISABLE_AUTOUPDATER=1`) and a version gate refuses an untested Claude Code version
 - [ ] **HARN-05**: Each run records provenance: Claude Code version, `init.model`, skill and adapter digests, harness version, isolation mode, tool set, allowlist, and per-stage usage and `total_cost_usd`
 - [ ] **HARN-06**: The allowlist is checked against the skill's exact commands by a self-test, and any unexpected `permission_denied` event or `result.permission_denials` entry fails the row; refusals are never detected by substring on the reply
 - [ ] **HARN-07**: The `system/init` manifest (skills, permission mode, memory paths) is asserted every run, and the isolation mode in force (default or strict) is recorded per row after spike S1 decides which the matrix claims
-- [ ] **HARN-08**: Snapshots and manifests are filename-safe (newline and non-Latin names survive) and are taken before and after every stage
+- [x] **HARN-08**: Snapshots and manifests are filename-safe (newline and non-Latin names survive) and are taken before and after every stage
 - [ ] **HARN-09**: Write-boundary and git-read-only assertions are mechanical: zero writes outside approved roots, no git mutation, derived from snapshots and traces rather than the model's claims
 - [ ] **HARN-10**: Row 10 keeps the documented quoted-porcelain fallback as its expected outcome; no policy exception is added for the NUL `-z` form
 - [ ] **HARN-11**: Row 11's injector triggers on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls, and wrapper log lines are correlated with `tool_use` ids
@@ -49,7 +49,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Evidence
 
-- [ ] **EVID-01**: Byte measurement runs on original files before any sanitizing, per section heading-inclusive, against the same caps as the committed evidence
+- [x] **EVID-01**: Byte measurement runs on original files before any sanitizing, per section heading-inclusive, against the same caps as the committed evidence
 - [ ] **EVID-02**: A sanitizer builds its deny-list at run time from the live machine (raw, realpath, dash-slug and URL-encoded home forms, user, hostname, temp roots) and sanitizes at write time
 - [ ] **EVID-03**: A fail-closed leak gate scans every file before it is filed; a `promote` step refuses to copy anything into `tests/evidence/` on a scan failure
 - [ ] **EVID-04**: Filed rows follow the committed per-row file set (README, tools, digests, short and full traces, snapshots, measurements) plus `mechanical-checks.md`, `usage.txt`, `model-id.txt`, `isolation-mode.txt`, `harness-version.txt`, and are written with exclusive creation into a new dated folder
@@ -109,12 +109,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PUB-07 | Phase 1 | Complete |
 | HARN-01 | Phase 3 | Pending |
 | HARN-02 | Phase 3 | Pending |
-| HARN-03 | Phase 2 | Pending |
+| HARN-03 | Phase 2 | Complete |
 | HARN-04 | Phase 2 | Pending |
 | HARN-05 | Phase 3 | Pending |
 | HARN-06 | Phase 2 | Pending |
 | HARN-07 | Phase 3 | Pending |
-| HARN-08 | Phase 2 | Pending |
+| HARN-08 | Phase 2 | Complete |
 | HARN-09 | Phase 3 | Pending |
 | HARN-10 | Phase 4 | Pending |
 | HARN-11 | Phase 4 | Pending |
@@ -128,7 +128,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STUB-05 | Phase 2 | Pending |
 | STUB-06 | Phase 2 | Pending |
 | STUB-07 | Phase 2 | Pending |
-| EVID-01 | Phase 2 | Pending |
+| EVID-01 | Phase 2 | Complete |
 | EVID-02 | Phase 2 | Pending |
 | EVID-03 | Phase 2 | Pending |
 | EVID-04 | Phase 3 | Pending |
