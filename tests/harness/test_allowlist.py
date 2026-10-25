@@ -229,6 +229,12 @@ class CanonicalCommandTests(unittest.TestCase):
             self.assertFalse(decision.allowed, suffix)
         self.assertTrue(pa.is_allowed("%s status && pwd -P" % self.wrapper, self.rules).allowed)
 
+    def test_pwd_dash_p_is_allowed_exactly_and_nothing_longer_is(self):
+        self.assertTrue(pa.is_allowed("pwd -P", self.rules).allowed)
+        self.assertTrue(pa.is_allowed("pwd", self.rules).allowed)
+        self.assertFalse(pa.is_allowed("pwd -L", self.rules).allowed)
+        self.assertFalse(pa.is_allowed("pwd -P -L", self.rules).allowed)
+
     def test_with_only_a_plain_git_status_rule_the_global_option_form_is_not_matched(self):
         command = "git --no-optional-locks status --porcelain=v1"
         self.assertFalse(pa.is_allowed(command, ("Bash(git status:*)",)).allowed)
