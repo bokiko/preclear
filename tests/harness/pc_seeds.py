@@ -78,6 +78,11 @@ def private_key_header():
     return "-----" + "BEGIN " + "RSA " + "PRIVATE " + "KEY" + "-----"
 
 
+def bearer_token():
+    """An authorization header value with a long opaque token."""
+    return "Authorization: " + "Bear" + "er " + "abcdefghij" + "0123456789" + "ABCDEFGH"
+
+
 def windows_home(user):
     """A Windows-style home folder path with a closing backslash."""
     return "C" + ":" + _BACKSLASH + "Users" + _BACKSLASH + user + _BACKSLASH
