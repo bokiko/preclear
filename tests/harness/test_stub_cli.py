@@ -142,6 +142,21 @@ def parse_show(text: str) -> dict:
     return {"header": header, "sections": sections, "hashes": {n: h for n, h, _ in sections}}
 
 
+def tree_digest(root: str) -> str:
+    """One digest over every folder and file under root: sorted relative path bytes plus content."""
+    digest = hashlib.sha256()
+    for folder, dirs, files in os.walk(root):
+        dirs.sort()
+        rel_folder = os.path.relpath(folder, root)
+        digest.update(b"D:" + os.fsencode(rel_folder) + b"\n")
+        for name in sorted(files):
+            path = os.path.join(folder, name)
+            digest.update(b"F:" + os.fsencode(os.path.relpath(path, root)) + b"\n")
+            with open(path, "rb") as handle:
+                digest.update(hashlib.sha256(handle.read()).digest())
+    return digest.hexdigest()
+
+
 class NoCkptHomeTests(unittest.TestCase):
     def assert_refused(self, code, out, err) -> None:
         self.assertEqual(64, code)
@@ -605,14 +620,112 @@ class ContainmentBasicsTests(unittest.TestCase):
         self.assertEqual({"roots": [rig.ledgers]}, roots)
 
 
+KILL_SWITCH = "CKPT_STUB_KILL_SWITCH"
+NOTE_ENTRY = re.compile(r"\n### (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \(%s\)\n" % ID8)
+
+
+class NoteTests(unittest.TestCase):
+    def test_note_appends_a_history_entry_and_leaves_the_block_bytes_unchanged(self) -> None:
+        rig = Rig(text=ledger_text() + "Existing history line.\n")
+        before = rig.read().decode("utf-8")
+        body = rig.file("note.md", "Decided to keep CSV.\nSecond line.\n\n\n")
+        code, out, err = rig.run(["note", "--from", body])
+        self.assertEqual(0, code, err)
+        self.assertEqual("noted in %s\n" % rig.ledger, out)
+        after = rig.read().decode("utf-8")
+        end = "<!-- CHECKPOINT:END -->"
+        self.assertEqual(before.split(end)[0] + end, after.split(end)[0] + end)
+        self.assertTrue(after.startswith(before), "existing History content must stay as it was")
+        added = after[len(before):]
+        entry = re.compile(
+            r"\n### \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \(%s\)\nDecided to keep CSV\.\nSecond line\.\n\n" % ID8
+        )
+        self.assertIsNotNone(entry.fullmatch(added), added)
+        with open(os.path.join(rig.ledgers, ".checkpoint-log.jsonl"), "r", encoding="utf-8") as handle:
+            self.assertIn('"verb": "note"', handle.read().splitlines()[-1])
+
+    def test_second_note_goes_after_the_first(self) -> None:
+        rig = Rig()
+        first = rig.file("one.md", "First.")
+        second = rig.file("two.md", "Second.")
+        self.assertEqual(0, rig.run(["note", "--from", first])[0])
+        self.assertEqual(0, rig.run(["note", "--from", second])[0])
+        data = rig.read().decode("utf-8")
+        self.assertEqual(2, len(NOTE_ENTRY.findall(data)))
+        self.assertLess(data.index("First."), data.index("Second."))
+        self.assertTrue(data.endswith("Second.\n\n"))
+
+    def test_note_on_a_ledger_without_a_history_heading_adds_one(self) -> None:
+        text = ledger_text().replace("\n## History\n", "\n")
+        self.assertNotIn("## History", text)
+        rig = Rig(text=text)
+        body = rig.file("n.md", "Appended.")
+        code, out, err = rig.run(["note", "--from", body])
+        self.assertEqual(0, code, err)
+        data = rig.read().decode("utf-8")
+        self.assertEqual(1, data.count("\n## History\n"))
+        self.assertLess(data.index("<!-- CHECKPOINT:END -->"), data.index("## History"))
+        self.assertLess(data.index("## History"), data.index("Appended."))
+
+    def test_note_takes_an_explicit_ledger_and_refuses_a_missing_input(self) -> None:
+        rig = Rig()
+        body = rig.file("n.md", "x")
+        self.assertEqual(0, rig.run(["note", "--from", body, "--ledger", rig.ledger], session=OTHER)[0])
+        code, out, err = rig.run(["note", "--from", os.path.join(rig.project, "none.md")])
+        self.assertEqual(2, code)
+        self.assertEqual("", out)
+
+
+class KillSwitchTests(unittest.TestCase):
+    def test_kill_switch_stops_update_note_and_bind_with_exit_5_and_writes_nothing(self) -> None:
+        rig = Rig()
+        fresh = Rig(bind=False)
+        hashes = rig.show_hashes()
+        body = rig.file("b.md", "Changed.")
+        before = tree_digest(rig.home)
+        before_fresh = tree_digest(fresh.home)
+        env = {KILL_SWITCH: "1"}
+        runs = [
+            (rig, ["update", "--section", "Next action", "--expect-section", hashes["Next action"], "--from", body]),
+            (rig, ["note", "--from", body]),
+            (fresh, ["bind", "--ledger", fresh.ledger]),
+        ]
+        for target, args in runs:
+            code, out, err = target.run(args, env_extra=env)
+            self.assertEqual(5, code, args[0])
+            self.assertEqual("", out, args[0])
+            self.assertEqual([BRAND, "checkpoint: kill switch active"], err.splitlines(), args[0])
+        self.assertEqual(before, tree_digest(rig.home))
+        self.assertEqual(before_fresh, tree_digest(fresh.home))
+
+    def test_kill_switch_leaves_read_verbs_working(self) -> None:
+        rig = Rig()
+        good = rig.file("block.md", block_text())
+        env = {KILL_SWITCH: "1"}
+        for args in (["status"], ["show"], ["validate", "--from", good], ["lint"], ["--version"], ["--help"]):
+            code, out, err = rig.run(args, env_extra=env)
+            self.assertEqual(0, code, (args, err))
+
+    def test_other_kill_switch_values_leave_it_off(self) -> None:
+        rig = Rig()
+        for value in ("0", "", "2", "true"):
+            hashes = rig.show_hashes()
+            body = rig.file("b.md", "Value %s." % (value or "empty"))
+            args = ["update", "--section", "Next action", "--expect-section", hashes["Next action"], "--from", body]
+            code, out, err = rig.run(args, env_extra={KILL_SWITCH: value})
+            self.assertEqual(0, code, (value, err))
+
+
 class SourceHygieneTests(unittest.TestCase):
     def setUp(self) -> None:
         with open(STUB, "r", encoding="utf-8") as handle:
             self.source = handle.read()
 
-    def test_stub_has_no_call_log_no_injection_and_no_switches_yet(self) -> None:
-        for word in ("calls.log", "injection", "armed", "CKPT_STUB_"):
+    def test_stub_has_no_call_log_and_no_injection(self) -> None:
+        for word in ("calls.log", "injection", "armed"):
             self.assertNotIn(word, self.source, word)
+        names = set(re.findall(r"CKPT_STUB_[A-Z_]+", self.source))
+        self.assertLessEqual(names, {"CKPT_STUB_KILL_SWITCH", "CKPT_STUB_LOCK_TIMEOUT_MS"})
 
     def test_stub_imports_no_harness_module(self) -> None:
         self.assertIsNone(re.search(r"(?m)^\s*(import|from)\s+pc_", self.source))
