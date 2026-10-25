@@ -1,0 +1,82 @@
+#!/bin/bash
+# selftest: the one command a stranger runs first. It runs the whole harness test suite with
+# zero model calls. It makes sure no claude can be reached (every PATH entry that holds an
+# executable named claude is dropped, and the run refuses to start if claude is still
+# resolvable), then execs python3 -I -B -m unittest discover over this folder. bash 3.2 only.
+# Environment: PC_SELFTEST_PATTERN narrows discovery (default test_*.py); extra arguments are
+# passed to unittest.
+# Exit codes: unittest's own status, or 12 when python3 (3.9 or newer), git or a claude-free
+# PATH is not available (the same number as a BLOCKED preflight, see pc_exitcodes.py).
+
+# Resolve the folder of this file without any external command, so a downloaded archive works.
+case $0 in
+  */*) here_rel=${0%/*} ;;
+  *) here_rel=. ;;
+esac
+here=$(cd "$here_rel" && pwd) || { echo "selftest: cannot resolve its own folder" >&2; exit 12; }
+
+py=$(command -v python3)
+case $py in
+  /*) ;;
+  *) echo "selftest: python3 was not found on PATH; install Python 3.9 or newer" >&2; exit 12 ;;
+esac
+"$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
+  || { echo "selftest: python3 must be version 3.9 or newer" >&2; exit 12; }
+
+gitbin=$(command -v git)
+case $gitbin in
+  /*) ;;
+  *) echo "selftest: git was not found on PATH; install git" >&2; exit 12 ;;
+esac
+
+# The machine's global git settings must not change any result.
+GIT_CONFIG_GLOBAL=/dev/null
+GIT_CONFIG_NOSYSTEM=1
+GIT_TERMINAL_PROMPT=0
+export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_TERMINAL_PROMPT
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+# A private directory that links the tools the suite needs by absolute path. It is left to the
+# operating system's temporary-file cleanup: the shim ends in exec and the harness never deletes.
+priv=$(mktemp -d "${TMPDIR:-/tmp}/preclear-selftest.XXXXXX") \
+  || { echo "selftest: cannot create a private directory" >&2; exit 12; }
+ln -s "$py" "$priv/python3" || { echo "selftest: cannot link python3" >&2; exit 12; }
+ln -s "$gitbin" "$priv/git" || { echo "selftest: cannot link git" >&2; exit 12; }
+for tool in wc shellcheck; do
+  found=$(command -v "$tool" 2>/dev/null)
+  case $found in
+    /*) [ -x "$found" ] && ln -s "$found" "$priv/$tool" ;;
+  esac
+done
+
+# Child PATH: the private directory, then every original entry that holds no executable claude.
+# A claude that shares a directory with python3 or git is removed without them, because the
+# private directory already links both.
+scrubbed=$priv
+removed=0
+old_ifs=$IFS
+IFS=:
+set -f
+for dir in $PATH; do
+  [ -n "$dir" ] || continue
+  if [ -f "$dir/claude" ] && [ -x "$dir/claude" ]; then
+    removed=$((removed + 1))
+    continue
+  fi
+  scrubbed="$scrubbed:$dir"
+done
+set +f
+IFS=$old_ifs
+PATH=$scrubbed
+export PATH
+hash -r
+
+if command -v claude >/dev/null 2>&1; then
+  echo "selftest: claude is still resolvable after the PATH scrub; run python3 -m unittest discover -s tests/harness directly" >&2
+  exit 12
+fi
+command -v git >/dev/null 2>&1 \
+  || { echo "selftest: git is not resolvable after the PATH scrub" >&2; exit 12; }
+
+echo "preclear harness self-test: 0 model calls; claude directories removed from PATH: $removed"
+exec "$py" -I -B -m unittest discover -s "$here" -t "$here" -p "${PC_SELFTEST_PATTERN:-test_*.py}" "$@"
