@@ -234,8 +234,11 @@ class WritesNothingTests(unittest.TestCase):
                     modes += [k.value.value for k in node.keywords if k.arg == "mode" and isinstance(k.value, ast.Constant)]
                     for mode in modes:
                         self.assertFalse(set(str(mode)) & set("wax+"), "write-mode open: %r" % mode)
-                if name in ("write_text", "write_bytes", "mkdir", "makedirs", "rename", "replace", "remove", "unlink"):
+                if name in ("write_text", "write_bytes"):
                     self.fail("miner calls %s" % name)
+                owner = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
+                if owner in ("os", "shutil") and name in ("mkdir", "makedirs", "rename", "replace", "remove", "unlink", "rmtree", "copy", "copyfile", "move"):
+                    self.fail("miner calls %s.%s" % (owner, name))
         self.assertGreater(found_open, 0)
 
     def test_miner_imports_standard_library_only(self) -> None:

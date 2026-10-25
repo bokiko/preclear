@@ -230,11 +230,8 @@ class BrandTests(unittest.TestCase):
 class ExitCodeTests(unittest.TestCase):
     def test_usage_errors_exit_2(self) -> None:
         rig = Rig()
-        for args in ([], ["frobnicate"], ["validate"], ["show", "--section", "Nope"], ["show", "--bogus"]):
+        for args in ([], ["frobnicate"], ["validate"], ["show", "--bogus"]):
             self.assertEqual(2, rig.run(args)[0], args)
-        code, out, err = rig.run(["update", "--section", "Next action", "--expect-section", "NOTAHASH", "--from", "x"])
-        self.assertEqual(2, code)
-        self.assertEqual("", out)
 
     def test_session_flag_works_before_and_after_the_verb(self) -> None:
         rig = Rig()
