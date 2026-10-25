@@ -135,9 +135,10 @@ class LockTests(unittest.TestCase):
         self.assertEqual(before, rig.read())
 
     def test_lock_timeout_variable_is_ignored_by_read_verbs(self) -> None:
-        rig = cli.Rig()
-        for args in (["status"], ["show"], ["lint"]):
-            self.assertEqual(0, rig.run(args, env_extra={LOCK_VAR: "nonsense"})[0], args)
+        rig = cli.Rig(bind=False)
+        good = rig.file("block.md", cli.block_text())
+        for args in (["status"], ["lint"], ["validate", "--from", good]):
+            self.assertEqual(0, rig.run(args, env_extra={LOCK_VAR: "nonsense"})[0], args[0])
         self.assertFalse(os.path.exists(os.path.join(rig.home, ".lock")))
 
 

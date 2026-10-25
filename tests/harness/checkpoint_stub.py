@@ -23,34 +23,64 @@ otherwise; only --version and --help work without it):
     <ledger folder>/.checkpoint-log.jsonl   one JSON object per mutating call
 
 Containment is path-component aware: realpath on both sides, compared with the
-separator appended. Bind refuses a ledger outside CKPT_HOME; show and update
-refuse a ledger outside a registered root.
+separator appended. Bind, create and init refuse a ledger or root outside
+CKPT_HOME; show, update, note, handoff and init refuse a ledger outside a
+registered root; handoff refuses a handoffs folder that resolves outside CKPT_HOME.
 
 Session identity: --session (before or after the verb), else the
 CLAUDE_CODE_SESSION_ID variable, else exit 2. The short id is the first eight
 characters.
 
-Verbs implemented here: status, show, validate, update, lint (model-facing) and
-bind (driver only, needed to build state). note, handoff, create and init exit 1
-("not implemented in this build step"); the stub completion in a later plan fills
-them, the two labelled exit 5 and 6 switches and the lock with them.
+Verbs. Model-facing: status, show, validate, update, note, handoff and lint. The
+driver-only verbs exist so a test driver can build state and never appear in a
+model-facing allowlist:
+
+    bind    driver only: bind a session to a ledger under CKPT_HOME
+    create  driver only: make CONTINUITY_CLAUDE-<task>.md under a registered root
+    init    driver only: write a validated serialized block into a ledger without one
+
+Every write verb (update, note, handoff, bind, create, init) runs the write guard
+first, then holds one dedicated lock file, CKPT_HOME/.lock, across read, compare and
+atomic replace. The ledger itself is never locked, because os.replace swaps its
+inode. Read verbs (status, show, validate, lint), --version and --help take no lock
+and write nothing.
+
+Labelled stub-internal switches. These two are the only test modes inside the stub,
+and nothing else in it reads a CKPT_STUB_ variable:
+
+    CKPT_STUB_KILL_SWITCH      1 makes every write verb exit 5 before the lock is
+                               taken and before any file is touched; any other
+                               value, including empty and 0, leaves it off
+    CKPT_STUB_LOCK_TIMEOUT_MS  non-negative integer milliseconds the lock wait may
+                               last (default 5000); any other value, including
+                               empty, is a usage error (exit 2); a lock that another
+                               process really holds past the deadline gives exit 6
 
 Exit codes: 0 ok, 1 internal error, 2 usage or validation (including no
-checkpoint block), 3 conflict, 4 invalid checkpoint, 5 kill switch (later plan),
-6 lock timeout (later plan), 64 CKPT_HOME missing or not a directory.
+checkpoint block), 3 conflict, 4 invalid checkpoint, 5 kill switch, 6 lock
+timeout, 64 CKPT_HOME missing or not a directory.
+
+Failure handling: every mutation writes a temporary file in the target folder,
+fsyncs it and swaps it in with os.replace; if that fails the stub removes its own
+temporary file (the only deletion anywhere in it), leaves the target as it was and
+exits 1 with ``checkpoint: internal error: <exception class name>`` and nothing
+else. Any unexpected exception maps to the same exit 1 line.
 
 UNCONFIRMED behaviours. Where references/checkpoint-v1.md and the committed
 evidence are silent the stub takes the most literal reading and marks it here so
 the branch table can mirror this list. None of these was observed against the
 real helper:
 
-  * note: stdout and exit code (the stub prints one line and exits 0; appends
-    under the History heading a ``### <iso-ms>Z (<id8>)`` heading and the body,
-    which is the one committed effect). Later plan.
-  * handoff: the snapshot file name and stdout (the stub writes one immutable
-    snapshot beside the ledger and prints its path). Later plan.
+  * note: stdout and exit code (the stub prints ``noted in <ledger>`` and exits
+    0; appends under the History heading a ``### <iso-ms>Z (<id8>)`` heading and
+    the body, which is the one committed effect; a ledger with no History heading
+    gets one appended; a ledger with no checkpoint block exits 2).
+  * handoff: the snapshot file name and stdout (the stub resolves the session
+    ledger like note does, writes the file body unchanged as
+    CKPT_HOME/handoffs/handoff-<YYYYMMDDTHHMMSSmmmZ>-<id8>.md by exclusive
+    creation, never overwriting, and prints ``handoff written: <path>``).
   * kill switch scope: write verbs only (update, note, handoff, bind, create,
-    init); reads and validate are unaffected. Later plan.
+    init); reads and validate are unaffected.
   * status with no checkpoint block prints ``checkpoint: NONE`` as line 2.
   * status carried-from suffix: `` (carried from <id8>, unverified)`` when the
     binding names a predecessor.
@@ -65,8 +95,10 @@ real helper:
     millisecond time and the caller id8, six sections separated by one blank
     line, end marker, no trailing newline).
   * bind, create and init argument shapes: bind takes --session, --ledger,
-    --project, --workstream and --predecessor; create and init take --ledger,
-    --project, --workstream and --task.
+    --project, --workstream and --predecessor; create takes --task (required),
+    --root, --project and --workstream (the last two go to the audit line only);
+    init takes --ledger and --from. Their one-line outputs are ``bound ...``,
+    ``created <path>`` and ``initialised <path>``.
   * ledger-roots.json and .checkpoint-log.jsonl content (the shapes above).
   * a repeated --section flag: the first value wins.
   * a non-Authorization section with an empty body is allowed (its hash is the
@@ -78,6 +110,8 @@ real helper:
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -111,6 +145,9 @@ EXIT_LOCK = 6
 EXIT_NO_HOME = 64
 
 KILL_SWITCH_VAR = "CKPT_STUB_KILL_SWITCH"
+LOCK_TIMEOUT_VAR = "CKPT_STUB_LOCK_TIMEOUT_MS"
+DEFAULT_LOCK_TIMEOUT_MS = 5000
+LOCK_POLL_SECONDS = 0.02
 
 BEGIN_RE = re.compile(r"^<!-- CHECKPOINT:BEGIN updated: (\S+) by: (\S+) -->$")
 END_LINE = "<!-- CHECKPOINT:END -->"
@@ -123,7 +160,8 @@ HISTORY_RE = re.compile(r"(?m)^## History[ \t]*$")
 NEXT_HEADING_RE = re.compile(r"(?m)^## ")
 BEGIN_LINE_RE = re.compile(r"(?m)^<!-- CHECKPOINT:BEGIN [^\n]*$")
 
-NOT_IMPLEMENTED = ("handoff", "create", "init")
+TASK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+TIMEOUT_RE = re.compile(r"[0-9]+")
 
 
 class Exit(Exception):
@@ -302,9 +340,16 @@ def load_roots(ctx: Context) -> list:
     return roots
 
 
+def require_within(path: str, base: str, message: str) -> str:
+    """The one containment gate for write paths: the realpath of path, or exit 2 with message."""
+    if not is_within(path, base):
+        raise Exit(EXIT_USAGE, message)
+    return os.path.realpath(path)
+
+
 def register_root(ctx: Context, folder: str) -> None:
     roots = load_roots(ctx)
-    real = os.path.realpath(folder)
+    real = require_within(folder, ctx.home, "checkpoint: ledger root is outside CKPT_HOME")
     if real not in roots:
         roots.append(real)
     data = json.dumps({"roots": sorted(roots)}, indent=2) + "\n"
@@ -362,7 +407,7 @@ def load_ledger(ledger: str):
     return text, parse_ledger(text)
 
 
-def audit(ledger: str, ctx: Context, verb: str, section=None) -> None:
+def audit(ledger: str, ctx: Context, verb: str, section=None, **extra) -> None:
     record = {
         "by": ctx.id8,
         "ledger": os.path.basename(ledger),
@@ -371,6 +416,9 @@ def audit(ledger: str, ctx: Context, verb: str, section=None) -> None:
     }
     if section is not None:
         record["section"] = section
+    for key, value in extra.items():
+        if value is not None:
+            record[key] = value
     line = json.dumps(record, sort_keys=True) + "\n"
     path = os.path.join(os.path.dirname(ledger), ".checkpoint-log.jsonl")
     with open(path, "ab") as handle:
@@ -387,6 +435,84 @@ def guard_write(ctx: Context) -> None:
     """
     if os.environ.get(KILL_SWITCH_VAR) == "1":
         raise Exit(EXIT_KILL, "checkpoint: kill switch active")
+
+
+def lock_timeout_ms() -> int:
+    """The lock wait bound from CKPT_STUB_LOCK_TIMEOUT_MS; anything but digits is exit 2."""
+    raw = os.environ.get(LOCK_TIMEOUT_VAR)
+    if raw is None:
+        return DEFAULT_LOCK_TIMEOUT_MS
+    if not TIMEOUT_RE.fullmatch(raw):
+        raise Exit(
+            EXIT_USAGE,
+            "checkpoint: usage error: %s must be a non-negative integer (milliseconds)" % LOCK_TIMEOUT_VAR,
+        )
+    return int(raw)
+
+
+class WriteLock(object):
+    """Exclusive flock on CKPT_HOME/.lock, retried every 20 ms until the deadline (exit 6)."""
+
+    def __init__(self, ctx: Context) -> None:
+        self.ctx = ctx
+        self.fd = -1
+
+    def __enter__(self) -> "WriteLock":
+        timeout = lock_timeout_ms()
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        self.fd = os.open(self.ctx.path(".lock"), flags, 0o644)
+        deadline = time.monotonic() + timeout / 1000.0
+        try:
+            while True:
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return self
+                except OSError as exc:
+                    if exc.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                        raise
+                if time.monotonic() >= deadline:
+                    raise Exit(EXIT_LOCK, "checkpoint: lock timeout")
+                time.sleep(LOCK_POLL_SECONDS)
+        except BaseException:
+            os.close(self.fd)
+            self.fd = -1
+            raise
+
+    def __exit__(self, *exc_info) -> None:
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
+
+
+def write_verb(func):
+    """Wrap a write verb: the guard first (kill switch), then the lock held for the whole verb."""
+
+    def wrapper(ctx: Context, args) -> int:
+        guard_write(ctx)
+        with WriteLock(ctx):
+            return func(ctx, args)
+
+    wrapper.__name__ = func.__name__
+    wrapper.__doc__ = func.__doc__
+    return wrapper
+
+
+def create_exclusive(path: str, data: bytes, mode: int = 0o644) -> None:
+    """Create path with data only if it does not exist (FileExistsError otherwise); never overwrites."""
+    folder = os.path.dirname(path)
+    fd, temp = tempfile.mkstemp(dir=folder, prefix=".ckpt-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, mode)
+        os.link(temp, path)
+    finally:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
 
 
 def append_history(text: str, entry: str) -> str:
@@ -480,8 +606,8 @@ def read_input_file(path: str) -> str:
         raise Exit(EXIT_USAGE, "checkpoint: cannot read " + path)
 
 
-def verb_validate(ctx: Context, args) -> int:
-    text = read_input_file(args.source)
+def parse_serialized(text: str) -> list:
+    """Sections of a full serialized block (the validate and init input), or exit 4."""
     lines = text.rstrip("\n").split("\n")
     if not BEGIN_RE.match(lines[0]):
         raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: missing begin marker")
@@ -490,6 +616,11 @@ def verb_validate(ctx: Context, args) -> int:
     sections = parse_block_lines(lines[1:-1])
     if sections is None:
         raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: text before the first section")
+    return sections
+
+
+def verb_validate(ctx: Context, args) -> int:
+    sections = parse_serialized(read_input_file(args.source))
     updated = utc_iso_ms(time.time_ns())
     reason = check_block(updated, ctx.id8, sections)
     if reason:
@@ -523,8 +654,8 @@ def write_conflict(ledger: str, ctx: Context, name: str, base_hash: str, current
         return target
 
 
+@write_verb
 def verb_update(ctx: Context, args) -> int:
-    guard_write(ctx)
     name = args.section
     if name not in SECTIONS:
         raise Exit(EXIT_USAGE, 'checkpoint: unknown section "%s"' % name)
@@ -565,8 +696,8 @@ def verb_update(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+@write_verb
 def verb_note(ctx: Context, args) -> int:
-    guard_write(ctx)
     ledger, _ = resolve_ledger(ctx, args.ledger)
     text, parsed = load_ledger(ledger)
     if parsed is None:
@@ -611,12 +742,10 @@ def verb_lint(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+@write_verb
 def verb_bind(ctx: Context, args) -> int:
-    guard_write(ctx)
-    ledger = os.path.realpath(args.ledger)
-    folder = os.path.dirname(ledger)
-    if not is_within(ledger, ctx.home) or not is_within(folder, ctx.home):
-        raise Exit(EXIT_USAGE, "checkpoint: ledger is outside CKPT_HOME")
+    ledger = require_within(args.ledger, ctx.home, "checkpoint: ledger is outside CKPT_HOME")
+    folder = require_within(os.path.dirname(ledger), ctx.home, "checkpoint: ledger is outside CKPT_HOME")
     os.makedirs(ctx.path("bindings"), exist_ok=True)
     record = {
         "session_id": ctx.session,
@@ -634,14 +763,91 @@ def verb_bind(ctx: Context, args) -> int:
     return EXIT_OK
 
 
+def compact_stamp(ns: int) -> str:
+    """The time part of a handoff file name: YYYYMMDDTHHMMSSmmmZ."""
+    return utc_iso_ms(ns).replace("-", "").replace(":", "").replace(".", "")
+
+
+@write_verb
+def verb_handoff(ctx: Context, args) -> int:
+    ledger, _ = resolve_ledger(ctx, args.ledger)
+    body = read_input_file(args.source)
+    folder = ctx.path("handoffs")
+    try:
+        os.mkdir(folder)
+    except FileExistsError:
+        pass
+    require_within(folder, ctx.home, "checkpoint: handoffs folder resolves outside CKPT_HOME")
+    ns = time.time_ns()
+    while True:
+        target = os.path.join(folder, "handoff-%s-%s.md" % (compact_stamp(ns), ctx.id8))
+        try:
+            create_exclusive(target, body.encode("utf-8"))
+        except FileExistsError:
+            ns += 1000000
+            continue
+        break
+    audit(ledger, ctx, "handoff")
+    out("handoff written: %s\n" % target)
+    return EXIT_OK
+
+
+@write_verb
+def verb_create(ctx: Context, args) -> int:
+    task = args.task
+    if not TASK_RE.match(task):
+        raise Exit(EXIT_USAGE, "checkpoint: --task must be a plain name (letters, digits, dot, dash, underscore)")
+    requested = args.root if args.root else ctx.path("ledgers")
+    root = require_within(requested, ctx.home, "checkpoint: ledger root is outside CKPT_HOME")
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, "CONTINUITY_CLAUDE-%s.md" % task)
+    content = "# CONTINUITY %s %s\n\n## History\n" % ("—", task)
+    try:
+        create_exclusive(path, content.encode("utf-8"))
+    except FileExistsError:
+        raise Exit(EXIT_USAGE, "checkpoint: ledger already exists")
+    register_root(ctx, root)
+    audit(path, ctx, "create", project=args.project, workstream=args.workstream)
+    out("created %s\n" % path)
+    return EXIT_OK
+
+
+@write_verb
+def verb_init(ctx: Context, args) -> int:
+    ledger, _ = resolve_ledger(ctx, args.ledger)
+    text, parsed = load_ledger(ledger)
+    if parsed is not None or BEGIN_LINE_RE.search(text):
+        raise Exit(EXIT_USAGE, "checkpoint: ledger already has a checkpoint block")
+    sections = parse_serialized(read_input_file(args.source))
+    updated = utc_iso_ms(time.time_ns())
+    reason = check_block(updated, ctx.id8, sections)
+    if reason:
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: " + reason)
+    block = render_block(updated, ctx.id8, sections)
+    found = HISTORY_RE.search(text)
+    if found:
+        head = text[:found.start()].rstrip("\n")
+        new_text = (head + "\n\n" if head else "") + block + "\n\n" + text[found.start():]
+    else:
+        new_text = text.rstrip("\n") + "\n\n" + block + "\n\n## History\n"
+    mode = os.stat(ledger).st_mode & 0o777
+    atomic_write(ledger, new_text.encode("utf-8"), mode)
+    audit(ledger, ctx, "init")
+    out("initialised %s\n" % ledger)
+    return EXIT_OK
+
+
 VERBS = {
     "status": verb_status,
     "show": verb_show,
     "validate": verb_validate,
     "update": verb_update,
     "note": verb_note,
+    "handoff": verb_handoff,
     "lint": verb_lint,
     "bind": verb_bind,
+    "create": verb_create,
+    "init": verb_init,
 }
 
 
@@ -692,19 +898,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--from", dest="source", required=True)
     p.add_argument("--ledger")
     verb("lint", "scan the registered ledgers")
-    p = verb("handoff", "write an immutable snapshot (later plan)")
-    p.add_argument("--from", dest="source")
+    p = verb("handoff", "write an immutable snapshot of the file body")
+    p.add_argument("--from", dest="source", required=True)
+    p.add_argument("--ledger")
     p = verb("bind", "bind a session to a ledger (driver only)")
     p.add_argument("--ledger", required=True)
     p.add_argument("--project")
     p.add_argument("--workstream")
     p.add_argument("--predecessor")
-    for name in ("create", "init"):
-        p = verb(name, name + " a ledger (driver only, later plan)")
-        p.add_argument("--ledger")
-        p.add_argument("--project")
-        p.add_argument("--workstream")
-        p.add_argument("--task")
+    p = verb("create", "create a ledger under a registered root (driver only)")
+    p.add_argument("--task", required=True)
+    p.add_argument("--root")
+    p.add_argument("--project")
+    p.add_argument("--workstream")
+    p = verb("init", "write a serialized block into a ledger that has none (driver only)")
+    p.add_argument("--ledger", required=True)
+    p.add_argument("--from", dest="source", required=True)
     return parser
 
 
@@ -730,8 +939,6 @@ def run(argv: list) -> int:
         if not SESSION_RE.match(session):
             raise Exit(EXIT_USAGE, "checkpoint: session id has an unexpected shape")
     ctx = Context(home, session, verb)
-    if verb in NOT_IMPLEMENTED:
-        raise Exit(EXIT_INTERNAL, "checkpoint: %s is not implemented in this build step" % verb)
     return VERBS[verb](ctx, args)
 
 

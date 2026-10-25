@@ -826,19 +826,19 @@ class DriverVerbTests(unittest.TestCase):
             self.assertEqual(2, rig.run(["create", "--task", task])[0], task)
 
     def test_driver_verbs_refuse_a_root_or_ledger_outside_ckpt_home(self) -> None:
-        rig = Rig(bind=False)
+        rig = Rig()  # binding first, so the lock file already exists and the digest is stable
         outside = scratch()
         link = os.path.join(rig.home, "linked-root")
         os.symlink(outside, link)
+        block = rig.file("block.md", block_text())
         before = tree_digest(rig.home)
-        for args in (["create", "--task", "x", "--root", outside], ["create", "--task", "x", "--root", link]):
-            code, out, err = rig.run(args)
-            self.assertEqual((2, ""), (code, out), args)
+        for label, root in (("plain", outside), ("symlink", link)):
+            code, out, err = rig.run(["create", "--task", "x", "--root", root])
+            self.assertEqual((2, ""), (code, out), label)
         self.assertEqual([], os.listdir(outside))
         foreign = os.path.join(outside, "CONTINUITY_CLAUDE-out.md")
         with open(foreign, "wb") as handle:
             handle.write(b"# CONTINUITY \xe2\x80\x94 out\n")
-        block = rig.file("block.md", block_text())
         code, out, err = rig.run(["init", "--ledger", foreign, "--from", block])
         self.assertEqual((2, ""), (code, out))
         self.assertEqual(b"# CONTINUITY \xe2\x80\x94 out\n", rig.read(foreign))
