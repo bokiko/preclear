@@ -41,7 +41,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [ ] **STUB-01**: A single-file Python stub under `tests/harness/` implements the `checkpoint-v1` interface in `references/checkpoint-v1.md`: `status`, `show`, `validate`, `update`, `note`, `lint`, `handoff`, exit codes 0 to 6, 64-char lowercase sha256 section hashes, six-section and byte-cap validation, atomic writes and a lock
 - [ ] **STUB-02**: The stub refuses to run without `CKPT_HOME` and keeps all state under it, so every run is isolated
-- [ ] **STUB-03**: The observable contract is mined from every committed `wrapper-calls.log` and decisive output in `tests/evidence/`, and a replay conformance suite reruns those argv sequences against the stub with zero model tokens
+- [x] **STUB-03**: The observable contract is mined from every committed `wrapper-calls.log` and decisive output in `tests/evidence/`, and a replay conformance suite reruns those argv sequences against the stub with zero model tokens
 - [ ] **STUB-04**: Conflict injection and call logging are composed outside the stub by a wrapper, so the conflict row proves the real hash guard; stub-internal switches exist only for exits 5 and 6 and are labelled
 - [ ] **STUB-05**: A branch table lists every exit code and status shape the rows need and marks `handoff`, `note`, exit 5 and exit 6 as UNCONFIRMED against the real build; the stub brands its output as stub-backed
 - [ ] **STUB-06**: `bind`, `create` and `init` are never in any model-facing allowlist; only the driver may call them
@@ -123,7 +123,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-14 | Phase 2 | Pending |
 | STUB-01 | Phase 2 | Pending |
 | STUB-02 | Phase 2 | Pending |
-| STUB-03 | Phase 2 | Pending |
+| STUB-03 | Phase 2 | Complete |
 | STUB-04 | Phase 2 | Pending |
 | STUB-05 | Phase 2 | Pending |
 | STUB-06 | Phase 2 | Pending |

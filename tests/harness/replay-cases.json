@@ -1,0 +1,411 @@
+{
+  "cases": [
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-other-task.md",
+      "calls": [
+        {
+          "argv": [
+            "status"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "kind": "status-before",
+            "path": "tests/evidence/publication-2026-10-20/row1-wrong-binding/status-before.txt"
+          },
+          "position": 1,
+          "refs": []
+        }
+      ],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-other-task.md",
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row1-wrong-binding/wrapper-calls.log",
+      "row": "row1-wrong-binding",
+      "session_id": "eace4601-2792-4d29-a7f1-937d1c3ac5ed",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row1-wrong-binding/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [
+        {
+          "argv": [
+            "status"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "bash_index": 9,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row2-double-conflict/s2-preclear-full-trace.md",
+            "trace_number": 11
+          },
+          "position": 1,
+          "refs": []
+        },
+        {
+          "argv": [
+            "show"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "bash_index": 10,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row2-double-conflict/s2-preclear-full-trace.md",
+            "trace_number": 12
+          },
+          "position": 2,
+          "refs": []
+        },
+        {
+          "argv": [
+            "validate",
+            "--from",
+            ".preclear/backend-inputs/block.md"
+          ],
+          "exit": 0,
+          "inputs": [
+            {
+              "index": 2,
+              "replay_path": ".preclear/backend-inputs/block.md",
+              "source": "tests/evidence/publication-2026-10-20/row2-double-conflict/snap-2-after-preclear/preclear/backend-inputs/block.md"
+            }
+          ],
+          "output": {
+            "kind": "none"
+          },
+          "position": 3,
+          "refs": []
+        },
+        {
+          "argv": [
+            "update",
+            "--section",
+            "Goal & current state",
+            "--expect-section",
+            "<last-show-hash>",
+            "--from",
+            ".preclear/backend-inputs/goal.md"
+          ],
+          "exit": 3,
+          "inputs": [
+            {
+              "index": 6,
+              "replay_path": ".preclear/backend-inputs/goal.md",
+              "source": "tests/evidence/publication-2026-10-20/row2-double-conflict/snap-2-after-preclear/preclear/backend-inputs/goal.md"
+            }
+          ],
+          "output": {
+            "kind": "none"
+          },
+          "position": 4,
+          "refs": [
+            {
+              "index": 4,
+              "kind": "last-show",
+              "section": "Goal & current state"
+            }
+          ]
+        },
+        {
+          "argv": [
+            "show"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "bash_index": 19,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row2-double-conflict/s2-preclear-full-trace.md",
+            "trace_number": 33
+          },
+          "position": 5,
+          "refs": []
+        },
+        {
+          "argv": [
+            "update",
+            "--section",
+            "Goal & current state",
+            "--expect-section",
+            "<last-show-hash>",
+            "--from",
+            ".preclear/backend-inputs/goal.md"
+          ],
+          "exit": 3,
+          "inputs": [
+            {
+              "index": 6,
+              "replay_path": ".preclear/backend-inputs/goal.md",
+              "source": "tests/evidence/publication-2026-10-20/row2-double-conflict/snap-2-after-preclear/preclear/backend-inputs/goal.md"
+            }
+          ],
+          "output": {
+            "bash_index": 20,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row2-double-conflict/s2-preclear-full-trace.md",
+            "trace_number": 35
+          },
+          "position": 6,
+          "refs": [
+            {
+              "index": 4,
+              "kind": "last-show",
+              "section": "Goal & current state"
+            }
+          ]
+        }
+      ],
+      "conflict_files": [
+        "tests/evidence/publication-2026-10-20/row2-double-conflict/snap-2-after-preclear/CONTINUITY_CLAUDE-widget-export.md.conflict-2026-10-19T23-12-21.789Z-b9edab22.md",
+        "tests/evidence/publication-2026-10-20/row2-double-conflict/snap-2-after-preclear/CONTINUITY_CLAUDE-widget-export.md.conflict-2026-10-19T23-12-30.674Z-b9edab22.md"
+      ],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row2-double-conflict/wrapper-calls.log",
+      "row": "row2-double-conflict",
+      "session_id": "b9edab22-c5c1-476e-a6eb-3a18c7e77182",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row2-double-conflict/snap-0-setup",
+      "writer2_session": "2dd0559f-2b35-41ae-8a1e-25036719909c"
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row3a-missing-executable/wrapper-calls.log",
+      "row": "row3a-missing-executable",
+      "session_id": "cc87f6fa-45b3-4e08-996f-6c15d690d171",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row3a-missing-executable/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row3a-missing-executable-rerun/wrapper-calls.log",
+      "row": "row3a-missing-executable-rerun",
+      "session_id": "e6a50e0e-a210-45da-9975-a00328e000e6",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row3a-missing-executable-rerun/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [
+        {
+          "argv": [
+            "status"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "kind": "status-before",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/status-before.txt"
+          },
+          "position": 1,
+          "refs": []
+        },
+        {
+          "argv": [
+            "show"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "bash_index": 8,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/s2-preclear-full-trace.md",
+            "trace_number": 10
+          },
+          "position": 2,
+          "refs": []
+        },
+        {
+          "argv": [
+            "validate",
+            "--from",
+            ".preclear/backend-inputs/block.md"
+          ],
+          "exit": 0,
+          "inputs": [
+            {
+              "index": 2,
+              "replay_path": ".preclear/backend-inputs/block.md",
+              "source": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/snap-2-after-preclear/preclear/backend-inputs/block.md"
+            }
+          ],
+          "output": {
+            "bash_index": 13,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/s2-preclear-full-trace.md",
+            "trace_number": 23
+          },
+          "position": 3,
+          "refs": []
+        },
+        {
+          "argv": [
+            "show",
+            "--section",
+            "Next action"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "bash_index": 21,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/s2-preclear-full-trace.md",
+            "trace_number": 31
+          },
+          "position": 4,
+          "refs": []
+        }
+      ],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/wrapper-calls.log",
+      "row": "row3b-denied-helper-write",
+      "session_id": "4b44f3a2-4139-4552-a872-82702fd5d48d",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [
+        {
+          "argv": [
+            "status"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "kind": "status-before",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write-rerun/status-before.txt"
+          },
+          "position": 1,
+          "refs": []
+        },
+        {
+          "argv": [
+            "show"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "bash_index": 10,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write-rerun/s2-preclear-full-trace.md",
+            "trace_number": 14
+          },
+          "position": 2,
+          "refs": []
+        },
+        {
+          "argv": [
+            "validate",
+            "--from",
+            "<repo>/<run>/project/.preclear/backend-inputs/block.md"
+          ],
+          "exit": 0,
+          "inputs": [
+            {
+              "index": 2,
+              "replay_path": ".preclear/backend-inputs/block.md",
+              "source": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write-rerun/snap-2-after-preclear/preclear/backend-inputs/block.md"
+            }
+          ],
+          "output": {
+            "bash_index": 14,
+            "kind": "trace",
+            "path": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write-rerun/s2-preclear-full-trace.md",
+            "trace_number": 28
+          },
+          "position": 3,
+          "refs": []
+        }
+      ],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write-rerun/wrapper-calls.log",
+      "row": "row3b-denied-helper-write-rerun",
+      "session_id": "67beffcb-96da-4960-8c27-799d7effbcfd",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row3b-denied-helper-write-rerun/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": null,
+      "calls": [
+        {
+          "argv": [
+            "status"
+          ],
+          "exit": 0,
+          "inputs": [],
+          "output": {
+            "kind": "status-before",
+            "path": "tests/evidence/publication-2026-10-20/row3c-unbound-fallback-none/status-before.txt"
+          },
+          "position": 1,
+          "refs": []
+        }
+      ],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row3c-unbound-fallback-none/wrapper-calls.log",
+      "row": "row3c-unbound-fallback-none",
+      "session_id": "e7ac129d-a743-46ca-9478-85a8f57ee541",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row3c-unbound-fallback-none/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row4a-unknown-backend/wrapper-calls.log",
+      "row": "row4a-unknown-backend",
+      "session_id": "8a89dcec-3653-4550-8f97-96596879c3b3",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row4a-unknown-backend/snap-0-setup",
+      "writer2_session": null
+    },
+    {
+      "bound_ledger": "CONTINUITY_CLAUDE-widget-export.md",
+      "calls": [],
+      "conflict_files": [],
+      "ledgers": [
+        "CONTINUITY_CLAUDE-widget-export.md"
+      ],
+      "log": "tests/evidence/publication-2026-10-20/row4b-conflicting-blocks/wrapper-calls.log",
+      "row": "row4b-conflicting-blocks",
+      "session_id": "baf198cb-90b5-487c-8bc6-29a4d1b8efa7",
+      "setup_snapshot": "tests/evidence/publication-2026-10-20/row4b-conflicting-blocks/snap-0-setup",
+      "writer2_session": null
+    }
+  ],
+  "inventory": {
+    "calls": 15,
+    "empty": 4,
+    "logs": 9,
+    "non_empty": 5
+  },
+  "schema": 1,
+  "source": "tests/evidence/publication-2026-10-20"
+}
