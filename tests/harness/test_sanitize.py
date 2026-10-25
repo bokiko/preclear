@@ -22,6 +22,8 @@ import pc_leakgate  # noqa: E402  (the harness folder is on sys.path via discove
 import pc_sanitize  # noqa: E402
 import pc_seeds  # noqa: E402
 
+HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(HARNESS_DIR))
 TOKEN_RE = re.compile(r"<[a-z][a-z0-9-]*>")
 SYNTHETIC_USER = "pcsynthuser"
 ODD_HOME_NAME = "pc synth_u.x"  # a space, an underscore and a dot, so the forms differ from each other
@@ -289,8 +291,9 @@ class ObjectSurfaceTests(HarnessTestCase):
 
 class LiveMachineTests(HarnessTestCase):
     def test_the_real_machine_forms_are_all_replaced(self):
-        repo = tempfile.mkdtemp(prefix="preclear-sn-")
-        san = pc_sanitize.Sanitizer.from_machine(repo)
+        # The real repository root: the local deny file is looked up through git, and its absence
+        # (the usual case) is the empty-file path of the reader.
+        san = pc_sanitize.Sanitizer.from_machine(REPO_ROOT)
         home = os.path.expanduser("~")
         if len(home) < 4:
             self.skipTest("the home path is too short to test")
