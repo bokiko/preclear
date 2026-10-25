@@ -79,7 +79,7 @@ class TracerTests(HarnessTestCase):
 
     def test_a_clean_stage_is_promoted_byte_for_byte(self):
         repo = make_repo()
-        files = {"a.txt": b"alpha\n", "sub/b.bin": b"beta\x00no newline", "sub/deeper/c.txt": b""}
+        files = {"a.txt": b"alpha\n", "sub/b.bin": b"beta\r\n\xc3\xa9 no newline", "sub/deeper/c.txt": b""}
         stage = make_stage(files)
         dest = os.path.join(repo, "tests", "evidence", "dst")
         result = pc_promote.promote(stage, dest, repo, None, [])
