@@ -280,7 +280,11 @@ class ReplayRow2Tests(unittest.TestCase):
     def test_injection_log_holds_two_writer_updates_and_the_armed_file_ends_at_zero(self):
         text = self.rig.log("injection.log")
         self.assertIsNotNone(text)
-        lines = text.splitlines()
+        all_lines = text.splitlines()
+        # The stub brands its stderr once per invocation (a show and an update per injection);
+        # the log holds stdout and stderr of the writer, so those lines are expected and counted.
+        self.assertEqual(4, all_lines.count(BRAND))
+        lines = [line for line in all_lines if line != BRAND]
         self.assertEqual(2, lines.count("writer2 update exit 0"))
         self.assertEqual(6, len(lines))
         headers = [line for line in lines if line.startswith("=== ")]
@@ -305,9 +309,14 @@ class PassThroughTests(unittest.TestCase):
         through, direct = Rig(armed=None), Rig(armed=None)
         token = "<scratch>"
 
+        stamp = re.compile(r"\.conflict-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-")
+
         def norm(rig, triple):
+            # Two normalisations only: the scratch root, and the clock time that the stub
+            # itself puts in a conflict file name (two runs never share a millisecond).
             code, out, err = triple
-            return code, out.replace(rig.base, token), err.replace(rig.base, token)
+            fix = lambda text: stamp.sub(".conflict-<time>-", text.replace(rig.base, token))
+            return code, fix(out), fix(err)
 
         def both(args):
             via_wrapper = norm(through, through.wrap(args))
