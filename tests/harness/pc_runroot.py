@@ -3,8 +3,9 @@
 Every run lives in one harness-created directory (the run root). This module only ever
 creates: a directory with one os.mkdir call that has no exist_ok handling, a file with
 O_CREAT and O_EXCL. A second creation of the same path is an error, never a reuse. The
-module lists, sorts, renames and deletes nothing, so run-root ordering belongs to the
-caller.
+module lists no run roots, sorts none, renames nothing and deletes nothing, so run-root
+ordering belongs to the caller. (copy_tree_exclusive walks a source tree in sorted order
+only to copy it into a brand-new destination.)
 
 CLI: python3 -E -s -B pc_runroot.py PARENT NAME
   prints the created path on stdout and exits 0;
@@ -15,6 +16,7 @@ CLI: python3 -E -s -B pc_runroot.py PARENT NAME
 from __future__ import annotations
 
 import os
+import stat
 import sys
 
 # Same value as the RUNROOT_COLLISION constant in pc_exitcodes (plan 02-01). It is a
@@ -102,8 +104,70 @@ def write_exclusive(path, data, mode):
         os.close(fd)
 
 
+def _raise(error):
+    raise error
+
+
+def _read_regular(path):
+    """Read one regular file in full without following a final symlink or blocking on a pipe."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        raise RunRootError("a source file could not be opened safely")
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RunRootError("a source entry is not a regular file")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
 def copy_tree_exclusive(src, dst):
-    return None
+    """Copy the tree SRC to the new path DST and return the number of files copied.
+
+    SRC must be an existing real directory (not a symlink); DST must not exist, so an
+    existing destination, a dangling symlink included, raises FileExistsError. The whole
+    source is walked on raw bytes, in sorted order and without following symlinks, and
+    refused (RunRootError) if it holds any symlink or special file, before anything is
+    created. Directories are created with exclusive_dir and files with write_exclusive,
+    each from bytes read once. A file is 0o755 when the source has any executable bit and
+    0o644 otherwise. Nothing is ever removed, renamed or overwritten.
+    """
+    src_bytes = os.fsencode(os.fspath(src))
+    dst_bytes = os.fsencode(os.fspath(dst))
+    if src_bytes == b"" or os.path.islink(src_bytes) or not os.path.isdir(src_bytes):
+        raise RunRootError("copy source is not an existing real directory")
+    directories = []
+    files = []
+    for dirpath, dirnames, filenames in os.walk(src_bytes, onerror=_raise):
+        if dirpath == src_bytes:
+            rel_dir = b""
+        else:
+            rel_dir = dirpath[len(src_bytes):].lstrip(b"/")
+        for name in list(dirnames) + list(filenames):
+            rel = rel_dir + b"/" + name if rel_dir else name
+            mode = os.lstat(os.path.join(dirpath, name)).st_mode
+            if stat.S_ISDIR(mode):
+                directories.append(rel)
+            elif stat.S_ISREG(mode):
+                files.append((rel, 0o755 if mode & 0o111 else 0o644))
+            else:
+                raise RunRootError("copy source holds a symlink or special file")
+    directories.sort()
+    files.sort()
+    exclusive_dir(dst_bytes, 0o700)
+    for rel in directories:
+        exclusive_dir(os.path.join(dst_bytes, rel), 0o700)
+    for rel, mode in files:
+        write_exclusive(os.path.join(dst_bytes, rel), _read_regular(os.path.join(src_bytes, rel)), mode)
+    return len(files)
 
 
 def main(argv):

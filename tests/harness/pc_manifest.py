@@ -18,6 +18,11 @@ Entry shape (a dict): path (raw relative bytes, forward slashes), kind (f regula
 d directory, l symlink, o any other type), size (int for f, else None), sha256 (hex for
 f, else None), target (raw link target bytes for l, else None).
 
+capture_git_status runs only "git --no-optional-locks status" (with and without -z) and
+returns the raw NUL form, which stays in the run root, and the plain text form, which is
+the only candidate for evidence. tree_manifest refuses a root at or under any path in its
+refuse_under argument (the harness-owned Claude config directory holds credentials).
+
 CLI: python3 -E -s -B pc_manifest.py ROOT [--jsonl]
   writes the chosen form to stdout and exits 0; exits 2 on a bad root or bad usage.
 """
@@ -27,6 +32,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import sys
 
 import pc_runroot
@@ -42,11 +48,76 @@ def _raise(error):
     raise error
 
 
-GIT_ENV_OVERRIDES = {}
+# Git environment hygiene for every git call the harness makes: no user or system config,
+# no prompts, no optional locks. GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE are removed
+# from the copied environment so a caller's repository can never leak into a capture.
+GIT_ENV_OVERRIDES = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_OPTIONAL_LOCKS": "0",
+}
+_GIT_ENV_REMOVED = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+_GIT_STATUS_BEFORE_Z = ["--no-optional-locks", "status", "--porcelain=v1"]
+_GIT_STATUS_AFTER_Z = ["--untracked-files=all", "--ignore-submodules=none"]
+GIT_TIMEOUT_SECONDS = 120
+
+
+def _git_environment():
+    env = dict(os.environ)
+    for name in _GIT_ENV_REMOVED:
+        env.pop(name, None)
+    env.update(GIT_ENV_OVERRIDES)
+    return env
+
+
+def _run_git_status(git, project_dir, with_z):
+    command = [git, "-C", project_dir] + _GIT_STATUS_BEFORE_Z + (["-z"] if with_z else []) + _GIT_STATUS_AFTER_Z
+    try:
+        result = subprocess.run(
+            command,
+            env=_git_environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise ManifestError("git status timed out")
+    except OSError:
+        raise ManifestError("git could not be run")
+    if result.returncode != 0:
+        # git's own message is not copied: it can name paths.
+        raise ManifestError("git status failed (exit %d)" % result.returncode)
+    return result.stdout
 
 
 def capture_git_status(project_dir, git):
-    return (b"", b"")
+    """Run git status read-only and return (raw NUL bytes, plain text bytes).
+
+    The first call is the NUL form named in SKILL.md Step 3, the second the same command
+    without -z (git's quoted porcelain v1 form). Only --no-optional-locks status is ever
+    run: nothing is written, staged, committed or reset. The raw form is for the run root
+    only; only the text form is a candidate for evidence, because the leak gate refuses
+    NUL bytes. A non-zero exit raises ManifestError.
+    """
+    raw = _run_git_status(git, project_dir, True)
+    text = _run_git_status(git, project_dir, False)
+    return raw, text
+
+
+def _is_under(path, base):
+    """Component-aware: PATH equals BASE or lies below it (a name prefix alone is not enough)."""
+    return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
+
+
+def _check_refuse_under(root, refuse_under):
+    real_root = os.path.realpath(os.fsdecode(root))
+    for listed in refuse_under:
+        listed_text = os.fsdecode(listed)
+        if listed_text == "":
+            raise ManifestError("a refuse_under entry is empty")
+        if _is_under(real_root, os.path.realpath(listed_text)):
+            raise ManifestError("manifest root is at or under a refused path")
 
 
 def tree_manifest(root, refuse_under=()):
@@ -54,7 +125,12 @@ def tree_manifest(root, refuse_under=()):
 
     Never follows symlinks. A missing or non-directory root raises ManifestError; an
     empty tree returns an empty list. Walk errors are raised, never skipped.
+
+    REFUSE_UNDER is a tuple of paths (the harness-owned Claude config directory holds
+    credentials and must never be snapshotted). A root whose realpath is at or under the
+    realpath of any listed path raises ManifestError before anything is walked.
     """
+    _check_refuse_under(root, refuse_under)
     root_bytes = os.fsencode(root)
     if root_bytes == b"" or not os.path.isdir(root_bytes):
         raise ManifestError("manifest root is missing or is not a directory")
