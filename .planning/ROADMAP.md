@@ -21,7 +21,7 @@ what the model says about itself.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Publication Gate** - Decisions recorded, identity and leak gates live, history scanned, repository public on bokiko's word (completed 2026-10-24)
-- [ ] **Phase 2: Model-Free Foundation and Stub** - Spikes decided, test-only stub helper, sanitizer, leak gate and a zero-token self-test suite
+- [x] **Phase 2: Model-Free Foundation and Stub** - Spikes decided, test-only stub helper, sanitizer, leak gate and a zero-token self-test suite (completed 2026-10-26)
 - [ ] **Phase 3: Walking Skeleton (Row 1)** - One row run end to end from one command, filed as sanitized evidence, compared with the committed row
 - [ ] **Phase 4: Full Matrix, Row 7 and Review** - Row waves, row 7 three times, the full matrix from a clean clone as a new baseline, Codex review, docs
 
@@ -70,7 +70,7 @@ Plans:
   4. The spike findings (isolation mode, flag semantics, `init` manifest, session-id handling) are committed with a real captured stream-json fixture. One committed flag table pins every `claude -p` behaviour. The version gate refuses a simulated untested version with a distinct exit code. The allowlist self-test matches the skill's exact commands taken from committed traces. A synthetic `permission_denied` event or `permission_denials` entry fails a row, and a reply that merely contains the word "denied" does not. (HARN-04, HARN-06)
   5. Run-root creation is exclusive: a second creation of the same path is an error, and nothing in the harness deletes or overwrites a run root. The sanitizer builds its deny-list at run time from the live machine, and a seeded leak makes both the leak gate and `promote` refuse to copy into `tests/evidence/`. A scan of the harness imports finds only the standard library, and the bash entry shims run under bash 3.2. (HARN-03, HARN-14, EVID-02, EVID-03)
 
-**Plans:** 9/9 plans executed
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
@@ -153,6 +153,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
-| 2. Model-Free Foundation and Stub | 9/9 | In Progress | - |
+| 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
