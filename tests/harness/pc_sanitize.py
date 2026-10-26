@@ -14,9 +14,12 @@ accepted from callers but never emitted by default. Tokens already in the input 
 Forms per home path: the raw form, its realpath, the two dash-slugs (slash and dot to hyphen,
 and every non-alphanumeric to hyphen) and the URL-encoded forms with and without safe slashes,
 each also in NFC and NFD, all matched case-insensitively. Path-like forms never cut a longer
-word. The login name matches as a whole word at four or more characters. Host names and deny-file
-entries are replaced wherever they occur, exactly as the leak gate looks for them (one source of
-floors and one fail-closed file reader live in pc_leakgate).
+word. The login name matches as a whole word at four or more characters; a JSON letter escape (a
+backslash plus n, r, t, b or f) directly before it counts as the word boundary, and an ambiguous
+escape is replaced rather than kept. The login is also one of the gate's entries (unless it occurs
+inside a fixed token). Host names and deny-file entries are replaced wherever they occur, exactly
+as the leak gate looks for them (one source of floors and one fail-closed file reader live in
+pc_leakgate).
 
 Do not print the result of Sanitizer.deny_entries(): it is the only accessor of private values.
 """
@@ -57,7 +60,7 @@ LOGIN_FLOOR = 4
 # Kind priority on equal text: caller map, repository root, home forms, temp, host, user, deny entries.
 _PRIO_CALLER, _PRIO_REPO, _PRIO_HOME, _PRIO_TEMP, _PRIO_HOST, _PRIO_USER, _PRIO_DENY = range(7)
 
-_PREFIX = {"path": "", "slug": "", "word": r"(?<!\w)", "substring": ""}
+_PREFIX = {"path": "", "slug": "", "word": r"(?:(?<!\w)|(?<=\\[nrtbf]))", "substring": ""}
 _SUFFIX = {
     "path": r"(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])",
     "slug": r"(?![A-Za-z0-9])",
@@ -131,10 +134,11 @@ def machine_sources(repo_root=""):
 class Sanitizer(object):
     """Applies a replacement table built at construction time. Build it with from_machine."""
 
-    def __init__(self, entries, local_entries, host_list):
-        # entries: (text, token, priority, kind). local_entries and host_list feed the gate.
+    def __init__(self, entries, local_entries, host_list, login_entries=()):
+        # entries: (text, token, priority, kind). local_entries, host_list and login_entries feed the gate.
         self._local = list(local_entries)
         self._hosts = list(host_list)
+        self._logins = list(login_entries)
         best = {}
         for text, token, priority, kind in entries:
             if text == "" or text.strip() == "" or len(text) < 2:
@@ -185,9 +189,14 @@ class Sanitizer(object):
                 entries.append((urllib.parse.quote(base, safe=""), "<home>", _PRIO_HOME, "path"))
                 entries.append((urllib.parse.quote(base, safe="/"), "<home>", _PRIO_HOME, "path"))
         login = sources.login
+        login_entries = []
         if isinstance(login, str) and len(login.strip()) >= LOGIN_FLOOR:
             for form in _variants(login):
                 entries.append((form, "<user>", _PRIO_USER, "word"))
+            stripped = login.strip()
+            # FA-4: a login that occurs inside a fixed token would make the gate refuse its own tokens.
+            if not any(stripped.lower() in token for token in TOKENS):
+                login_entries = sorted(_variants(stripped))
         for temp in sources.temp_dirs:
             cleaned = _clean_path(temp)
             if cleaned is None:
@@ -214,7 +223,7 @@ class Sanitizer(object):
         for entry in local:
             if entry.strip() != "":
                 entries.append((entry, "<redacted>", _PRIO_DENY, "substring"))
-        return cls(entries, local, hosts)
+        return cls(entries, local, hosts, login_entries)
 
     def _token_for(self, text):
         token = self._table.get(text.lower())
@@ -268,8 +277,8 @@ class Sanitizer(object):
         return len(self._local)
 
     def deny_entries(self):
-        """Host-name and local-file entries for the leak gate. Private: never print the result."""
-        return sorted(set(self._hosts) | set(self._local))
+        """Host-name, local-file and login entries for the leak gate. Private: never print the result."""
+        return sorted(set(self._hosts) | set(self._local) | set(self._logins))
 
     def __repr__(self):
         return "Sanitizer(%d pattern(s), %d deny entr(ies))" % (len(self._fallback), len(self._local))
