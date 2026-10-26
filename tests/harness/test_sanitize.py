@@ -430,6 +430,18 @@ class LoginBoundaryTests(HarnessTestCase):
         assert_fixtures_clean(self, [])
 
 
+class LocationFailClosedTests(HarnessTestCase):
+    """WR-02: a deny list that cannot be located stops the sanitizer instead of dropping it."""
+
+    def test_a_root_that_is_not_a_folder_raises_a_fixed_message_without_a_path(self):
+        root = os.path.join(tempfile.mkdtemp(prefix="preclear-sn-"), "absent")
+        with self.assertRaises(pc_sanitize.SanitizerError) as caught:
+            pc_sanitize.Sanitizer.from_machine(root)
+        self.ok(str(caught.exception) == "the local deny list could not be read or located", "the message is the fixed text")
+        self.ok(root not in str(caught.exception), "the message holds no path")
+        assert_fixtures_clean(self, [])
+
+
 class GateIntegrationTests(HarnessTestCase):
     def test_sanitised_seeded_text_passes_the_gate_and_the_raw_text_does_not(self):
         home = pc_seeds.home_path(SYNTHETIC_USER)

@@ -652,6 +652,98 @@ class DenyEntryTests(HarnessTestCase):
         self.ok(built == ["alpha-entry", "sixsix", "zeta-entry"], "sorted unique union")
 
 
+LOCATE_TEXT = "could not locate the local deny list"
+BOM = b"\xef\xbb\xbf"
+
+
+def has_repository_entry_above(path):
+    """True when PATH or any ancestor holds an entry named .git (a test-side copy of the rule)."""
+    current = os.path.abspath(path)
+    while True:
+        if os.path.lexists(os.path.join(current, ".git")):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
+def missing_root():
+    """A path inside a fresh scratch folder that does not exist."""
+    return os.path.join(tempfile.mkdtemp(prefix="preclear-dl-"), "absent")
+
+
+class DenyListLocationTests(HarnessTestCase):
+    """WR-02: an unlocatable deny list fails closed, and a mark or padding cannot switch an entry off."""
+
+    def write(self, data):
+        folder = tempfile.mkdtemp(prefix="preclear-dl-")
+        path = os.path.join(folder, "deny.txt")
+        with open(path, "xb") as handle:
+            handle.write(data)
+        return path
+
+    def test_a_root_that_is_not_a_folder_is_scanner_error_with_a_fixed_message(self):
+        root = missing_root()
+        for name, call in (
+            ("local_file_entries", lambda: pc_leakgate.local_file_entries(root)),
+            ("build_deny_entries", lambda: pc_leakgate.build_deny_entries(root, [])),
+        ):
+            with self.assertRaises(pc_leakgate.ScannerError) as caught:
+                call()
+            self.ok(str(caught.exception) == LOCATE_TEXT, name + ": the message is the fixed text")
+            self.ok(root not in str(caught.exception), name + ": the message holds no path")
+        result = run_gate("--repo-root", root, "scan", DATA_DIR)
+        output = result.stdout + result.stderr
+        self.ok(result.returncode == pc_exitcodes.SCANNER_ERROR, "the CLI exits 15 for a wrong repository root")
+        self.ok(root.encode("utf-8") not in output, "the CLI prints no path")
+        assert_fixtures_clean(self)
+
+    def test_git_that_cannot_run_or_times_out_is_scanner_error(self):
+        for name, failure in (("cannot run", OSError("planted")), ("times out", subprocess.TimeoutExpired("git", 10))):
+            with mock.patch.object(pc_leakgate.subprocess, "run", side_effect=failure):
+                with self.assertRaises(pc_leakgate.ScannerError) as caught:
+                    pc_leakgate.local_file_entries(REPO_ROOT)
+            self.ok(str(caught.exception) == LOCATE_TEXT, "git " + name + ": the message is the fixed text")
+            self.ok("planted" not in str(caught.exception), "git " + name + ": no detail in the message")
+        assert_fixtures_clean(self)
+
+    def test_a_git_entry_that_git_cannot_use_is_scanner_error(self):
+        root = tempfile.mkdtemp(prefix="preclear-dl-")
+        os.mkdir(os.path.join(root, ".git"))
+        with self.assertRaises(pc_leakgate.ScannerError) as caught:
+            pc_leakgate.local_file_entries(root)
+        self.ok(str(caught.exception) == LOCATE_TEXT, "the message is the fixed text")
+        self.ok(root not in str(caught.exception), "the message holds no path")
+        assert_fixtures_clean(self)
+
+    def test_a_tree_with_no_repository_has_no_local_list_and_an_explicit_file_needs_none(self):
+        root = tempfile.mkdtemp(prefix="preclear-dl-")
+        if has_repository_entry_above(root):
+            self.skipTest("the scratch area sits inside a repository")
+        self.ok(pc_leakgate.local_file_entries(root) == [], "no repository: no entries and no error")
+        self.ok(pc_leakgate.build_deny_entries(root, []) == [], "no repository: an empty union")
+        explicit = self.write(b"explicit-entry\n")
+        self.ok(pc_leakgate.local_file_entries(missing_root(), explicit) == ["explicit-entry"], "an explicit file is read without a repository")
+        assert_fixtures_clean(self)
+
+    def test_a_byte_order_mark_padding_and_an_indented_comment_are_tolerated(self):
+        data = BOM + b"first-entry  \n" + b"\tsecond-entry\t\r\n" + b"   # indented comment\n" + b"  ab  \n" + b"   \n" + b"  third entry  \n"
+        entries = pc_leakgate.local_file_entries(REPO_ROOT, self.write(data))
+        self.ok(entries == ["first-entry", "second-entry", "third entry"], "exactly the usable stripped entries")
+        assert_fixtures_clean(self)
+
+    def test_a_first_entry_with_a_byte_order_mark_takes_effect_through_the_cli(self):
+        entry = "pcbomentry"
+        path = self.write(BOM + (entry + "\n").encode("ascii"))
+        stage = make_stage({"f.txt": ("text " + entry + " text\n").encode("ascii")})
+        result = run_gate("--deny-file", path, "scan", stage)
+        output = result.stdout + result.stderr
+        self.ok(result.returncode == pc_exitcodes.LEAK_REFUSED, "exit 14 for a stage holding the first entry")
+        self.ok(entry.encode("ascii") not in output, "the output holds no entry text")
+        assert_fixtures_clean(self)
+
+
 class OutputShapeTests(HarnessTestCase):
     def test_findings_are_sorted_and_hold_counts_and_labels_only(self):
         home = pc_seeds.home_path(SYNTHETIC_USER)
