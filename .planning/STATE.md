@@ -23,7 +23,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-26)
 
 **Core value:** A fresh session resumes from the checkpoint without guessing: every fact it reads was verified when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
-**Current focus:** Phase 02 — Model-Free Foundation and Stub
+**Current focus:** Phase 3 — Walking Skeleton (Row 1)
 
 ## Current Position
 
