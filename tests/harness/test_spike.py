@@ -29,6 +29,7 @@ import pc_exitcodes
 import pc_flags
 import pc_manifest
 import pc_runroot
+import pc_seeds
 import pc_testutil
 
 HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -513,13 +514,6 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
 
-    def test_run_stops_at_the_paid_boundary_in_this_task_without_a_process(self) -> None:
-        for name in ("s1", "s2a", "s2b", "verbose-probe"):
-            code, out, err = run_cli([name, "--run"], self.env)
-            self.assertEqual(code, 2, name)
-            self.assertIn("paid path is enabled in task 3", err)
-        self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
-
     def test_run_is_refused_with_exit_18_when_the_guard_says_so(self) -> None:
         m = spike()
         home = os.path.join(scratch(), "h")
@@ -708,6 +702,1107 @@ class AuthCheckTests(unittest.TestCase):
         self.assertRegex(lines[1], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z loggedIn=false exit=12 created=false$")
         self.assertNotIn(pc_testutil.IDENTITY_SENTINEL, out)
         self.assertNotIn(home, out)
+
+
+# ---------------------------------------------------------------------------------------------
+# Task 3: spike S1 (assertions, STOP outcome, sanitised data, the paid path through a fake claude)
+# ---------------------------------------------------------------------------------------------
+
+SESSION = "11111111-2222-4333-8444-555555555555"
+USER_NAME = "pcsynthskill"
+
+
+def init_event(project: str, auto_memory: str, **over) -> dict:
+    base = {
+        "type": "system",
+        "subtype": "init",
+        "session_id": SESSION,
+        "claude_code_version": "2.1.310",
+        "cwd": project,
+        "tools": ["Bash", "Read"],
+        "mcp_servers": [],
+        "model": "claude-sonnet-5-5",
+        "permissionMode": "default",
+        "slash_commands": ["compact", "preclear"],
+        "skills": ["update-config", "preclear"],
+        "plugins": [],
+        "agents": ["general-purpose"],
+        "apiKeySource": "none",
+        "memory_paths": {"auto": auto_memory},
+        "effort": "high",
+    }
+    base.update(over)
+    return base
+
+
+class S1Rig(object):
+    """Synthetic paths for the assertion tests; nothing here touches a real folder."""
+
+    def __init__(self) -> None:
+        self.base = scratch()
+        self.run_root = os.path.join(self.base, "runs", "spike-s1-a1-20260101T000000Z")
+        self.project = os.path.join(self.run_root, "project")
+        self.auto_memory = os.path.join(self.run_root, "auto-memory")
+        self.config = os.path.join(self.base, "claude-config")
+        os.makedirs(self.project)
+        os.makedirs(self.config)
+        os.makedirs(self.auto_memory)
+        self.claude_md = os.path.join(self.project, "CLAUDE.md")
+        with open(self.claude_md, "w", encoding="utf-8") as handle:
+            handle.write("x\n")
+
+    def init(self, **over) -> dict:
+        return init_event(self.project, self.auto_memory, **over)
+
+    def good_hooks(self):
+        return [
+            {"file_path": self.claude_md, "memory_type": "Project", "load_reason": "session_start"},
+            {"file_path": os.path.join(self.config, "CLAUDE.md"), "memory_type": "User", "load_reason": "session_start"},
+        ]
+
+    def run(self, event=None, hooks="good", names=frozenset()):
+        m = spike()
+        lines = self.good_hooks() if hooks == "good" else hooks
+        return m.s1_assertions(
+            [event if event is not None else self.init()],
+            lines,
+            names,
+            self.project,
+            self.run_root,
+            self.config,
+        )
+
+
+def by_id(assertions):
+    return dict((item[0], item) for item in assertions)
+
+
+class S1AssertionTests(unittest.TestCase):
+    def test_the_declared_assertion_ids_are_the_nine_of_the_plan_in_order(self) -> None:
+        m = spike()
+        self.assertEqual(
+            m.S1_ASSERTION_IDS,
+            (
+                "permission-mode-default",
+                "model-pinned",
+                "skill-preclear-present",
+                "mcp-servers-empty",
+                "no-non-builtin-plugins",
+                "user-names-absent",
+                "no-user-instruction-outside-config",
+                "project-claude-md-loaded",
+                "project-local-inside-run-root",
+            ),
+        )
+
+    def test_a_clean_run_passes_every_assertion_and_tags_how_each_was_asserted(self) -> None:
+        rig = S1Rig()
+        result = rig.run(names=frozenset(["othername"]))
+        self.assertEqual([item[0] for item in result], list(spike().S1_ASSERTION_IDS))
+        self.assertTrue(all(item[2] for item in result), result)
+        hows = [item[1] for item in result]
+        self.assertEqual(hows, ["init"] * 6 + ["hook"] * 3)
+
+    def test_each_rule_fails_in_its_own_variant(self) -> None:
+        rig = S1Rig()
+        other = os.path.join(rig.base, "elsewhere")
+        os.makedirs(other)
+        user_leak = {"file_path": os.path.join(other, "CLAUDE.md"), "memory_type": "User", "load_reason": "session_start"}
+        project_leak = {"file_path": os.path.join(other, "CLAUDE.md"), "memory_type": "Project", "load_reason": "nested_traversal"}
+        local_leak = {"file_path": os.path.join(other, "CLAUDE.local.md"), "memory_type": "Local", "load_reason": "session_start"}
+        user_only = [{"file_path": os.path.join(rig.config, "CLAUDE.md"), "memory_type": "User", "load_reason": "session_start"}]
+        variants = [
+            ("permission-mode-default", dict(event=rig.init(permissionMode="acceptEdits"))),
+            ("model-pinned", dict(event=rig.init(model="some-other-model"))),
+            ("skill-preclear-present", dict(event=rig.init(skills=["update-config"]))),
+            ("mcp-servers-empty", dict(event=rig.init(mcp_servers=[{"name": "x", "status": "connected"}]))),
+            ("no-non-builtin-plugins", dict(event=rig.init(plugins=[{"name": "p", "path": "q", "source": "p@market"}]))),
+            ("user-names-absent", dict(event=rig.init(skills=["preclear", USER_NAME]), names=frozenset([USER_NAME]))),
+            ("no-user-instruction-outside-config", dict(hooks=rig.good_hooks() + [user_leak])),
+            ("project-claude-md-loaded", dict(hooks=user_only)),
+            ("project-local-inside-run-root", dict(hooks=rig.good_hooks() + [project_leak])),
+            ("project-local-inside-run-root", dict(hooks=rig.good_hooks() + [local_leak])),
+        ]
+        for failing, kwargs in variants:
+            result = by_id(rig.run(**kwargs))
+            self.assertFalse(result[failing][2], failing)
+            for name in result:
+                if name != failing:
+                    self.assertTrue(result[name][2], "%s should still pass when %s fails" % (name, failing))
+
+    def test_a_user_instruction_file_inside_the_config_directory_is_fine(self) -> None:
+        rig = S1Rig()
+        result = by_id(rig.run())
+        self.assertTrue(result["no-user-instruction-outside-config"][2])
+
+    def test_an_unreadable_hook_record_fails_closed(self) -> None:
+        rig = S1Rig()
+        hooks = rig.good_hooks() + [{"error": "unparseable"}]
+        result = by_id(rig.run(hooks=hooks))
+        self.assertFalse(result["no-user-instruction-outside-config"][2])
+
+
+class AbsenceAndCountsTests(unittest.TestCase):
+    def test_the_absence_check_reports_counts_only_and_never_a_name(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        names = frozenset([USER_NAME, "secondhidden", "preclear"])
+        outcome = m.evaluate_s1(
+            [rig.init(skills=["preclear", USER_NAME])],
+            rig.good_hooks(),
+            names,
+            rig.project,
+            rig.run_root,
+            rig.config,
+        )
+        self.assertEqual(outcome.status, "stop")
+        self.assertEqual(outcome.counts["user_names"], 2)  # preclear is excluded and the exclusion is counted
+        self.assertEqual(outcome.counts["user_names_excluded"], 1)
+        self.assertEqual(outcome.counts["user_name_hits"], 1)
+        text = repr(outcome) + "\n".join(m.describe_s1(outcome))
+        self.assertNotIn(USER_NAME, text)
+        self.assertNotIn("secondhidden", text)
+
+    def test_managed_entries_are_counted_and_never_hidden_or_failed(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        hooks = rig.good_hooks() + [
+            {"file_path": "/etc/example-managed/CLAUDE.md", "memory_type": "Managed", "load_reason": "session_start"}
+        ]
+        outcome = m.evaluate_s1([rig.init()], hooks, frozenset(), rig.project, rig.run_root, rig.config)
+        self.assertEqual(outcome.status, "pass")
+        self.assertEqual(outcome.counts["entries_managed"], 1)
+        self.assertEqual(outcome.counts["entries_project"], 1)
+        self.assertEqual(outcome.counts["entries_user"], 1)
+
+    def test_a_dict_plugin_or_a_prefixed_name_still_counts_as_a_hit(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        event = rig.init(plugins=[{"name": USER_NAME}], skills=["preclear", "vendor:" + USER_NAME])
+        result = by_id(
+            m.s1_assertions([event], rig.good_hooks(), frozenset([USER_NAME]), rig.project, rig.run_root, rig.config)
+        )
+        self.assertFalse(result["user-names-absent"][2])
+
+
+class StopOutcomeTests(unittest.TestCase):
+    def test_no_hook_events_and_no_logger_file_makes_the_audit_not_assertable_and_stops(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        for hooks in (None, []):
+            result = by_id(m.s1_assertions([rig.init()], hooks, frozenset(), rig.project, rig.run_root, rig.config))
+            for name in (
+                "no-user-instruction-outside-config",
+                "project-claude-md-loaded",
+                "project-local-inside-run-root",
+            ):
+                self.assertEqual(result[name][1], "not-assertable", name)
+                self.assertFalse(result[name][2], name)
+            outcome = m.evaluate_s1([rig.init()], hooks, frozenset(), rig.project, rig.run_root, rig.config)
+            self.assertEqual(outcome.status, "stop")
+            self.assertIn("not assertable", outcome.reason)
+            text = "\n".join(m.describe_s1(outcome))
+            self.assertIn("STOP", text)
+            self.assertIn("by-construction", text)
+            self.assertIn("canary", text)
+            self.assertIn("changed", text)
+
+    def test_stream_hook_events_alone_are_enough_for_the_audit_to_run(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        events = [
+            rig.init(),
+            {
+                "type": "system",
+                "subtype": "hook_response",
+                "hook_event": "InstructionsLoaded",
+                "file_path": rig.claude_md,
+                "memory_type": "Project",
+            },
+        ]
+        result = by_id(m.s1_assertions(events, None, frozenset(), rig.project, rig.run_root, rig.config))
+        self.assertEqual(result["project-claude-md-loaded"][1], "hook")
+        self.assertTrue(result["project-claude-md-loaded"][2])
+
+    def test_a_stream_hook_event_without_a_payload_does_not_make_the_audit_assertable(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        events = [rig.init(), {"type": "system", "subtype": "hook_started", "hook_event": "InstructionsLoaded"}]
+        outcome = m.evaluate_s1(events, None, frozenset(), rig.project, rig.run_root, rig.config)
+        self.assertEqual(outcome.status, "stop")
+
+    def test_a_failed_isolation_assertion_is_also_a_stop_with_counts_only(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        outcome = m.evaluate_s1(
+            [rig.init(model="x")], rig.good_hooks(), frozenset(), rig.project, rig.run_root, rig.config
+        )
+        self.assertEqual(outcome.status, "stop")
+        text = "\n".join(m.describe_s1(outcome))
+        self.assertIn("STOP", text)
+        self.assertIn("model-pinned: FAIL", text)
+
+
+class SanitizeToDataTests(unittest.TestCase):
+    def sanitizer(self, base: str, run_root: str):
+        import pc_sanitize
+
+        src = pc_sanitize.Sources([pc_seeds.home_path("pcsynthhome")], "pcsynthlogin", [], [], "")
+        return pc_sanitize.Sanitizer.from_machine(base, {run_root: "<run>"}, None, src)
+
+    def test_a_sanitised_manifest_is_written_exclusively_with_the_run_token(self) -> None:
+        m = spike()
+        base = scratch()
+        run_root = os.path.join(base, "runs", "spike-s1-a1-x")
+        os.makedirs(run_root)
+        data = json.dumps({"cwd": run_root + "/project", "model": "m"}, sort_keys=True).encode("utf-8")
+        dest = os.path.join(base, "out.json")
+        m.sanitize_to_data(data, dest, self.sanitizer(base, run_root))
+        text = read_text(dest)
+        self.assertIn("<run>/project", text)
+        self.assertNotIn(run_root, text)
+        self.assertEqual(stat.S_IMODE(os.stat(dest).st_mode), 0o644)
+
+    def test_an_existing_target_is_never_overwritten(self) -> None:
+        m = spike()
+        base = scratch()
+        dest = os.path.join(base, "out.json")
+        with open(dest, "w", encoding="utf-8") as handle:
+            handle.write("keep")
+        with self.assertRaises(FileExistsError):
+            m.sanitize_to_data(b"{}\n", dest, self.sanitizer(base, os.path.join(base, "r")))
+        self.assertEqual(read_text(dest), "keep")
+
+    def test_a_manifest_that_still_holds_an_unknown_home_path_is_refused_and_not_written(self) -> None:
+        m = spike()
+        base = scratch()
+        dest = os.path.join(base, "out.json")
+        data = json.dumps({"cwd": pc_seeds.home_path("someone-else") + "/x"}).encode("utf-8")
+        with self.assertRaises(m.LeakRefused) as caught:
+            m.sanitize_to_data(data, dest, self.sanitizer(base, os.path.join(base, "r")))
+        self.assertEqual(caught.exception.exit_code, pc_exitcodes.LEAK_REFUSED)
+        self.assertNotIn("someone-else", str(caught.exception))
+        self.assertFalse(os.path.exists(dest))
+
+    def test_the_known_home_is_replaced_before_the_gate_looks(self) -> None:
+        m = spike()
+        base = scratch()
+        dest = os.path.join(base, "out.json")
+        data = json.dumps({"cwd": pc_seeds.home_path("pcsynthhome") + "/x"}).encode("utf-8")
+        m.sanitize_to_data(data, dest, self.sanitizer(base, os.path.join(base, "r")))
+        self.assertIn("<home>", read_text(dest))
+
+
+class SupersedeLedgerTests(unittest.TestCase):
+    def home(self) -> str:
+        path = os.path.join(scratch(), "h")
+        os.makedirs(path)
+        return path
+
+    def test_a_later_line_for_the_same_attempt_supersedes_the_earlier_cost_and_is_one_attempt(self) -> None:
+        m = spike()
+        home = self.home()
+        m.append_spend(home, "s1", 1, None, "launched", "2.1.310")
+        self.assertEqual(m.recorded_total(home), Decimal("0.50"))
+        m.append_spend(home, "s1", 1, Decimal("0.0123"), "success", "2.1.310")
+        self.assertEqual(m.recorded_total(home), Decimal("0.0123"))
+        self.assertEqual(m.attempts_made(home, "s1"), 1)
+        self.assertEqual(len(read_bytes(os.path.join(home, "spike-spend.jsonl")).splitlines()), 2)
+        m.guard(home, "s1")
+
+    def test_a_launched_line_with_no_reconciliation_keeps_counting_as_the_cap(self) -> None:
+        m = spike()
+        home = self.home()
+        m.append_spend(home, "s2a", 1, None, "launched", "2.1.310")
+        m.append_spend(home, "s2a", 2, None, "launched", "2.1.310")
+        self.assertEqual(m.recorded_total(home), Decimal("2.00"))
+        with self.assertRaises(m.BudgetRefused):
+            m.guard(home, "s2a")
+
+
+FAKE_CLAUDE = """#!%(python)s
+import json, os, shlex, subprocess, sys
+here = os.path.dirname(os.path.abspath(__file__))
+args = sys.argv[1:]
+cfg = json.load(open(os.path.join(here, "fake.json")))
+if args == ["--version"]:
+    print(cfg["banner"])
+    sys.exit(0)
+if args == ["auth", "status", "--json"]:
+    print(json.dumps({"loggedIn": cfg.get("logged_in", True), "account": "planted-identity-sentinel-7f3a91"}))
+    sys.exit(0 if cfg.get("logged_in", True) else 1)
+prompt = sys.stdin.read()
+keep = ("CLAUDE_CONFIG_DIR", "CKPT_HOME", "DISABLE_AUTOUPDATER")
+record = {"args": args, "prompt": prompt, "cwd": os.getcwd(),
+          "env": dict((k, os.environ[k]) for k in os.environ if k in keep), "names": sorted(os.environ)}
+with open(os.path.join(here, "calls.log"), "a") as handle:
+    handle.write(json.dumps(record) + "\\n")
+settings = json.load(open(args[args.index("--settings") + 1]))
+sid = args[args.index("--resume") + 1] if "--resume" in args else args[args.index("--session-id") + 1]
+cwd = os.getcwd()
+config = os.environ.get("CLAUDE_CONFIG_DIR", "")
+if cfg.get("verbose_refuse") and "--verbose" not in args:
+    sys.stderr.write("Error: stream-json requires --verbose\\n")
+    sys.exit(1)
+subs = {"$SID": sid, "$CWD": cwd, "$RUN": os.path.dirname(cwd),
+        "$WRAPPER": os.path.join(os.path.dirname(cwd), "wrapper", "checkpoint")}
+if cfg.get("events"):
+    for event in cfg["events"]:
+        line = json.dumps(event)
+        for key in subs:
+            line = line.replace(key, subs[key])
+        print(line)
+    sys.exit(0)
+hooks = settings.get("hooks", {}).get("InstructionsLoaded")
+if hooks and cfg.get("hook_payloads"):
+    command = hooks[0]["hooks"][0]["command"]
+    for payload in cfg["hook_payloads"]:
+        text = json.dumps(payload).replace("$CWD", cwd).replace("$CONFIG", config)
+        subprocess.run(shlex.split(command), input=text.encode("utf-8"))
+if cfg.get("exit_without_result"):
+    sys.exit(1)
+init = {"type": "system", "subtype": "init", "session_id": sid, "claude_code_version": cfg["version"], "cwd": cwd,
+        "tools": ["Bash", "Read"], "mcp_servers": [], "model": "claude-sonnet-5-5", "permissionMode": "default",
+        "slash_commands": ["compact", "preclear"], "skills": ["update-config", "preclear"], "plugins": [],
+        "agents": ["general-purpose"], "apiKeySource": "none",
+        "memory_paths": {"auto": settings["autoMemoryDirectory"]}, "effort": "high"}
+init.update(cfg.get("init_override", {}))
+print(json.dumps(init))
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ready."}]}}))
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "session_id": sid,
+                  "total_cost_usd": cfg.get("cost", 0.0123), "permission_denials": [],
+                  "terminal_reason": "completed"}))
+"""
+
+
+class PaidRig(object):
+    """A fake claude that behaves like the paid path needs; no real model, no real login."""
+
+    def __init__(self, hooks="project", init_override=None, exit_without_result=False, cost=0.0123) -> None:
+        self.base = scratch()
+        self.bin = os.path.join(self.base, "bin")
+        os.makedirs(self.bin)
+        script = os.path.join(self.bin, "claude")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(FAKE_CLAUDE % {"python": os.path.realpath(sys.executable)})
+        os.chmod(script, 0o755)
+        payloads = {
+            "project": [
+                {"file_path": "$CWD/CLAUDE.md", "memory_type": "Project", "load_reason": "session_start"},
+                {"file_path": "$CONFIG/CLAUDE.md", "memory_type": "User", "load_reason": "session_start"},
+            ],
+            "leak": [
+                {"file_path": "$CWD/CLAUDE.md", "memory_type": "Project", "load_reason": "session_start"},
+                {"file_path": "/elsewhere/CLAUDE.md", "memory_type": "User", "load_reason": "session_start"},
+            ],
+            "none": [],
+        }[hooks]
+        self.config = {
+            "banner": BANNER,
+            "version": "2.1.310",
+            "hook_payloads": payloads,
+            "init_override": init_override or {},
+            "exit_without_result": exit_without_result,
+            "cost": cost,
+        }
+        self.write_config()
+        self.repo = make_repo(self.base)
+        self.home = os.path.join(self.base, "harness")
+        self.user_home = os.path.join(self.base, "user-home")
+        os.makedirs(self.user_home)
+        self.runs = os.path.join(self.base, "runs-root", "runs")
+        self.data = os.path.join(self.base, "data")
+        os.makedirs(self.data)
+        self.env = cli_env(
+            self.base,
+            [self.bin],
+            harness_home=self.home,
+            extra={"HOME": self.user_home, "PRECLEAR_RUNS_ROOT": self.runs},
+        )
+
+    def write_config(self) -> None:
+        with open(os.path.join(self.bin, "fake.json"), "w", encoding="utf-8") as handle:
+            json.dump(self.config, handle)
+
+    def calls(self):
+        path = os.path.join(self.bin, "calls.log")
+        if not os.path.exists(path):
+            return []
+        return [json.loads(line) for line in read_text(path).splitlines()]
+
+    def run_s1(self):
+        m = spike()
+        return m.run_s1(
+            self.home,
+            self.env,
+            self.repo,
+            self.data,
+            self.env["PATH"].split(os.pathsep),
+            self.user_home,
+        )
+
+
+class PaidS1Tests(unittest.TestCase):
+    def runs_of(self, rig) -> str:
+        return rig.runs
+
+    def test_a_clean_run_writes_raw_files_the_ledger_and_the_sanitised_manifest(self) -> None:
+        rig = PaidRig()
+        code, lines = rig.run_s1()
+        self.assertEqual(code, 0, "\n".join(lines))
+        calls = rig.calls()
+        self.assertEqual(len(calls), 1)
+        argv = calls[0]["args"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "0.50")
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "3")
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-sonnet-5-5")
+        self.assertIn("--include-hook-events", argv)
+        for forbidden in ("--bare", "--dangerously-skip-permissions"):
+            self.assertNotIn(forbidden, argv)
+        self.assertEqual(argv[argv.index("--permission-mode") + 1], "default")
+        self.assertEqual(calls[0]["prompt"], "Reply with exactly the one word: ready.")
+        self.assertNotIn("ready", " ".join(argv))
+        home = os.path.realpath(rig.home)
+        self.assertEqual(calls[0]["env"]["CLAUDE_CONFIG_DIR"], os.path.join(home, "claude-config"))
+        self.assertEqual(calls[0]["env"]["DISABLE_AUTOUPDATER"], "1")
+        inherited = [n for n in calls[0]["names"] if n.startswith(("ANTHROPIC", "CLAUDE_CODE", "CLAUDECODE"))]
+        self.assertEqual(inherited, ["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
+        runs_dir = os.path.realpath(self.runs_of(rig))
+        runs = os.listdir(runs_dir)
+        self.assertEqual(len(runs), 1)
+        self.assertFalse(os.path.exists(os.path.join(home, "runs")))
+        self.assertEqual(stat.S_IMODE(os.stat(runs_dir).st_mode), 0o700)
+        self.assertRegex(runs[0], r"^spike-s1-a1-\d{8}T\d{6}Z$")
+        raw = os.path.join(runs_dir, runs[0], "raw")
+        for name in ("s1.stdout", "s1.stderr", "hooklog.jsonl"):
+            self.assertTrue(os.path.isfile(os.path.join(raw, name)), name)
+        self.assertEqual(calls[0]["cwd"], os.path.join(runs_dir, runs[0], "project"))
+        ledger = [json.loads(line) for line in read_text(os.path.join(home, "spike-spend.jsonl")).splitlines()]
+        self.assertEqual(
+            [(r["call"], r["attempt"], r["total_cost_usd"], r["subtype"]) for r in ledger],
+            [("s1", 1, None, "launched"), ("s1", 1, "0.0123", "success")],
+        )
+        manifest_path = os.path.join(rig.data, "s1-init-manifest.json")
+        manifest = json.loads(read_text(manifest_path))
+        for key in ("permissionMode", "model", "skills", "plugins", "mcp_servers", "apiKeySource", "claude_code_version", "baseline"):
+            self.assertIn(key, manifest)
+        self.assertEqual(manifest["permissionMode"], "default")
+        self.assertIn("preclear", manifest["skills"])
+        self.assertEqual(manifest["cwd"], "<run>/project")
+        self.assertEqual(manifest["baseline"]["assertions"]["model-pinned"], "init")
+        self.assertEqual(manifest["baseline"]["assertions"]["project-claude-md-loaded"], "hook")
+        self.assertEqual(manifest["baseline"]["builtin_plugins"], [])
+        self.assertEqual(manifest["baseline"]["counts"]["user_names_excluded"], 0)
+        self.assertNotIn(rig.base, read_text(manifest_path))
+        printed = "\n".join(lines)
+        self.assertIn("permission-mode-default: pass", printed)
+        self.assertNotIn(rig.base, printed)
+        self.assertNotIn(pc_testutil.IDENTITY_SENTINEL, printed)
+
+    def test_an_unassertable_audit_stops_with_exit_11_and_writes_nothing_under_data(self) -> None:
+        rig = PaidRig(hooks="none")
+        code, lines = rig.run_s1()
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("STOP", "\n".join(lines))
+        self.assertEqual(os.listdir(rig.data), [])
+        self.assertEqual(len(rig.calls()), 1)
+        ledger = [json.loads(line) for line in read_text(os.path.join(os.path.realpath(rig.home), "spike-spend.jsonl")).splitlines()]
+        self.assertEqual(ledger[-1]["total_cost_usd"], "0.0123")
+
+    def test_a_failed_isolation_assertion_stops_with_exit_11_and_is_not_retried(self) -> None:
+        rig = PaidRig(hooks="leak")
+        code, lines = rig.run_s1()
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        printed = "\n".join(lines)
+        self.assertIn("STOP", printed)
+        self.assertIn("no-user-instruction-outside-config: FAIL", printed)
+        self.assertEqual(os.listdir(rig.data), [])
+        self.assertEqual(len(rig.calls()), 1)
+
+    def test_an_infrastructure_failure_records_the_cap_and_allows_exactly_one_retry(self) -> None:
+        m = spike()
+        rig = PaidRig(exit_without_result=True)
+        code, lines = rig.run_s1()
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("retry", "\n".join(lines))
+        self.assertEqual(m.recorded_total(os.path.realpath(rig.home)), Decimal("0.50"))
+        code, lines = rig.run_s1()
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        with self.assertRaises(m.BudgetRefused):
+            rig.run_s1()
+        self.assertEqual(len(rig.calls()), 2)
+        self.assertEqual(len(os.listdir(os.path.realpath(rig.runs))), 2)
+
+    def test_a_refused_guard_starts_no_claude_at_all(self) -> None:
+        m = spike()
+        rig = PaidRig()
+        home = os.path.realpath(rig.home)
+        os.makedirs(home)
+        m.append_spend(home, "s1", 1, Decimal("0.01"), "success", "2.1.310")
+        m.append_spend(home, "s1", 2, Decimal("0.01"), "success", "2.1.310")
+        with self.assertRaises(m.BudgetRefused):
+            rig.run_s1()
+        self.assertEqual(rig.calls(), [])
+
+    def test_a_logged_out_config_directory_is_blocked_before_any_spend(self) -> None:
+        rig = PaidRig()
+        rig.config["logged_in"] = False
+        rig.write_config()
+        code, lines = rig.run_s1()
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_BLOCKED)
+        self.assertEqual(rig.calls(), [])
+        self.assertFalse(os.path.exists(os.path.join(os.path.realpath(rig.home), "spike-spend.jsonl")))
+        self.assertNotIn(pc_testutil.IDENTITY_SENTINEL, "\n".join(lines))
+
+    def test_the_cli_run_for_s1_is_blocked_with_exit_12_when_logged_out_and_spends_nothing(self) -> None:
+        rig = PaidRig()
+        rig.config["logged_in"] = False
+        rig.write_config()
+        code, out, err = run_cli(["s1", "--run"], rig.env)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_BLOCKED, out + err)
+        self.assertEqual(rig.calls(), [])
+
+
+
+class RefinedAssertionTests(unittest.TestCase):
+    """bokiko's decision of 2026-10-26: built-in plugins and binary-defined names are not leaks."""
+
+    def test_builtin_plugins_pass(self) -> None:
+        rig = S1Rig()
+        plugins = [
+            {"name": "a", "path": "builtin", "source": "a@builtin"},
+            {"name": "b", "path": "builtin", "source": "b@builtin"},
+        ]
+        result = by_id(rig.run(event=rig.init(plugins=plugins)))
+        self.assertTrue(result["no-non-builtin-plugins"][2])
+
+    def test_a_plugin_without_a_builtin_source_or_a_bare_string_fails(self) -> None:
+        rig = S1Rig()
+        good = {"name": "a", "path": "builtin", "source": "a@builtin"}
+        for plugins in (
+            [good, {"name": "b", "path": "p", "source": "b@elsewhere"}],
+            [{"name": "a", "path": "builtin"}],
+            ["a@builtin"],
+        ):
+            result = by_id(rig.run(event=rig.init(plugins=plugins)))
+            self.assertFalse(result["no-non-builtin-plugins"][2], plugins)
+
+    def test_a_name_that_the_binary_itself_defines_is_a_collision_not_a_leak(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        event = rig.init(skills=["preclear", USER_NAME], slash_commands=["compact", USER_NAME])
+        outcome = m.evaluate_s1(
+            [event],
+            rig.good_hooks(),
+            frozenset([USER_NAME, "other", "preclear"]),
+            rig.project,
+            rig.run_root,
+            rig.config,
+            binary_defined=frozenset([USER_NAME]),
+        )
+        self.assertEqual(outcome.status, "pass")
+        self.assertEqual(outcome.counts["user_name_hits"], 0)
+        self.assertEqual(outcome.counts["user_name_collisions"], 2)
+        self.assertEqual(outcome.counts["user_names_excluded"], 1)
+        self.assertNotIn(USER_NAME, repr(outcome) + "\n".join(m.describe_s1(outcome)))
+
+    def test_a_name_the_binary_does_not_define_is_still_a_leak(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        event = rig.init(skills=["preclear", USER_NAME, "secondhidden"])
+        outcome = m.evaluate_s1(
+            [event],
+            rig.good_hooks(),
+            frozenset([USER_NAME, "secondhidden"]),
+            rig.project,
+            rig.run_root,
+            rig.config,
+            binary_defined=frozenset([USER_NAME]),
+        )
+        self.assertEqual(outcome.status, "stop")
+        self.assertEqual(outcome.counts["user_name_hits"], 1)
+        self.assertEqual(outcome.counts["user_name_collisions"], 1)
+
+    def test_binary_defines_finds_a_name_definition_in_a_file_and_returns_only_matches(self) -> None:
+        m = spike()
+        base = scratch()
+        blob = os.path.join(base, "fake-binary")
+        with open(blob, "wb") as handle:
+            handle.write(b"xx" * 10 + b'{name:"' + USER_NAME.encode() + b'",description:"d"}' + b"yy" * 10)
+        self.assertEqual(m.binary_defines(blob, frozenset([USER_NAME, "notthere"])), frozenset([USER_NAME]))
+
+    def test_binary_defines_sees_a_name_that_straddles_a_chunk_boundary(self) -> None:
+        m = spike()
+        base = scratch()
+        blob = os.path.join(base, "fake-binary")
+        needle = b'name:"' + USER_NAME.encode() + b'"'
+        with open(blob, "wb") as handle:
+            handle.write(b"z" * (m.BINARY_CHUNK - 5) + needle + b"z" * 100)
+        self.assertEqual(m.binary_defines(blob, frozenset([USER_NAME])), frozenset([USER_NAME]))
+
+
+class RunsRootTests(unittest.TestCase):
+    """Leak 1 of 2026-10-26: the runs root must lie outside every home folder."""
+
+    def test_the_default_is_a_shared_folder_outside_any_home(self) -> None:
+        m = spike()
+        self.assertEqual(m.DEFAULT_RUNS_ROOT, os.sep.join(["", "Users", "Shared", "preclear-harness", "runs"]))
+        self.assertEqual(m.RUNS_ROOT_ENV, "PRECLEAR_RUNS_ROOT")
+
+    def test_a_runs_root_inside_a_local_user_home_is_refused(self) -> None:
+        m = spike()
+        base = scratch()
+        home = os.path.join(base, "home-a")
+        os.makedirs(home)
+        for inside in (home, os.path.join(home, ".preclear-harness", "runs")):
+            with self.assertRaises(m.HomeRefused) as caught:
+                m.runs_root({"PRECLEAR_RUNS_ROOT": inside}, home, os.path.join(base, "repo"), homes=[home])
+            self.assertEqual(caught.exception.exit_code, pc_exitcodes.USAGE)
+
+    def test_a_runs_root_outside_every_home_is_accepted_and_resolved(self) -> None:
+        m = spike()
+        base = scratch()
+        home = os.path.join(base, "home-a")
+        os.makedirs(home)
+        target = os.path.join(base, "shared", "runs")
+        got = m.runs_root({"PRECLEAR_RUNS_ROOT": target}, home, os.path.join(base, "repo"), homes=[home])
+        self.assertEqual(got, os.path.realpath(target))
+        self.assertFalse(os.path.exists(target))
+
+    def test_a_relative_path_the_repository_and_the_users_claude_folder_are_refused(self) -> None:
+        m = spike()
+        base = scratch()
+        home = os.path.join(base, "home-a")
+        os.makedirs(home)
+        repo = os.path.join(base, "repo")
+        os.makedirs(repo)
+        for bad in ("relative/runs", os.path.join(repo, "runs"), os.path.join(home, ".claude", "runs")):
+            with self.assertRaises(m.HomeRefused):
+                m.runs_root({"PRECLEAR_RUNS_ROOT": bad}, home, repo, homes=[])
+
+    def test_an_ancestor_folder_with_an_instruction_file_or_folder_is_refused(self) -> None:
+        m = spike()
+        base = scratch()
+        repo = os.path.join(base, "repo")
+        plants = ("CLAUDE.md", "CLAUDE.local.md", os.path.join(".claude", "CLAUDE.md"), os.path.join(".claude", "rules", "x.md"))
+        for index, plant in enumerate(plants):
+            top = os.path.join(base, "anc%d" % index)
+            path = os.path.join(top, plant)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("x\n")
+            with self.assertRaises(m.HomeRefused):
+                m.runs_root({"PRECLEAR_RUNS_ROOT": os.path.join(top, "deeper", "runs")}, None, repo, homes=[])
+
+    def test_local_user_homes_lists_the_given_home_and_never_the_shared_folder(self) -> None:
+        m = spike()
+        base = scratch()
+        homes = m.local_user_homes(base)
+        self.assertIn(os.path.realpath(base), homes)
+        self.assertNotIn(os.sep.join(["", "Users", "Shared"]), homes)
+        self.assertTrue(all(os.path.isabs(item) for item in homes))
+
+    def test_ensure_runs_root_creates_every_missing_level_with_mode_0700_and_tolerates_existing(self) -> None:
+        m = spike()
+        base = scratch()
+        target = os.path.join(base, "a", "b", "runs")
+        m.ensure_runs_root(target)
+        for level in (os.path.join(base, "a"), os.path.join(base, "a", "b"), target):
+            self.assertEqual(stat.S_IMODE(os.stat(level).st_mode), 0o700)
+        m.ensure_runs_root(target)
+
+    def test_new_run_root_and_materialize_accept_a_runs_dir_outside_the_harness_home(self) -> None:
+        m = spike()
+        base = scratch()
+        repo = make_repo(base)
+        home = os.path.join(base, "harness")
+        runs = os.path.join(base, "elsewhere", "runs")
+        root = m.new_run_root(home, "s1", 1, runs_dir=runs)
+        self.assertEqual(os.path.dirname(root), os.path.realpath(runs))
+        paths = m.materialize(repo, root, str(uuid.uuid4()), home, runs_dir=runs)
+        self.assertTrue(os.path.isdir(paths["project"]))
+        other = m.new_run_root(home, "s2a", 1, runs_dir=runs)
+        with self.assertRaises(ValueError):
+            m.materialize(repo, other, str(uuid.uuid4()), home)  # the default runs folder is not this one
+
+
+class VolatileScrubTests(unittest.TestCase):
+    def test_the_process_bound_socket_path_is_replaced_before_the_gate_looks(self) -> None:
+        m = spike()
+        base = scratch()
+        import pc_sanitize
+
+        san = pc_sanitize.Sanitizer.from_machine(base, {}, None, pc_sanitize.Sources([], "", [], [], ""))
+        dest = os.path.join(base, "out.json")
+        m.sanitize_to_data(b'{"messaging_socket_path": "/tmp/cc-socks/51276.sock"}\n', dest, san)
+        text = read_text(dest)
+        self.assertIn("<tmp>/cc-socks/<pid>.sock", text)
+        self.assertNotIn("51276", text)
+
+
+
+# ---------------------------------------------------------------------------------------------
+# Task 4: spike S2 (probe commands, prompts, the paid S2a, S2b and verbose paths through the fake)
+# ---------------------------------------------------------------------------------------------
+
+PROBE_KEYS = (
+    "wrapper-status",
+    "git-status",
+    "pwd",
+    "pwd-and-status",
+    "pwd-and-echo",
+    "variable-expansion",
+    "wrapper-bind",
+)
+EXPECTED = ("allowed", "allowed", "allowed", "allowed", "denied", "denied", "denied")
+BIND_SESSION = "aaaaaaaa-0000-4000-8000-000000000001"
+
+
+def s2_init(**over) -> dict:
+    base = {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "$SID",
+        "claude_code_version": "2.1.310",
+        "cwd": "$CWD",
+        "tools": ["Bash"],
+        "mcp_servers": [],
+        "model": "claude-sonnet-5-5",
+        "permissionMode": "default",
+        "slash_commands": [],
+        "skills": ["preclear"],
+        "plugins": [],
+        "agents": [],
+        "apiKeySource": "none",
+        "memory_paths": {"auto": "$RUN/auto-memory/"},
+    }
+    base.update(over)
+    return base
+
+
+def s2_result(denials=None, cost=0.2, session="$SID", turns=9) -> dict:
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "num_turns": turns,
+        "session_id": session,
+        "total_cost_usd": cost,
+        "permission_denials": denials or [],
+        "terminal_reason": "completed",
+    }
+
+
+def s2a_events(deny=None, skip=(), cost=0.2, signal="both"):
+    m = spike()
+    denied_keys = [probe.key for probe in m.PROBE_COMMANDS if probe.expected == "denied"] if deny is None else deny
+    events = [s2_init()]
+    denials = []
+    for index, probe in enumerate(m.PROBE_COMMANDS):
+        if probe.key in skip:
+            continue
+        tid = "toolu_%02d" % index
+        command = probe.template.replace("{wrapper}", "$WRAPPER").replace("{run_root}", "$RUN")
+        events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": command}}]}})
+        denied = probe.key in denied_keys
+        events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tid, "is_error": denied, "content": "x"}]}})
+        if denied and signal in ("both", "event"):
+            events.append({"type": "system", "subtype": "permission_denied", "tool_use_id": tid})
+        if denied and signal in ("both", "result"):
+            denials.append({"tool_use_id": tid, "tool_name": "Bash", "tool_input": {"command": command}})
+    events.append(s2_result(denials, cost))
+    return events
+
+
+class ProbeConstantsTests(unittest.TestCase):
+    def test_seven_commands_in_the_declared_order_with_their_expectations(self) -> None:
+        m = spike()
+        self.assertEqual([probe.key for probe in m.PROBE_COMMANDS], list(PROBE_KEYS))
+        self.assertEqual([probe.expected for probe in m.PROBE_COMMANDS], list(EXPECTED))
+        by_key = dict((probe.key, probe.template) for probe in m.PROBE_COMMANDS)
+        self.assertEqual(by_key["wrapper-status"], "{wrapper} status")
+        self.assertEqual(
+            by_key["git-status"],
+            "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none",
+        )
+        self.assertEqual(by_key["pwd"], "pwd -P")
+        self.assertEqual(by_key["pwd-and-status"], "pwd -P && {wrapper} status")
+        self.assertEqual(by_key["pwd-and-echo"], "pwd -P && echo done")
+        self.assertEqual(by_key["variable-expansion"], 'wc -c "$PWD/CLAUDE.md"')
+        self.assertTrue(by_key["wrapper-bind"].startswith("{wrapper} bind --ledger {run_root}/"))
+        self.assertIn("--session " + BIND_SESSION, by_key["wrapper-bind"])
+
+    def test_probe_commands_fills_the_placeholders_and_leaves_the_variable_form_alone(self) -> None:
+        m = spike()
+        filled = m.probe_commands("/w/checkpoint", "/r")
+        self.assertEqual(len(filled), 7)
+        self.assertEqual(filled[0][1], "/w/checkpoint status")
+        self.assertEqual(filled[5][1], 'wc -c "$PWD/CLAUDE.md"')
+        self.assertTrue(filled[6][1].startswith("/w/checkpoint bind --ledger /r/"))
+        for probe, command in filled:
+            self.assertNotIn("{", command)
+
+    def test_the_prompts_are_declared_and_the_s2a_prompt_lists_every_command_verbatim(self) -> None:
+        m = spike()
+        self.assertEqual(m.PROMPTS["s1"], "Reply with exactly the one word: ready.")
+        self.assertEqual(m.PROMPTS["s2b"], "Reply with exactly the one word: resumed.")
+        self.assertEqual(m.PROMPTS["verbose"], "x")
+        commands = m.probe_commands("/w/checkpoint", "/r")
+        text = m.s2a_prompt(commands)
+        for _probe, command in commands:
+            self.assertIn(command, text)
+        for phrase in ("one per Bash tool call", "in order", "without combining", "retrying", "done"):
+            self.assertIn(phrase, text)
+
+    def test_the_budget_of_every_declared_call_is_unchanged(self) -> None:
+        m = spike()
+        self.assertEqual(m.CALLS["s2a"].turns, 12)
+        self.assertEqual(m.CALLS["verbose"].cap, Decimal("0.05"))
+
+
+class ProbeRowsTests(unittest.TestCase):
+    def rows(self, events):
+        import pc_stream
+
+        m = spike()
+        commands = m.probe_commands("/w/checkpoint", "/r")
+        filled = []
+        for event in events:
+            line = json.dumps(event).replace("$WRAPPER", "/w/checkpoint").replace("$RUN", "/r")
+            filled.append(json.loads(line))
+        parsed = pc_stream.parse_stream(("\n".join(json.dumps(e) for e in filled) + "\n").encode("utf-8"))
+        return m.probe_rows(parsed, commands)
+
+    def test_each_command_is_paired_with_id_error_and_both_denial_signals(self) -> None:
+        rows = self.rows(s2a_events())
+        self.assertEqual([row["key"] for row in rows], list(PROBE_KEYS))
+        self.assertEqual([row["observed"] for row in rows], ["allowed"] * 4 + ["denied"] * 3)
+        for row in rows[:4]:
+            self.assertIs(row["is_error"], False)
+            self.assertIs(row["permission_denied_event"], False)
+            self.assertIs(row["permission_denials_entry"], False)
+        for row in rows[4:]:
+            self.assertIs(row["is_error"], True)
+            self.assertIs(row["permission_denied_event"], True)
+            self.assertIs(row["permission_denials_entry"], True)
+        self.assertEqual(rows[0]["tool_use_id"], "toolu_00")
+
+    def test_an_unmatched_command_is_reported_missing(self) -> None:
+        rows = self.rows(s2a_events(skip=("pwd",)))
+        by_key = dict((row["key"], row) for row in rows)
+        self.assertEqual(by_key["pwd"]["status"], "missing")
+        self.assertIsNone(by_key["pwd"]["observed"])
+        self.assertEqual(by_key["wrapper-status"]["status"], "observed")
+
+    def test_one_denial_signal_alone_still_counts_as_denied_and_is_flagged_per_signal(self) -> None:
+        rows = self.rows(s2a_events(signal="event"))
+        row = dict((r["key"], r) for r in rows)["wrapper-bind"]
+        self.assertEqual(row["observed"], "denied")
+        self.assertIs(row["permission_denied_event"], True)
+        self.assertIs(row["permission_denials_entry"], False)
+
+    def test_a_reply_with_the_word_denied_is_not_a_denial(self) -> None:
+        events = s2a_events(deny=[])
+        events[2]["message"]["content"][0]["content"] = "denied denied denied"
+        rows = self.rows(events)
+        self.assertEqual(rows[0]["observed"], "allowed")
+
+
+class SessionFactsTests(unittest.TestCase):
+    def test_init_and_result_session_ids_are_compared_with_the_requested_id(self) -> None:
+        import pc_stream
+
+        m = spike()
+        events = pc_stream.parse_stream(
+            ("\n".join(json.dumps(e) for e in [s2_init(session_id=SESSION), s2_result(session=SESSION)]) + "\n").encode("utf-8")
+        )
+        facts = m.session_facts(events, SESSION)
+        self.assertEqual(facts, {"init_matches": True, "result_matches": True})
+        other = m.session_facts(events, "22222222-2222-4222-8222-222222222222")
+        self.assertEqual(other, {"init_matches": False, "result_matches": False})
+
+
+class PaidS2Tests(unittest.TestCase):
+    def rig(self, events=None) -> "PaidRig":
+        rig = PaidRig(hooks="none")
+        rig.config["events"] = events if events is not None else s2a_events()
+        rig.write_config()
+        return rig
+
+    def run_a(self, rig):
+        return spike().run_s2a(
+            rig.home, rig.env, rig.repo, rig.data, rig.env["PATH"].split(os.pathsep), rig.user_home
+        )
+
+    def run_b(self, rig, name):
+        return spike().run_s2b(
+            rig.home, rig.env, rig.repo, rig.data, rig.env["PATH"].split(os.pathsep), rig.user_home, name
+        )
+
+    def run_v(self, rig):
+        return spike().run_verbose(
+            rig.home, rig.env, rig.repo, rig.data, rig.env["PATH"].split(os.pathsep), rig.user_home
+        )
+
+    def test_s2a_runs_the_matrix_flag_set_and_writes_the_sanitised_fixture_and_labels(self) -> None:
+        rig = self.rig()
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, 0, "\n".join(lines))
+        calls = rig.calls()
+        self.assertEqual(len(calls), 1)
+        argv = calls[0]["args"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "1.00")
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "12")
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-sonnet-5-5")
+        self.assertNotIn("--include-hook-events", argv)
+        self.assertNotIn("--resume", argv)
+        self.assertIn("--session-id", argv)
+        tools = argv[argv.index("--allowedTools") + 1]
+        self.assertIn("checkpoint status:*", tools)
+        self.assertNotIn("bind", tools)
+        for forbidden in ("--bare", "--dangerously-skip-permissions"):
+            self.assertNotIn(forbidden, argv)
+        self.assertIn("done", calls[0]["prompt"])
+        self.assertIn("pwd -P && echo done", calls[0]["prompt"])
+        runs_dir = os.path.realpath(rig.runs)
+        name = os.listdir(runs_dir)[0]
+        raw = os.path.join(runs_dir, name, "raw")
+        for stem in ("s2a.stdout", "s2a.stderr", "session-id"):
+            self.assertTrue(os.path.isfile(os.path.join(raw, stem)), stem)
+        self.assertEqual(read_text(os.path.join(raw, "session-id")).strip(), argv[argv.index("--session-id") + 1])
+        self.assertFalse(os.path.exists(os.path.join(raw, "hooklog.jsonl")))
+        stream_path = os.path.join(rig.data, "s2-stream.jsonl")
+        labels_path = os.path.join(rig.data, "s2-probe-labels.json")
+        import pc_stream
+
+        events = pc_stream.parse_stream(read_bytes(stream_path))
+        self.assertEqual(len(pc_stream.init_manifest(events)), 14)
+        text = read_text(stream_path)
+        self.assertIn("<run>/project", text)
+        self.assertIn("<helper>", text)
+        self.assertNotIn(rig.base, text)
+        labels = json.loads(read_text(labels_path))
+        self.assertEqual([row["key"] for row in labels["probes"]], list(PROBE_KEYS))
+        self.assertEqual([row["expected"] for row in labels["probes"]], list(EXPECTED))
+        self.assertEqual([row["observed"] for row in labels["probes"]], ["allowed"] * 4 + ["denied"] * 3)
+        self.assertIn("<helper> bind", labels["probes"][6]["command"])
+        self.assertNotIn(rig.base, read_text(labels_path))
+        self.assertEqual(labels["claude_code_version"], "2.1.310")
+        ledger = [json.loads(line) for line in read_text(os.path.join(os.path.realpath(rig.home), "spike-spend.jsonl")).splitlines()]
+        self.assertEqual([(r["call"], r["total_cost_usd"]) for r in ledger], [("s2a", None), ("s2a", "0.2")])
+        printed = "\n".join(lines)
+        self.assertIn("probe wrapper-bind: expected denied, observed denied", printed)
+        self.assertNotIn(rig.base, printed)
+
+    def test_a_bind_that_the_binary_allowed_stops_with_exit_11_and_writes_nothing(self) -> None:
+        rig = self.rig(s2a_events(deny=["pwd-and-echo", "variable-expansion"]))
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("STOP", "\n".join(lines))
+        self.assertEqual(os.listdir(rig.data), [])
+
+    def test_a_probe_the_model_never_ran_is_a_retry_case_and_writes_nothing(self) -> None:
+        rig = self.rig(s2a_events(skip=("pwd",)))
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("retry", "\n".join(lines))
+        self.assertIn("probe pwd: missing", "\n".join(lines))
+        self.assertEqual(os.listdir(rig.data), [])
+
+    def test_a_disagreement_with_the_matcher_model_is_printed_and_does_not_stop(self) -> None:
+        rig = self.rig(s2a_events(deny=["pwd-and-echo", "variable-expansion", "wrapper-bind", "pwd"]))
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, 0, "\n".join(lines))
+        self.assertIn("probe pwd: expected allowed, observed denied", "\n".join(lines))
+        self.assertIn("DISAGREES", "\n".join(lines))
+
+    def test_s2b_resumes_the_s2a_session_in_the_same_run_root_and_writes_its_fixture(self) -> None:
+        rig = self.rig()
+        self.assertEqual(self.run_a(rig)[0], 0)
+        name = os.listdir(os.path.realpath(rig.runs))[0]
+        rig.config["events"] = [s2_init(), {"type": "assistant", "message": {"content": [{"type": "text", "text": "resumed"}]}}, s2_result(turns=1, cost=0.01)]
+        rig.write_config()
+        code, lines = self.run_b(rig, name)
+        self.assertEqual(code, 0, "\n".join(lines))
+        calls = rig.calls()
+        first, second = calls[0]["args"], calls[1]["args"]
+        self.assertIn("--resume", second)
+        self.assertNotIn("--session-id", second)
+        self.assertEqual(second[second.index("--resume") + 1], first[first.index("--session-id") + 1])
+        self.assertEqual(second[second.index("--max-budget-usd") + 1], "0.50")
+        self.assertEqual(second[second.index("--max-turns") + 1], "2")
+        self.assertEqual(calls[1]["prompt"], "Reply with exactly the one word: resumed.")
+        self.assertEqual(calls[0]["cwd"], calls[1]["cwd"])
+        self.assertEqual(len(os.listdir(os.path.realpath(rig.runs))), 1)
+        raw = os.path.join(os.path.realpath(rig.runs), name, "raw")
+        for stem in ("s2b.stdout", "s2b.stderr"):
+            self.assertTrue(os.path.isfile(os.path.join(raw, stem)), stem)
+        self.assertTrue(os.path.isfile(os.path.join(rig.data, "s2b-stream.jsonl")))
+        printed = "\n".join(lines)
+        self.assertIn("init.session_id matches the requested id: True", printed)
+        self.assertIn("result.session_id matches the requested id: True", printed)
+
+    def test_s2b_refuses_a_missing_or_escaping_run_name(self) -> None:
+        m = spike()
+        rig = self.rig()
+        self.assertEqual(self.run_a(rig)[0], 0)
+        for bad in ("", "..", "a/b", "no-such-run", "/abs"):
+            with self.assertRaises(m.HomeRefused):
+                self.run_b(rig, bad)
+        self.assertEqual(len(rig.calls()), 1)
+
+    def test_s2b_refuses_a_second_write_over_its_own_fixture(self) -> None:
+        rig = self.rig()
+        self.assertEqual(self.run_a(rig)[0], 0)
+        name = os.listdir(os.path.realpath(rig.runs))[0]
+        rig.config["events"] = [s2_init(), s2_result(turns=1, cost=0.01)]
+        rig.write_config()
+        self.assertEqual(self.run_b(rig, name)[0], 0)
+        with self.assertRaises(FileExistsError):
+            self.run_b(rig, name)
+
+    def test_the_verbose_probe_leaves_out_verbose_records_the_exit_code_and_the_message(self) -> None:
+        rig = self.rig()
+        rig.config["verbose_refuse"] = True
+        rig.write_config()
+        code, lines = self.run_v(rig)
+        self.assertEqual(code, 0, "\n".join(lines))
+        self.assertNotIn("--verbose", rig.calls()[0]["args"])
+        printed = "\n".join(lines)
+        self.assertIn("verbose probe exit code: 1", printed)
+        self.assertIn("requires --verbose", printed)
+        self.assertIn("stderr", printed)
+
+    def test_the_verbose_probe_argv_has_the_caps_and_no_verbose_flag(self) -> None:
+        rig = self.rig()
+        code, lines = self.run_v(rig)
+        argv = rig.calls()[0]["args"]
+        self.assertNotIn("--verbose", argv)
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "1")
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "0.05")
+        self.assertEqual(rig.calls()[0]["prompt"], "x")
+        self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
+
+    def test_every_paid_call_goes_through_the_guard(self) -> None:
+        m = spike()
+        rig = self.rig()
+        home = os.path.realpath(rig.home)
+        os.makedirs(home)
+        for call in ("s2a", "verbose"):
+            m.append_spend(home, call, 1, Decimal("0.01"), "success", "2.1.310")
+            m.append_spend(home, call, 2, Decimal("0.01"), "success", "2.1.310")
+        with self.assertRaises(m.BudgetRefused):
+            self.run_a(rig)
+        with self.assertRaises(m.BudgetRefused):
+            self.run_v(rig)
+        self.assertEqual(rig.calls(), [])
+
+    def test_the_cli_requires_from_run_for_s2b_and_enables_the_other_calls(self) -> None:
+        rig = self.rig()
+        code, out, err = run_cli(["s2b", "--run"], rig.env)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("--from-run", err)
+        self.assertEqual(rig.calls(), [])
 
 
 if __name__ == "__main__":

@@ -32,9 +32,10 @@ VERSION_FLOOR = (2, 1, 302)
 # never a tested version, because the new harness has not driven it.
 COMMITTED_EVIDENCE_VERSION = "2.1.304"
 
-# The exact-match set of versions the new harness has actually run against. It starts empty
-# (FA-5) and is seeded only from the S2 capture in plan 02-08. Tests inject their own set.
-TESTED_VERSIONS: Tuple[str, ...] = ()
+# The exact-match set of versions the new harness has actually run against. It was seeded from the
+# S2 capture of plan 02-08 (FA-5): claude --version and init.claude_code_version of the S1, S2a and
+# S2b captures all reported this one build. Tests inject their own set.
+TESTED_VERSIONS: Tuple[str, ...] = ("2.1.310",)
 
 ISOLATION_CLAIM = (
     "Isolation claim: strict. Each matrix run uses a harness-owned CLAUDE_CONFIG_DIR outside "
@@ -151,16 +152,19 @@ FLAG_TABLE: Tuple[FlagRow, ...] = (
          "naming Glob or Grep restores both tools; one argument avoids variadic parsing", "permissions"),
     _row("--model", PINNED_MODEL, PINNED, "D-05: the full model id; aliases move", "model-config"),
     _row("--max-turns", "small integer per call", PINNED,
-         "print mode only; ends with an error at the limit", "cli-reference"),
+         "print mode only; accepted although 2.1.310 hides it from --help; the limit itself was not reached",
+         "cli-reference"),
     _row("--max-budget-usd", "exact two-decimal value, at most 5.00", PINNED,
          "client-side estimate that may overshoot slightly; per-call caps leave headroom", "cli-reference"),
     _row("--strict-mcp-config", "no --mcp-config given", ADDED,
          "only servers from --mcp-config are used; zero servers is asserted from init.mcp_servers",
          "cli-reference"),
     _row("--effort", "high", ADDED,
-         "pinning blocks drift of the default; init.effort is recorded when present", "model-config"),
+         "pinning blocks drift of the default; accepted, but 2.1.310 reports no effort in the init event",
+         "model-config"),
     _row("--include-hook-events", "spike audit only", ADDED,
-         "surfaces hook events for the isolation audit", "agent-sdk"),
+         "accepted, but 2.1.310 put no hook events in the stream; the audit reads the logger file instead",
+         "agent-sdk"),
     _row("DISABLE_AUTOUPDATER", "1", PINNED, "the build under test must not change mid-run", "env-vars"),
     _row("CLAUDE_CONFIG_DIR", "harness-owned directory", PINNED,
          "credentials, settings, history and plugins live under it (D-02)", "env-vars; authentication"),
@@ -193,6 +197,34 @@ FLAG_TABLE: Tuple[FlagRow, ...] = (
     _row("--permission-prompts", "not passed", NOT_PINNED,
          "with no host, prompts are denied either way; the flag only adds a message to the model",
          "headless"),
+)
+
+
+# Rows that a live spike confirmed (plan 02-08), with the spike that did: S1 (isolation capture) or
+# S2 (stream capture, probe, resume, verbose probe). Every other row stays "research" because no run
+# exercised it: the NOT_PINNED rows are flags that are never passed.
+_CONFIRMED_BY = {
+    "prompt": "S1",
+    "-p": "S1",
+    "--output-format": "S1",
+    "--verbose": "S2",
+    "--setting-sources": "S1",
+    "--settings": "S1",
+    "--session-id": "S2",
+    "--resume": "S2",
+    "--permission-mode": "S1",
+    "--allowedTools": "S2",
+    "--model": "S1",
+    "--max-turns": "S1",
+    "--max-budget-usd": "S1",
+    "--strict-mcp-config": "S1",
+    "--effort": "S1",
+    "--include-hook-events": "S1",
+    "CLAUDE_CONFIG_DIR": "S1",
+    "CKPT_HOME": "S2",
+}
+FLAG_TABLE = tuple(
+    row._replace(confirmed_by=_CONFIRMED_BY.get(row.name, row.confirmed_by)) for row in FLAG_TABLE
 )
 
 

@@ -254,7 +254,7 @@ class PreflightCliTests(_FakeClaudeCase):
         self.assertTrue(done.stdout.startswith("OK: "))
         self.assertFalse(pc_testutil.IDENTITY_SENTINEL in done.stdout + done.stderr)
 
-        done = self._run_cli("--config-dir", self.config_dir)
+        done = self._run_cli("--config-dir", self.config_dir, "--tested-version", "2.1.999")
         self.assertEqual(done.returncode, 13)
         self.assertTrue(done.stdout.startswith("UNTESTED: "))
 
