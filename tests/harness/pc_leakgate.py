@@ -9,7 +9,8 @@ or a deny entry is never printed, logged or put in an error message. A file name
 matches is labelled "(file name)", the precedent set by .githooks/checks/denylist.sh.
 
 Every scanner failure fails closed. An exception inside a scan, an empty rule set, an
-unreadable deny file or unreadable input is ScannerError (exit 15), never a clean result. A
+unreadable or unlocatable deny list or unreadable input is ScannerError (exit 15), never a clean
+result. A
 NUL byte, undecodable bytes, a symlink, a special file, a file above MAX_FILE_BYTES and a run of
 name characters above MAX_RUN are refusals, never skips. Each file is read once into memory and
 scanned as one buffer, so a leak at byte 0, at the very end or across any chunk boundary is
@@ -463,11 +464,34 @@ def host_entries(hostnames=None):
     return sorted(kept)
 
 
+DENY_LOCATE_TEXT = "could not locate the local deny list"
+
+
+def _inside_a_repository(start):
+    """True when START or any ancestor folder holds an entry named .git (a worktree's file counts)."""
+    current = os.path.abspath(os.fspath(start))
+    while True:
+        if os.path.lexists(os.path.join(current, ".git")):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
 def _git_deny_path(repo_root):
+    """Where the local deny list lives, or None for a tree that has no repository at all.
+
+    Every other failure to establish the location raises ScannerError: a root that is not a
+    folder, git missing or timing out, a failing git while a .git entry exists, an empty answer.
+    """
+    root = os.fspath(repo_root)
+    if not os.path.isdir(root):
+        raise ScannerError(DENY_LOCATE_TEXT)
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--git-path", "info/preclear-deny.txt"],
-            cwd=os.fspath(repo_root),
+            cwd=root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -476,14 +500,16 @@ def _git_deny_path(repo_root):
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
+        raise ScannerError(DENY_LOCATE_TEXT) from None
     if result.returncode != 0:
-        return None
+        if not _inside_a_repository(root):
+            return None
+        raise ScannerError(DENY_LOCATE_TEXT)
     path = result.stdout.decode("utf-8", "replace").strip()
     if path == "":
-        return None
+        raise ScannerError(DENY_LOCATE_TEXT)
     if not os.path.isabs(path):
-        path = os.path.join(os.fspath(repo_root), path)
+        path = os.path.join(root, path)
     return path
 
 
@@ -491,10 +517,11 @@ def local_file_entries(repo_root, deny_file=None):
     """Read the local deny file and return its usable entries (sorted, unique).
 
     DENY_FILE overrides the default location .git/info/preclear-deny.txt (resolved with
-    git rev-parse --git-path). No git or no file means no entries. Comment and blank lines are
-    skipped, carriage returns are stripped and entries under four characters are dropped. A file
-    that exists but cannot be read or decoded raises ScannerError with a fixed message. The
-    entries are private: they are never printed, logged or put in a message.
+    git rev-parse --git-path, no git call when DENY_FILE is given). No repository means no
+    entries; every other failure to locate the list is ScannerError, and so is a file that exists
+    but cannot be read or decoded. A leading byte-order mark is ignored, each line is stripped,
+    blank and comment lines (also indented ones) are skipped and entries under four characters
+    are dropped. The entries are private: they are never printed, logged or put in a message.
     """
     path = deny_file if deny_file is not None else _git_deny_path(repo_root)
     if path is None or not os.path.lexists(path):
@@ -502,13 +529,13 @@ def local_file_entries(repo_root, deny_file=None):
     try:
         with open(path, "rb") as handle:
             raw = handle.read()
-        text = raw.decode("utf-8")
+        text = raw.decode("utf-8-sig")
     except (OSError, UnicodeDecodeError):
         raise ScannerError("could not read the local deny list") from None
     entries = set()
     for line in text.split("\n"):
-        line = line.rstrip("\r")
-        if line.strip() == "" or line.lstrip().startswith("#"):
+        line = line.strip()
+        if line == "" or line.startswith("#"):
             continue
         if len(line) >= LOCAL_FLOOR:
             entries.add(line)

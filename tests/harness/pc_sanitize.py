@@ -176,7 +176,7 @@ class Sanitizer(object):
             else:
                 local = []
         except pc_leakgate.ScannerError:
-            raise SanitizerError("the local deny file could not be read") from None
+            raise SanitizerError("the local deny list could not be read or located") from None
         entries = []
         for home in sources.homes:
             cleaned = _clean_path(home)
