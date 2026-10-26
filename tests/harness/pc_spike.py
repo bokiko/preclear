@@ -66,6 +66,19 @@ HARNESS_HOME_ENV = "PRECLEAR_HARNESS_HOME"
 DEFAULT_HOME_NAME = ".preclear-harness"
 CONFIG_DIR_NAME = "claude-config"
 RUNS_DIR_NAME = "runs"
+RUNS_ROOT_ENV = "PRECLEAR_RUNS_ROOT"
+# The runs root lies outside every home folder: Claude Code loads the .claude/CLAUDE.md and
+# .claude/rules files of every ancestor folder of the working directory as Project instructions, so a
+# run root under a home folder would load that user's global rules (spike S1, 2026-10-26). Built
+# from pieces so no source line holds a home-shaped path.
+DEFAULT_RUNS_ROOT = os.sep.join(["", "Users", "Shared", "preclear-harness", "runs"])
+_ANCESTOR_INSTRUCTION_NAMES = (
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    os.path.join(".claude", "CLAUDE.md"),
+    os.path.join(".claude", "rules"),
+)
+BINARY_CHUNK = 16 * 1024 * 1024
 SPEND_FILE = "spike-spend.jsonl"
 PROBE_FILE = "auth-probes.jsonl"
 
@@ -213,6 +226,103 @@ def local_user_names(home_dir: str) -> frozenset:
     return frozenset(names)
 
 
+def local_user_homes(home_dir: Optional[str] = None) -> List[str]:
+    """Return the realpaths of the local users' home folders (never the shared folder).
+
+    The given home, the account database's home folders under the usual user roots, and every
+    folder directly below those roots except the shared one. Used only for the runs-root check.
+    """
+    roots = (os.sep + "Users", os.sep + "home")
+    found = set()
+    if home_dir:
+        found.add(os.path.realpath(home_dir))
+    try:
+        import pwd
+
+        for entry in pwd.getpwall():
+            directory = entry.pw_dir
+            if directory and any(directory.startswith(root + os.sep) for root in roots):
+                found.add(os.path.realpath(directory))
+    except (ImportError, KeyError, OSError):
+        pass
+    for root in roots:
+        try:
+            names = os.listdir(root)
+        except OSError:
+            continue
+        for name in names:
+            if name in ("Shared", ".localized") or name.startswith("."):
+                continue
+            candidate = os.path.join(root, name)
+            if os.path.isdir(candidate):
+                found.add(os.path.realpath(candidate))
+    found.discard(os.sep)
+    return sorted(found)
+
+
+def runs_root(
+    env: Optional[Mapping[str, str]] = None,
+    home_dir: Optional[str] = None,
+    repo_root: Optional[str] = None,
+    homes: Optional[Sequence[str]] = None,
+) -> str:
+    """Return the realpath of the runs root; refuse an unusable one (HomeRefused, exit 2).
+
+    The folder is PRECLEAR_RUNS_ROOT when set, else DEFAULT_RUNS_ROOT. It must be absolute, outside
+    the repository, outside the user's own Claude folder, outside every local user's home folder, and
+    none of its ancestor folders may hold an instruction file or folder that Claude Code would load
+    as a Project instruction. Nothing is created here (zero tokens, zero side effects).
+    """
+    source = os.environ if env is None else env
+    raw = source.get(RUNS_ROOT_ENV) or DEFAULT_RUNS_ROOT
+    if not os.path.isabs(raw):
+        raise HomeRefused("the runs root must be an absolute path")
+    resolved = os.path.realpath(raw)
+    repo = os.path.realpath(repo_root if repo_root else _REPO_ROOT)
+    home = home_dir if home_dir else os.path.expanduser("~")
+    own = os.path.realpath(os.path.join(home, ".claude"))
+    if _within(resolved, repo) or _within(repo, resolved):
+        raise HomeRefused("the runs root must be outside the repository")
+    if _within(resolved, own):
+        raise HomeRefused("the runs root must be outside the user's own Claude config")
+    for user_home in (local_user_homes(home_dir) if homes is None else homes):
+        if _within(resolved, os.path.realpath(user_home)):
+            raise HomeRefused(
+                "the runs root must not be inside a local user's home folder: Claude Code loads the "
+                "instruction files of every ancestor folder"
+            )
+    ancestor = os.path.dirname(resolved)
+    while True:
+        for name in _ANCESTOR_INSTRUCTION_NAMES:
+            if os.path.lexists(os.path.join(ancestor, name)):
+                raise HomeRefused(
+                    "an ancestor folder of the runs root holds an instruction file or folder that would be loaded"
+                )
+        parent = os.path.dirname(ancestor)
+        if parent == ancestor:
+            break
+        ancestor = parent
+    return resolved
+
+
+def ensure_runs_root(path: str) -> None:
+    """Create every missing level of the runs root with mode 0700; existing levels are tolerated."""
+    pending = []
+    current = path
+    while not os.path.isdir(current):
+        pending.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    for level in reversed(pending):
+        try:
+            os.mkdir(level, 0o700)
+        except FileExistsError:
+            if not os.path.isdir(level):
+                raise SpikeError("the runs root name is taken by something that is not a folder") from None
+
+
 # ---------------------------------------------------------------------------------------------
 # Time, run roots and the materialiser
 # ---------------------------------------------------------------------------------------------
@@ -222,7 +332,13 @@ def _utc_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
-def new_run_root(home: str, call: str, attempt: int, stamp: Optional[str] = None) -> str:
+def new_run_root(
+    home: str,
+    call: str,
+    attempt: int,
+    stamp: Optional[str] = None,
+    runs_dir: Optional[str] = None,
+) -> str:
     """Create <home>/runs/spike-<call>-a<attempt>-<UTC stamp> exclusively and return its realpath.
 
     The runs folder is created when it is missing and tolerated when it exists; the run root itself
@@ -232,8 +348,12 @@ def new_run_root(home: str, call: str, attempt: int, stamp: Optional[str] = None
         raise ValueError("unknown call name")
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise ValueError("attempt must be a positive integer")
-    runs = os.path.join(home, RUNS_DIR_NAME)
-    os.makedirs(runs, mode=0o700, exist_ok=True)
+    if runs_dir is None:
+        runs = os.path.join(home, RUNS_DIR_NAME)
+        os.makedirs(runs, mode=0o700, exist_ok=True)
+    else:
+        runs = runs_dir
+        ensure_runs_root(runs)
     moment = stamp if stamp else _utc_now().strftime("%Y%m%dT%H%M%SZ")
     return pc_runroot.allocate_run_root(runs, "spike-%s-a%d-%s" % (call, attempt, moment))
 
@@ -346,6 +466,7 @@ def materialize(
     session_id: str,
     harness_home_dir: str,
     audit_hook: bool = False,
+    runs_dir: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """Build the scratch run inside the already-created run root and return its paths.
 
@@ -365,11 +486,11 @@ def materialize(
         raise ValueError("the session id must be the canonical lowercase form")
     repo = os.path.realpath(repo_root)
     root = os.path.realpath(run_root)
-    runs = os.path.join(os.path.realpath(harness_home_dir), RUNS_DIR_NAME)
+    runs = os.path.realpath(runs_dir) if runs_dir else os.path.join(os.path.realpath(harness_home_dir), RUNS_DIR_NAME)
     if not os.path.isdir(root):
         raise ValueError("the run root does not exist")
     if not _within(root, runs) or root == runs:
-        raise ValueError("the run root must lie under the harness home's runs folder")
+        raise ValueError("the run root must lie under the runs folder")
     if _within(root, repo):
         raise ValueError("the run root must be outside the repository")
     source = _sources(repo, audit_hook)
@@ -746,7 +867,7 @@ S1_ASSERTION_IDS = (
     "model-pinned",
     "skill-preclear-present",
     "mcp-servers-empty",
-    "plugins-empty",
+    "no-non-builtin-plugins",
     "user-names-absent",
     "no-user-instruction-outside-config",
     "project-claude-md-loaded",
@@ -856,16 +977,85 @@ def hook_entries(
     return seen, tag
 
 
-def _absence(init: Dict[str, Any], local_names: Any) -> Tuple[int, int, int]:
-    """Return (size of the name set, number excluded, number of hits). Never a name."""
-    names = frozenset(local_names)
-    effective = names - ABSENCE_EXCLUDED
-    hits = 0
+def hit_candidates(init: Dict[str, Any], local_names: Any) -> frozenset:
+    """Return the user names that appear in the init lists (a run-time set, never printed)."""
+    effective = frozenset(local_names) - ABSENCE_EXCLUDED
+    found = set()
     for key in ("skills", "slash_commands", "agents", "plugins"):
         for name in _names_of(init.get(key)):
-            if any(form in effective for form in _forms(name)):
+            for form in _forms(name):
+                if form in effective:
+                    found.add(form)
+    return frozenset(found)
+
+
+def _absence(init: Dict[str, Any], local_names: Any, binary_defined: Any = frozenset()) -> Tuple[int, int, int, int]:
+    """Return (name set size, number excluded, leak hits, collisions). Never a name.
+
+    A name that the Claude binary itself defines is a collision with a bundled skill or command, not
+    a leak (bokiko's decision of 2026-10-26); every other hit is a leak.
+    """
+    names = frozenset(local_names)
+    effective = names - ABSENCE_EXCLUDED
+    defined = frozenset(binary_defined)
+    hits = 0
+    collisions = 0
+    for key in ("skills", "slash_commands", "agents", "plugins"):
+        for name in _names_of(init.get(key)):
+            matched = [form for form in _forms(name) if form in effective]
+            if not matched:
+                continue
+            if any(form in defined for form in matched):
+                collisions += 1
+            else:
                 hits += 1
-    return len(effective), len(names & ABSENCE_EXCLUDED), hits
+    return len(effective), len(names & ABSENCE_EXCLUDED), hits, collisions
+
+
+def _plugins_builtin_only(plugins: Any) -> bool:
+    """True when init.plugins is a list and every entry is a plugin whose source ends in @builtin."""
+    if not isinstance(plugins, list):
+        return False
+    for item in plugins:
+        if not isinstance(item, dict):
+            return False
+        source = item.get("source")
+        if not isinstance(source, str) or not source.endswith("@builtin"):
+            return False
+    return True
+
+
+def builtin_plugin_sources(plugins: Any) -> List[str]:
+    if not isinstance(plugins, list):
+        return []
+    return sorted(
+        item["source"] for item in plugins if isinstance(item, dict) and isinstance(item.get("source"), str)
+    )
+
+
+def binary_defines(path: str, names: Any) -> frozenset:
+    """Return the subset of names that the binary at path defines as name:"<name>" (a bytes scan).
+
+    The file is read in chunks with an overlap so a definition across a chunk boundary is found.
+    Only the matching subset is returned.
+    """
+    wanted = dict((('name:"%s"' % name).encode("utf-8"), name) for name in names)
+    found = set()
+    if not wanted:
+        return frozenset()
+    overlap = max(len(needle) for needle in wanted) - 1
+    tail = b""
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(BINARY_CHUNK)
+            if not chunk:
+                break
+            window = tail + chunk
+            for needle, name in wanted.items():
+                if name not in found and needle in window:
+                    found.add(name)
+            tail = window[-overlap:] if overlap > 0 else b""
+    return frozenset(found)
 
 
 def s1_evaluation(
@@ -875,6 +1065,7 @@ def s1_evaluation(
     project_path: str,
     run_root: str,
     config_dir_path: str,
+    binary_defined: Any = frozenset(),
 ) -> Tuple[List[Tuple[str, str, bool]], Dict[str, Any]]:
     """Return (the nine assertions, the counts) for one S1 capture."""
     init = pc_stream.init_manifest(events)
@@ -886,8 +1077,8 @@ def s1_evaluation(
         ("skill-preclear-present", HOW_INIT, any("preclear" in (name, name.split(":")[-1]) for name in skills))
     )
     result.append(("mcp-servers-empty", HOW_INIT, init.get("mcp_servers") == []))
-    result.append(("plugins-empty", HOW_INIT, init.get("plugins") == []))
-    size, excluded, hits = _absence(init, local_names)
+    result.append(("no-non-builtin-plugins", HOW_INIT, _plugins_builtin_only(init.get("plugins"))))
+    size, excluded, hits, collisions = _absence(init, local_names, binary_defined)
     result.append(("user-names-absent", HOW_INIT, hits == 0))
 
     entries, source = hook_entries(events, hooklog_lines)
@@ -895,6 +1086,7 @@ def s1_evaluation(
         "user_names": size,
         "user_names_excluded": excluded,
         "user_name_hits": hits,
+        "user_name_collisions": collisions,
         "audit_source": source,
         "entries_user": 0,
         "entries_project": 0,
@@ -946,6 +1138,7 @@ def s1_assertions(
     project_path: str,
     run_root: str,
     config_dir_path: str,
+    binary_defined: Any = frozenset(),
 ) -> List[Tuple[str, str, bool]]:
     """Return a list of (assertion id, how asserted, passed) in the declared order.
 
@@ -953,7 +1146,9 @@ def s1_assertions(
     in the stream or the logger file) or not-assertable (no instruction entry was seen by either
     source; that assertion is then a failure and the run is a stop, never a degraded pass).
     """
-    return s1_evaluation(events, hooklog_lines, local_names, project_path, run_root, config_dir_path)[0]
+    return s1_evaluation(
+        events, hooklog_lines, local_names, project_path, run_root, config_dir_path, binary_defined
+    )[0]
 
 
 def evaluate_s1(
@@ -963,10 +1158,11 @@ def evaluate_s1(
     project_path: str,
     run_root: str,
     config_dir_path: str,
+    binary_defined: Any = frozenset(),
 ) -> S1Outcome:
     """Evaluate the assertions. Anything but a full pass is a stop for bokiko's decision (D-02)."""
     assertions, counts = s1_evaluation(
-        events, hooklog_lines, local_names, project_path, run_root, config_dir_path
+        events, hooklog_lines, local_names, project_path, run_root, config_dir_path, binary_defined
     )
     unassertable = [name for name, how, _passed in assertions if how == HOW_NONE]
     failed = [name for name, how, passed in assertions if not passed and how != HOW_NONE]
@@ -988,8 +1184,14 @@ def describe_s1(outcome: S1Outcome) -> List[str]:
         lines.append("assertion %s: %s (%s)" % (name, "pass" if passed else "FAIL", how))
     c = outcome.counts
     lines.append(
-        "user names: %d listed, %d excluded, %d hit(s); audit source: %s"
-        % (c["user_names"], c["user_names_excluded"], c["user_name_hits"], c["audit_source"])
+        "user names: %d listed, %d excluded, %d leak hit(s), %d binary-defined collision(s); audit source: %s"
+        % (
+            c["user_names"],
+            c["user_names_excluded"],
+            c["user_name_hits"],
+            c["user_name_collisions"],
+            c["audit_source"],
+        )
     )
     lines.append(
         "instruction entries: user=%d project=%d local=%d managed=%d unknown=%d"
@@ -1109,8 +1311,12 @@ def _plain_init_event(stdout: bytes) -> Dict[str, Any]:
     raise pc_stream.StreamError("no init event")
 
 
-def build_manifest(init_event: Dict[str, Any], assertions: Sequence[Tuple[str, str, bool]]) -> Dict[str, Any]:
-    """Return the init event's own fields plus the frozen assertion baseline."""
+def build_manifest(
+    init_event: Dict[str, Any],
+    assertions: Sequence[Tuple[str, str, bool]],
+    counts: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return the init event's own fields plus the frozen assertion baseline (counts only)."""
     manifest = dict(init_event)
     manifest["baseline"] = {
         "skills": init_event.get("skills"),
@@ -1119,6 +1325,8 @@ def build_manifest(init_event: Dict[str, Any], assertions: Sequence[Tuple[str, s
         "agents": init_event.get("agents"),
         "slash_commands": init_event.get("slash_commands"),
         "tools": init_event.get("tools"),
+        "builtin_plugins": builtin_plugin_sources(init_event.get("plugins")),
+        "counts": dict(counts) if counts is not None else {},
         "assertions": dict((name, how) for name, how, _passed in assertions),
     }
     return manifest
@@ -1155,6 +1363,7 @@ def run_s1(
     data_dir: str,
     search_path: Optional[Sequence[str]],
     home_dir: Optional[str],
+    runs_dir: Optional[str] = None,
 ) -> Tuple[int, List[str]]:
     """Run spike S1 for real and return (exit code, lines to print). Spends tokens.
 
@@ -1173,8 +1382,9 @@ def run_s1(
         return pc_exitcodes.PREFLIGHT_BLOCKED, ["claude not found on PATH"]
     spec = CALLS["s1"]
     session_id = str(uuid.uuid4())
-    run_root = new_run_root(home, "s1", attempt)
-    paths = materialize(repo_root, run_root, session_id, home, audit_hook=True)
+    runs = runs_dir if runs_dir else runs_root(base_env, home_dir, repo_root)
+    run_root = new_run_root(home, "s1", attempt, runs_dir=runs)
+    paths = materialize(repo_root, run_root, session_id, home, audit_hook=True, runs_dir=runs)
     tools = pc_flags.build_allowed_tools(str(paths["wrapper"]), pc_flags.MODEL_FACING_WRAPPER_VERBS)
     argv = pc_flags.build_argv(
         claude, session_id, str(paths["settings"]), tools, spec.turns, spec.cap, include_hook_events=True
@@ -1191,18 +1401,22 @@ def run_s1(
             else "infrastructure failure and no retry is left"
         )
         return pc_exitcodes.PREFLIGHT_FAIL, lines
+    names = local_user_names(home_dir) if home_dir else frozenset()
+    candidates = hit_candidates(pc_stream.init_manifest(events), names)
+    defined = binary_defines(os.path.realpath(claude), candidates) if candidates else frozenset()
     outcome = evaluate_s1(
         events,
         _read_hooklog(paths["hooklog"]),
-        local_user_names(home_dir) if home_dir else frozenset(),
+        names,
         str(paths["project"]),
         str(paths["run_root"]),
         cfg,
+        defined,
     )
     lines.extend(describe_s1(outcome))
     if outcome.status != "pass":
         return pc_exitcodes.PREFLIGHT_FAIL, lines
-    manifest = build_manifest(_plain_init_event(outcome_call.stdout), outcome.assertions)
+    manifest = build_manifest(_plain_init_event(outcome_call.stdout), outcome.assertions, outcome.counts)
     sanitizer = pc_sanitize.Sanitizer.from_machine(repo_root, _caller_map(paths))
     text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     sanitize_to_data(text.encode("utf-8"), os.path.join(data_dir, "s1-init-manifest.json"), sanitizer)
