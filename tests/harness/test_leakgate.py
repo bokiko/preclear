@@ -28,6 +28,9 @@ import pc_leakgate  # noqa: E402
 import pc_seeds  # noqa: E402
 
 SYNTHETIC_USER = "pcseedtester"
+DATA_DIR = os.path.join(HARNESS_DIR, "data")
+BS = chr(92)
+NON_ASCII = "\u00e9"
 
 
 def run_gate(*args):
@@ -61,6 +64,14 @@ def make_stage(files):
 class HarnessTestCase(unittest.TestCase):
     def ok(self, condition, label):
         self.assertTrue(bool(condition), label)
+
+
+def assert_fixtures_clean(case):
+    """The committed fixtures under tests/harness/data scan with zero findings (IN-07)."""
+    report = pc_leakgate.scan_tree(DATA_DIR, [])
+    present = len([name for name in os.listdir(DATA_DIR) if os.path.isfile(os.path.join(DATA_DIR, name))])
+    case.ok(report.findings == [], "the committed fixtures scan with zero findings")
+    case.ok(present >= 1 and report.files == present, "every committed fixture file was scanned")
 
 
 class TracerTests(HarnessTestCase):
@@ -254,6 +265,209 @@ class SeedTests(HarnessTestCase):
         data = b"one PCDENYWORD two pcdenyword three\n"
         self.ok(pc_leakgate.scan_bytes("f.txt", data, ["pcDenyWord"]) == [("deny-list", 2)], "two deny hits")
         self.ok(pc_leakgate.scan_bytes("f.txt", data, []) == [], "no entries, no hits")
+
+
+# Boundaries that follow a home folder. The first group holds a JSON escape or a character the old
+# closing-delimiter list did not name; the second group was already found before the rule changed.
+NEW_BOUNDARIES = (
+    ("json newline escape", BS + "n"),
+    ("json tab escape", BS + "t"),
+    ("json return escape", BS + "r"),
+    ("json quote escape", BS + '"'),
+    ("doubled backslash", BS + BS),
+    ("single backslash", BS),
+    ("closing angle bracket", ">"),
+    ("closing brace", "}"),
+    ("pipe", "|"),
+    ("equals sign", "="),
+    ("asterisk", "*"),
+    ("tilde", "~"),
+    ("sentence dot", "."),
+)
+OLD_BOUNDARIES = (
+    ("slash and text", "/x"),
+    ("space", " "),
+    ("newline", "\n"),
+    ("double quote", '"'),
+    ("single quote", "'"),
+    ("backtick", "`"),
+    ("colon", ":"),
+    ("semicolon", ";"),
+    ("comma", ","),
+    ("closing parenthesis", ")"),
+    ("closing bracket", "]"),
+    ("end of text", ""),
+)
+
+
+def folder_shapes():
+    """(case name, folder text, rule id) for the four home folder shapes, without any closing delimiter."""
+    superuser = pc_seeds.root_home().rsplit("/", 1)[0]
+    return (
+        ("macos style", pc_seeds.home_path(SYNTHETIC_USER), "home-path-unix"),
+        ("linux style", pc_seeds.home_path_linux(SYNTHETIC_USER), "home-path-unix"),
+        ("windows style", pc_seeds.windows_home(SYNTHETIC_USER).rstrip(BS), "home-path-windows"),
+        ("superuser", superuser, "home-path-root"),
+    )
+
+
+class HomePathBoundaryTests(HarnessTestCase):
+    """CR-02: a home path is a finding whatever non-name character ends it."""
+
+    def check_table(self, boundaries):
+        for shape, folder, rule in folder_shapes():
+            for name, neighbour in boundaries:
+                data = ("x " + folder + neighbour).encode("utf-8")
+                found = pc_leakgate.scan_bytes("f.txt", data, [])
+                self.ok(found == [(rule, 1)], shape + " followed by " + name + " is found once")
+
+    def test_a_home_path_followed_by_a_json_escape_or_a_new_delimiter_is_found(self):
+        self.check_table(NEW_BOUNDARIES)
+        assert_fixtures_clean(self)
+
+    def test_the_boundaries_found_before_are_still_found(self):
+        self.check_table(OLD_BOUNDARIES)
+        assert_fixtures_clean(self)
+
+    def test_prose_naming_the_bare_folder_words_stays_clean(self):
+        words = ("Users", "home")
+        for word in words:
+            data = ("see the /" + word + " folder and the " + word + " word").encode("utf-8")
+            self.ok(pc_leakgate.scan_bytes("f.txt", data, []) == [], "bare folder word " + word + " is clean")
+        assert_fixtures_clean(self)
+
+    def test_the_superuser_folder_followed_or_preceded_by_a_name_character_is_clean(self):
+        superuser = pc_seeds.root_home().rsplit("/", 1)[0]
+        cases = (
+            ("filesystem word", "x " + superuser + "fs"),
+            ("hyphen and a letter", "x " + superuser + "-x"),
+            ("underscore and a letter", "x " + superuser + "_x"),
+            ("dot and an extension", "x " + superuser + ".txt"),
+            ("directly after a letter", "x" + superuser),
+            ("directly after a dot", "x." + superuser),
+        )
+        for name, text in cases:
+            self.ok(pc_leakgate.scan_bytes("f.txt", text.encode("utf-8"), []) == [], "superuser folder, " + name + ": clean")
+        assert_fixtures_clean(self)
+
+
+def one_finding(case, label, text, rule):
+    found = pc_leakgate.scan_bytes("f.txt", text.encode("utf-8"), [])
+    case.ok(found == [(rule, 1)], label + " is found once")
+
+
+def no_finding(case, label, text):
+    found = pc_leakgate.scan_bytes("f.txt", text.encode("utf-8"), [])
+    case.ok(found == [], label + " is not a finding")
+
+
+def address(parts):
+    return ".".join(str(part) for part in parts)
+
+
+class IdentifierBoundaryTests(HarnessTestCase):
+    """Neighbours of the other identifier rules; every case here also holds at the earlier rule text."""
+
+    def test_the_dash_slug_is_found_next_to_any_neighbour(self):
+        slug = pc_seeds.dash_slug(SYNTHETIC_USER)
+        for name, left in (("start of text", ""), ("letter", "x"), ("space", " "), ("slash", "/"), ("json escape", BS + "n"), ("hyphen", "-")):
+            for other, right in (("end of text", ""), ("word", "proj"), ("space", " "), ("json escape", BS + "n"), ("hyphen", "-"), ("dot", ".txt")):
+                one_finding(self, "dash slug, left " + name + " and right " + other, left + slug + right, "home-path-dash-slug")
+        assert_fixtures_clean(self)
+
+    def test_the_temp_root_is_found_with_and_without_the_system_folder_prefix(self):
+        root = pc_seeds.mac_temp_root()
+        for prefix_name, prefix in (("without prefix", ""), ("with prefix", "/private")):
+            for name, left in (("start of text", ""), ("space", " "), ("quote", '"'), ("equals", "="), ("parenthesis", "("), ("json escape", BS + "n"), ("letter", "x")):
+                one_finding(self, "temp root " + prefix_name + ", left " + name, left + prefix + root + "abcd/T", "mac-temp-root")
+        assert_fixtures_clean(self)
+
+    def test_the_private_address_ranges_have_exact_edges(self):
+        found = (
+            ("10 range", [10, 1, 2, 3]),
+            ("192.168 range", [192, 168, 1, 1]),
+            ("172.16 edge", [172, 16, 0, 1]),
+            ("172.31 edge", [172, 31, 255, 255]),
+            ("100.64 edge", [100, 64, 0, 1]),
+            ("100.127 edge", [100, 127, 0, 1]),
+            ("100.101 inside", [100, 101, 7, 42]),
+        )
+        absent = (
+            ("172.15 below", [172, 15, 0, 1]),
+            ("172.32 above", [172, 32, 0, 1]),
+            ("100.63 below", [100, 63, 0, 1]),
+            ("100.128 above", [100, 128, 0, 1]),
+            ("11 range", [11, 1, 2, 3]),
+            ("192.169 range", [192, 169, 1, 1]),
+        )
+        for name, parts in found:
+            one_finding(self, name, "x " + address(parts), "private-ipv4")
+        for name, parts in absent:
+            no_finding(self, name, "x " + address(parts))
+        assert_fixtures_clean(self)
+
+    def test_the_private_address_neighbours(self):
+        ip = address([192, 168, 7, 42])
+        for name, left in (("start of text", ""), ("space", " "), ("quote", '"'), ("equals", "="), ("parenthesis", "("), ("json escape letter", BS + "n")):
+            one_finding(self, "address, left " + name, left + ip + " end", "private-ipv4")
+        for name, right in (("end of text", ""), ("json escape", BS + "n"), ("port", ":22"), ("prefix length", "/24"), ("dot", "."), ("comma", ","), ("parenthesis", ")")):
+            one_finding(self, "address, right " + name, "x " + ip + right, "private-ipv4")
+        no_finding(self, "a digit directly before the address", "x 1" + ip)
+        no_finding(self, "a digit after a three-digit last octet", "x " + address([10, 0, 0, 255]) + "1")
+        assert_fixtures_clean(self)
+
+    def test_the_internal_host_neighbours(self):
+        host = pc_seeds.internal_host("pcbox")
+        for name, left in (("start of text", ""), ("space", " "), ("quote", '"'), ("json escape letter", BS + "n"), ("parenthesis", "(")):
+            one_finding(self, "host, left " + name, left + host + " end", "internal-hostname")
+        for name, right in (("end of text", ""), ("json escape", BS + "n"), ("port", ":8080"), ("path", "/p"), ("parenthesis", ")"), ("quote", '"'), ("space", " ")):
+            one_finding(self, "host, right " + name, "x " + host + right, "internal-hostname")
+        assert_fixtures_clean(self)
+
+    def test_the_email_neighbours(self):
+        mail = pc_seeds.email("someone", "corp.invalid")
+        for name, left in (("start of text", ""), ("space", " "), ("quote", '"'), ("json escape letter", BS + "n"), ("angle bracket", "<"), ("parenthesis", "(")):
+            one_finding(self, "email, left " + name, left + mail + " end", "email-address")
+        for name, right in (("end of text", ""), ("json escape", BS + "n"), ("angle bracket", ">"), ("parenthesis", ")"), ("quote", '"'), ("space", " "), ("comma", ",")):
+            one_finding(self, "email, right " + name, "x " + mail + right, "email-address")
+        assert_fixtures_clean(self)
+
+
+SUFFIX_WORDS = ("local", "lan", "home" + "." + "arpa", "internal", "localdomain", "ts" + "." + "net")
+
+
+class AsciiAndCaseTests(HarnessTestCase):
+    """WR-01: identifier rules see an ASCII-only world, and the private host suffix ignores case."""
+
+    def test_the_email_rule_finds_a_value_next_to_a_non_ascii_letter(self):
+        mail = pc_seeds.email("someone", "corp.invalid")
+        one_finding(self, "email after a non-ascii letter", "x " + NON_ASCII + mail + " y", "email-address")
+        one_finding(self, "email before a non-ascii letter", "x " + mail + NON_ASCII + " y", "email-address")
+        assert_fixtures_clean(self)
+
+    def test_the_host_rule_finds_a_value_next_to_a_non_ascii_letter(self):
+        host = pc_seeds.internal_host("pcbox")
+        one_finding(self, "host after a non-ascii letter", "x " + NON_ASCII + host + " y", "internal-hostname")
+        one_finding(self, "host before a non-ascii letter", "x " + host + NON_ASCII + " y", "internal-hostname")
+        assert_fixtures_clean(self)
+
+    def test_every_private_suffix_is_found_in_lower_upper_and_title_case(self):
+        for word in SUFFIX_WORDS:
+            for case_name, form in (("lower", word), ("upper", word.upper()), ("title", word.title())):
+                one_finding(self, "suffix " + word + " in " + case_name + " case", "x pcbox." + form + " y", "internal-hostname")
+        assert_fixtures_clean(self)
+
+    def test_a_suffix_look_alike_is_not_a_host(self):
+        for word in SUFFIX_WORDS:
+            no_finding(self, "suffix " + word + " followed by more letters", "x pcbox." + word + "x y")
+        no_finding(self, "a longer word that starts with a suffix", "x pcbox." + "local" + "host y")
+        assert_fixtures_clean(self)
+
+    def test_a_reserved_domain_next_to_a_non_ascii_letter_stays_allowed(self):
+        mail = pc_seeds.email("a", "example.org")
+        no_finding(self, "reserved domain after a non-ascii letter", "x " + NON_ASCII + mail + " y")
+        no_finding(self, "reserved domain before a non-ascii letter", "x " + mail + NON_ASCII + " y")
+        assert_fixtures_clean(self)
 
 
 class EdgeCaseTests(HarnessTestCase):
