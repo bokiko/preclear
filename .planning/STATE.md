@@ -20,7 +20,7 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-24)
+See: .planning/PROJECT.md (updated 2026-10-26)
 
 **Core value:** A fresh session resumes from the checkpoint without guessing: every fact it reads was verified when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 **Current focus:** Phase 02 — Model-Free Foundation and Stub
@@ -78,6 +78,9 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-04: the repository was flipped public on bokiko's own go-word on 2026-10-24, run by the main conversation only; flip tip 9a794e7, read-back 55835ad
 - [Phase 01]: Eleven critical and warning review findings fixed after the flip; default mode of the pre-flip script now requires local deny-list entries
 - [Phase 01]: gitleaks stays on 8.30.0; the 154 session-id UUIDs in evidence are accepted as identifiers, not credentials
+- [Phase 02]: Spike run roots live outside every home folder (`PRECLEAR_RUNS_ROOT`, shared-folder default) because Claude Code loads ancestor instruction files as Project instructions; S1 passed all nine assertions on the rerun
+- [Phase 02]: Pinned build is Claude Code 2.1.310 with claude-sonnet-5-5; `TESTED_VERSIONS` is seeded with that one build; the login lives in the harness-owned config directory and only the boolean loggedIn is ever read
+- [Phase 02]: Gap plan 02-09 closed CR-01 and CR-02 (login after a JSON escape; home path before an escape or delimiter) in the sanitizer, the gate and the `.gitleaks.toml` twin; 21 warning and info findings deferred to Phase 3 hardening
 
 ### Pending Todos
 
@@ -89,9 +92,11 @@ None yet.
 - [Phase 1]: Windows-style and `/root/` home paths are not covered by the home-path rule (review CR-03 fixed only the boundary).
 - [Phase 1]: Nine Info findings stay open in 01-REVIEW-DISPOSITION.md.
 - [Phase 1]: SECURITY.md was never produced for Phase 1. security_enforcement is on, so `/gsd-secure-phase 1` is pending.
-- [Phase 2]: Spikes S1 (isolation of user-level instructions) and S2 (stream shape, policy probe) are open. The research flags the allowlist syntax (colon versus space-star) and `CLAUDE_CONFIG_DIR` behaviour with subscription login as unverified. Run research-phase before planning Phase 2.
 - [Phase 2]: Stub fidelity is derived from `references/checkpoint-v1.md` and committed logs only. `handoff`, `note`, exit 5 and exit 6 have no committed run and stay UNCONFIRMED.
-- [Phase 3/4]: The full model id to pin has not been chosen, and the cost of one row and of the full matrix is unmeasured.
+- [Phase 2]: SECURITY.md was never produced for Phase 2 either; `/gsd-secure-phase 2` is pending alongside `/gsd-secure-phase 1`.
+- [Phase 3]: Runner contract (review WR-14): after sanitising a run, pass `sanitizer.deny_entries()` to `promote`; the gate CLI and `promote` defaults carry no login by design. Build the sanitizer before any paid call and map `SanitizerError` in the spike driver (WR-12). The stub accepts a body holding the checkpoint end marker and corrupts its ledger (WR-03); fix before real rows run.
+- [Phase 3]: The policy probe showed the binary allowing `echo` from its built-in read-only set and a double-quoted `$PWD`; both rows are flagged outside the allowlist model and the model was left unchanged.
+- [Phase 3/4]: The matrix baseline model is chosen in Phase 3 (the spikes pinned claude-sonnet-5-5 for themselves only), and the cost of one row and of the full matrix is unmeasured.
 - [Phase 4]: Row 7 needs a working `chmod` denial (ineffective as root or on permissive mounts). The NUL `-z` form has never executed headless; the quoted-porcelain fallback is the expected row 10 outcome.
 
 ## Deferred Items
@@ -104,6 +109,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-24T17:48:55.199Z
-Stopped at: Phase 02 complete, ready to plan Phase 3
-Resume file: .planning/phases/02-model-free-foundation-and-stub/02-CONTEXT.md
+Last session: 2026-10-26T09:20:00Z
+Stopped at: Phase 2 complete, ready to plan Phase 3
+Resume file: None
