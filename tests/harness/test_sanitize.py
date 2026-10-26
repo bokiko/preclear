@@ -28,6 +28,9 @@ TOKEN_RE = re.compile(r"<[a-z][a-z0-9-]*>")
 SYNTHETIC_USER = "pcsynthuser"
 ODD_HOME_NAME = "pc synth_u.x"  # a space, an underscore and a dot, so the forms differ from each other
 PLANTED_ENTRY = "pcplantedentry"
+DATA_DIR = os.path.join(HARNESS_DIR, "data")
+BS = chr(92)
+ESCAPE_LETTERS = ("n", "r", "t", "b", "f")
 
 
 def sources(homes=(), login="", hostnames=(), temp_dirs=(), repo_root=""):
@@ -50,6 +53,14 @@ def scratch_file(data):
 class HarnessTestCase(unittest.TestCase):
     def ok(self, condition, label):
         self.assertTrue(bool(condition), label)
+
+
+def assert_fixtures_clean(case, deny):
+    """The committed fixtures under tests/harness/data scan with zero findings (IN-07)."""
+    report = pc_leakgate.scan_tree(DATA_DIR, deny)
+    present = len([name for name in os.listdir(DATA_DIR) if os.path.isfile(os.path.join(DATA_DIR, name))])
+    case.ok(report.findings == [], "the committed fixtures scan with zero findings")
+    case.ok(present >= 1 and report.files == present, "every committed fixture file was scanned")
 
 
 class HomeFormTests(HarnessTestCase):
@@ -325,6 +336,98 @@ class LiveMachineTests(HarnessTestCase):
         if len(login) >= 4:
             self.ok(login.lower() not in stripped, "the real login survived")
         self.ok("<home>" in out, "the home token is present")
+
+
+class LoginBoundaryTests(HarnessTestCase):
+    """CR-01: a JSON letter escape is a word boundary for the login, and the gate holds the login."""
+
+    def json_text(self, letter, login):
+        return '"m": "a' + BS + letter + login + BS + 'n more"'
+
+    def test_a_login_after_a_json_letter_escape_is_replaced_and_the_escape_kept(self):
+        san = build(sources(login=SYNTHETIC_USER))
+        for letter in ESCAPE_LETTERS:
+            text = self.json_text(letter, SYNTHETIC_USER)
+            want = self.json_text(letter, "<user>")
+            self.ok(san.sanitize_text(text) == want, "text, escape " + letter)
+            self.ok(san.sanitize_bytes(text.encode("utf-8")) == want.encode("utf-8"), "bytes, escape " + letter)
+            upper = self.json_text(letter, SYNTHETIC_USER.upper())
+            self.ok(san.sanitize_text(upper) == want, "upper case, escape " + letter)
+        assert_fixtures_clean(self, san.deny_entries())
+
+    def test_a_quote_escape_or_a_doubled_backslash_before_the_login_is_replaced(self):
+        san = build(sources(login=SYNTHETIC_USER))
+        for case, lead in (("quote escape", BS + '"'), ("doubled backslash", BS + BS)):
+            out = san.sanitize_text("a" + lead + SYNTHETIC_USER + " b")
+            self.ok(out == "a" + lead + "<user> b", case)
+        assert_fixtures_clean(self, san.deny_entries())
+
+    def test_the_whole_word_rule_still_holds(self):
+        san = build(sources(login=SYNTHETIC_USER))
+        cases = (
+            ("after a plain letter", "n" + SYNTHETIC_USER),
+            ("at the end of a longer word", "x" + SYNTHETIC_USER + " end"),
+            ("before a word character after a valid escape", BS + "n" + SYNTHETIC_USER + "x"),
+            ("inside a longer word", "ab" + SYNTHETIC_USER + "cd"),
+            ("after a backslash and a letter that is no escape", BS + "q" + SYNTHETIC_USER),
+        )
+        for case, text in cases:
+            self.ok(san.sanitize_text(text) == text, case + ": left alone")
+        assert_fixtures_clean(self, san.deny_entries())
+
+    def test_a_non_ascii_login_after_a_tab_escape_is_replaced_in_both_forms(self):
+        name = "caf" + "\u00e9" + "xy"
+        nfc = unicodedata.normalize("NFC", name)
+        nfd = unicodedata.normalize("NFD", name)
+        self.ok(nfc != nfd, "the synthetic name has distinct NFC and NFD forms")
+        san = build(sources(login=nfc))
+        for case, form in (("nfc", nfc), ("nfd", nfd)):
+            out = san.sanitize_text("a" + BS + "t" + form + BS + "n b")
+            self.ok(out == "a" + BS + "t<user>" + BS + "n b", case + " form after a tab escape")
+        assert_fixtures_clean(self, san.deny_entries())
+
+    def test_the_real_login_after_each_letter_escape_is_replaced(self):
+        login = pwd.getpwuid(os.getuid()).pw_name
+        if len(login) < pc_sanitize.LOGIN_FLOOR:
+            self.skipTest("the login is shorter than the floor")
+        san = pc_sanitize.Sanitizer.from_machine(REPO_ROOT)
+        for letter in ESCAPE_LETTERS:
+            out = san.sanitize_text(self.json_text(letter, login))
+            stripped = TOKEN_RE.sub("", out).lower()
+            self.ok(login.lower() not in stripped, "the real login survived after escape " + letter)
+        assert_fixtures_clean(self, [])
+
+    def test_the_gate_refuses_the_unsanitised_text_and_passes_the_sanitised_text(self):
+        name = "caf" + "\u00e9" + "xy"
+        nfc = unicodedata.normalize("NFC", name)
+        nfd = unicodedata.normalize("NFD", name)
+        san = build(sources(login=nfc))
+        entries = san.deny_entries()
+        self.ok(nfc in entries and nfd in entries, "both normalisation forms are gate entries")
+        raw = (self.json_text("n", nfc) + " " + self.json_text("t", nfd) + " plain " + nfc).encode("utf-8")
+        found = pc_leakgate.scan_bytes("f.txt", raw, entries)
+        self.ok(found == [("deny-list", 3)], "one deny-list finding per occurrence")
+        clean = pc_leakgate.scan_bytes("f.txt", san.sanitize_bytes(raw), entries)
+        self.ok(clean == [], "the sanitised text has no finding")
+        report = pc_leakgate.scan_entries([pc_leakgate.Entry(b"f.txt", "file", raw, 0o100644)], entries)
+        self.ok(len(report.findings) == 1, "the report holds one finding")
+        shown = pc_leakgate.format_findings(report) + repr(san) + str(san)
+        self.ok(nfc not in shown and nfd not in shown, "no report, repr or str holds the login")
+        ascii_san = build(sources(login=SYNTHETIC_USER))
+        self.ok(SYNTHETIC_USER in ascii_san.deny_entries(), "an ASCII login is a gate entry")
+        assert_fixtures_clean(self, entries)
+
+    def test_a_login_inside_a_fixed_token_or_below_the_floor_is_not_a_gate_entry(self):
+        for word in ("user", "root", "home", "host", "repo"):
+            san = build(sources(login=word), extra_map={"/work/m": "<auto-memory-root>"})
+            self.ok(san.deny_entries() == [], "token word " + word + ": no gate entry")
+            out = san.sanitize_text("who " + word + " said /work/m/b")
+            self.ok(out == "who <user> said <auto-memory-root>/b", "token word " + word + ": bare word replaced, token kept")
+            self.ok(pc_leakgate.scan_bytes("t.txt", out.encode("utf-8"), san.deny_entries()) == [], "token word " + word + ": output scans clean")
+        for case, login in (("three characters", "abc"), ("empty", ""), ("blank", "   ")):
+            san = build(sources(login=login))
+            self.ok(san.deny_entries() == [], case + ": no gate entry")
+        assert_fixtures_clean(self, [])
 
 
 class GateIntegrationTests(HarnessTestCase):
