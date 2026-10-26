@@ -25,8 +25,9 @@ other):
     s1 | s2a | s2b | verbose-probe [--run] [--from-run NAME]
                                 without --run: print the pinned call, caps and budget and exit 0
                                 without starting any process (there is no --dry-run flag; the dry
-                                run is the absence of --run). With --run the guard runs first, and
-                                the paid path itself is added by the later tasks of the plan
+                                run is the absence of --run). With --run the guard runs first, then
+                                the zero-token preflight, then the paid call (s1 here; the other
+                                calls are enabled by the second spike task)
     spend                       print the recorded totals
     probes                      print the recorded login-probe lines
 
@@ -54,9 +55,12 @@ from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tup
 
 import pc_exitcodes
 import pc_flags
+import pc_leakgate
 import pc_manifest
 import pc_preflight
 import pc_runroot
+import pc_sanitize
+import pc_stream
 
 HARNESS_HOME_ENV = "PRECLEAR_HARNESS_HOME"
 DEFAULT_HOME_NAME = ".preclear-harness"
@@ -107,6 +111,10 @@ class HomeRefused(SpikeError):
 
 class BudgetRefused(SpikeError):
     exit_code = pc_exitcodes.BUDGET_REFUSED
+
+
+class LeakRefused(SpikeError):
+    exit_code = pc_exitcodes.LEAK_REFUSED
 
 
 # ---------------------------------------------------------------------------------------------
@@ -539,13 +547,30 @@ def read_spend(home: str) -> List[Dict[str, Any]]:
     return records
 
 
-def recorded_total(home: str) -> Decimal:
-    """Sum the ledger; a call with an unknown cost counts as its cap."""
+def _effective(records: Sequence[Dict[str, Any]]) -> Dict[Tuple[str, int], Dict[str, Any]]:
+    """Return the effective record per (call name, attempt): a later line supersedes an earlier one.
+
+    The ledger stays append-only. The paid path writes a pessimistic line before it launches a call
+    (unknown cost, which counts as the call's cap) and a second line for the same attempt once the
+    actual cost is known; the second line supersedes the first, and the pair is still one attempt.
+    """
+    latest: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    for record in records:
+        latest[(record["call"], record["attempt"])] = record
+    return latest
+
+
+def _total_of(records: Sequence[Dict[str, Any]]) -> Decimal:
     total = Decimal("0")
-    for record in read_spend(home):
+    for record in _effective(records).values():
         cost = record["total_cost_usd"]
         total += CALLS[record["call"]].cap if cost is None else Decimal(cost)
     return total
+
+
+def recorded_total(home: str) -> Decimal:
+    """Sum the effective ledger lines; a call with an unknown cost counts as its cap."""
+    return _total_of(read_spend(home))
 
 
 def remaining(home: str) -> Decimal:
@@ -555,7 +580,7 @@ def remaining(home: str) -> Decimal:
 def attempts_made(home: str, call: str) -> int:
     if call not in CALLS:
         raise ValueError("unknown call name")
-    return sum(1 for record in read_spend(home) if record["call"] == call)
+    return sum(1 for key in _effective(read_spend(home)) if key[0] == call)
 
 
 def guard(home: str, call: str) -> int:
@@ -567,14 +592,10 @@ def guard(home: str, call: str) -> int:
     if call not in CALLS:
         raise ValueError("unknown call name")
     records = read_spend(home)
-    used = sum(1 for record in records if record["call"] == call)
+    used = sum(1 for key in _effective(records) if key[0] == call)
     if used >= MAX_ATTEMPTS:
         raise BudgetRefused("the attempt limit for this call name is used up")
-    total = Decimal("0")
-    for record in records:
-        cost = record["total_cost_usd"]
-        total += CALLS[record["call"]].cap if cost is None else Decimal(cost)
-    if total + CALLS[call].cap > TOTAL_CAP:
+    if _total_of(records) + CALLS[call].cap > TOTAL_CAP:
         raise BudgetRefused("recorded spend plus this call's cap would exceed the total cap")
     return used + 1
 
@@ -707,6 +728,486 @@ def auth_check(
         line = result.line()
     record_probe(home, logged_in, result.exit_code, version, created)
     return result.exit_code, line
+
+
+# ---------------------------------------------------------------------------------------------
+# Spike S1: the isolation assertions, declared before any run (D-02)
+# ---------------------------------------------------------------------------------------------
+
+S1_PROMPT = "Reply with exactly the one word: ready."
+CALL_TIMEOUT_SECONDS = 600
+
+HOW_INIT = "init"
+HOW_HOOK = "hook"
+HOW_NONE = "not-assertable"
+
+S1_ASSERTION_IDS = (
+    "permission-mode-default",
+    "model-pinned",
+    "skill-preclear-present",
+    "mcp-servers-empty",
+    "plugins-empty",
+    "user-names-absent",
+    "no-user-instruction-outside-config",
+    "project-claude-md-loaded",
+    "project-local-inside-run-root",
+)
+_AUDIT_IDS = S1_ASSERTION_IDS[6:]
+
+# The user's own skill set includes preclear (the project install carries the same name), so the
+# absence check cannot use that name as a contamination signal. The exclusion is counted and stated
+# in the findings.
+ABSENCE_EXCLUDED = frozenset(["preclear"])
+
+_MEMORY_TYPES = ("User", "Project", "Local", "Managed")
+_HOOK_SUBTYPES = ("hook_started", "hook_progress", "hook_response")
+
+S1_ALTERNATIVES = (
+    "alternatives for bokiko: (1) accept a by-construction label for the instruction audit, "
+    "with the decision dated in the findings; (2) try a canary approach, a planted marker in an "
+    "ancestor or user-level file that a leaking run would show; (3) the audit is changed"
+)
+
+
+class S1Outcome(NamedTuple):
+    status: str  # "pass" or "stop"
+    assertions: List[Tuple[str, str, bool]]
+    counts: Dict[str, Any]
+    reason: str
+
+
+def _real(path: str) -> str:
+    return os.path.realpath(path)
+
+
+def _item_name(item: Any) -> Optional[str]:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict) and isinstance(item.get("name"), str):
+        return item["name"]
+    return None
+
+
+def _names_of(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    found = []
+    for item in values:
+        name = _item_name(item)
+        if name is not None:
+            found.append(name)
+    return found
+
+
+def _forms(name: str) -> List[str]:
+    return [name, name.lstrip("/"), name.split(":")[-1]]
+
+
+def hook_entries(
+    events: Sequence[Dict[str, Any]],
+    hooklog_lines: Optional[Sequence[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Return (the instruction entries seen, the source tag: logger, stream, both or none).
+
+    The logger file carries file_path, memory_type and load_reason per InstructionsLoaded event. A
+    stream hook event counts only when it carries a file_path and a memory_type itself: the plain
+    stream events of a hook that prints nothing show that the hook fired, not what it loaded.
+    """
+    seen: List[Dict[str, Any]] = []
+    keys = set()
+    from_logger = False
+    from_stream = False
+    for line in hooklog_lines or []:
+        if isinstance(line, dict):
+            seen.append(line)
+            from_logger = True
+            keys.add((line.get("file_path"), line.get("memory_type")))
+    for event in events:
+        if event.get("type") != "system" or event.get("subtype") not in _HOOK_SUBTYPES:
+            continue
+        if event.get("hook_event") != "InstructionsLoaded":
+            continue
+        for holder in (event, event.get("input"), event.get("data")):
+            if isinstance(holder, dict) and isinstance(holder.get("file_path"), str) and isinstance(
+                holder.get("memory_type"), str
+            ):
+                key = (holder["file_path"], holder["memory_type"])
+                if key not in keys:
+                    keys.add(key)
+                    seen.append(
+                        {
+                            "file_path": holder["file_path"],
+                            "memory_type": holder["memory_type"],
+                            "load_reason": holder.get("load_reason")
+                            if isinstance(holder.get("load_reason"), str)
+                            else None,
+                        }
+                    )
+                from_stream = True
+                break
+    if from_logger and from_stream:
+        tag = "both"
+    elif from_logger:
+        tag = "logger"
+    elif from_stream:
+        tag = "stream"
+    else:
+        tag = "none"
+    return seen, tag
+
+
+def _absence(init: Dict[str, Any], local_names: Any) -> Tuple[int, int, int]:
+    """Return (size of the name set, number excluded, number of hits). Never a name."""
+    names = frozenset(local_names)
+    effective = names - ABSENCE_EXCLUDED
+    hits = 0
+    for key in ("skills", "slash_commands", "agents", "plugins"):
+        for name in _names_of(init.get(key)):
+            if any(form in effective for form in _forms(name)):
+                hits += 1
+    return len(effective), len(names & ABSENCE_EXCLUDED), hits
+
+
+def s1_evaluation(
+    events: Sequence[Dict[str, Any]],
+    hooklog_lines: Optional[Sequence[Dict[str, Any]]],
+    local_names: Any,
+    project_path: str,
+    run_root: str,
+    config_dir_path: str,
+) -> Tuple[List[Tuple[str, str, bool]], Dict[str, Any]]:
+    """Return (the nine assertions, the counts) for one S1 capture."""
+    init = pc_stream.init_manifest(events)
+    result: List[Tuple[str, str, bool]] = []
+    skills = _names_of(init.get("skills"))
+    result.append(("permission-mode-default", HOW_INIT, init.get("permissionMode") == pc_flags.PERMISSION_MODE))
+    result.append(("model-pinned", HOW_INIT, init.get("model") == PINNED_MODEL))
+    result.append(
+        ("skill-preclear-present", HOW_INIT, any("preclear" in (name, name.split(":")[-1]) for name in skills))
+    )
+    result.append(("mcp-servers-empty", HOW_INIT, init.get("mcp_servers") == []))
+    result.append(("plugins-empty", HOW_INIT, init.get("plugins") == []))
+    size, excluded, hits = _absence(init, local_names)
+    result.append(("user-names-absent", HOW_INIT, hits == 0))
+
+    entries, source = hook_entries(events, hooklog_lines)
+    counts: Dict[str, Any] = {
+        "user_names": size,
+        "user_names_excluded": excluded,
+        "user_name_hits": hits,
+        "audit_source": source,
+        "entries_user": 0,
+        "entries_project": 0,
+        "entries_local": 0,
+        "entries_managed": 0,
+        "entries_unknown": 0,
+    }
+    for entry in entries:
+        kind = entry.get("memory_type")
+        path = entry.get("file_path")
+        if kind in _MEMORY_TYPES and isinstance(path, str):
+            counts["entries_%s" % kind.lower()] += 1
+        else:
+            counts["entries_unknown"] += 1
+    if not entries:
+        for name in _AUDIT_IDS:
+            result.append((name, HOW_NONE, False))
+        return result, counts
+
+    config_real = _real(config_dir_path)
+    run_real = _real(run_root)
+    claude_md = _real(os.path.join(project_path, "CLAUDE.md"))
+    user_ok = True
+    inside_ok = True
+    project_loaded = False
+    for entry in entries:
+        kind = entry.get("memory_type")
+        path = entry.get("file_path")
+        if kind not in _MEMORY_TYPES or not isinstance(path, str) or not path:
+            user_ok = False
+            continue
+        real = _real(path)
+        if kind == "User" and not _within(real, config_real):
+            user_ok = False
+        if kind in ("Project", "Local") and not _within(real, run_real):
+            inside_ok = False
+        if kind == "Project" and real == claude_md:
+            project_loaded = True
+    result.append(("no-user-instruction-outside-config", HOW_HOOK, user_ok))
+    result.append(("project-claude-md-loaded", HOW_HOOK, project_loaded))
+    result.append(("project-local-inside-run-root", HOW_HOOK, inside_ok))
+    return result, counts
+
+
+def s1_assertions(
+    events: Sequence[Dict[str, Any]],
+    hooklog_lines: Optional[Sequence[Dict[str, Any]]],
+    local_names: Any,
+    project_path: str,
+    run_root: str,
+    config_dir_path: str,
+) -> List[Tuple[str, str, bool]]:
+    """Return a list of (assertion id, how asserted, passed) in the declared order.
+
+    How asserted is init (read from the init event), hook (read from the InstructionsLoaded entries
+    in the stream or the logger file) or not-assertable (no instruction entry was seen by either
+    source; that assertion is then a failure and the run is a stop, never a degraded pass).
+    """
+    return s1_evaluation(events, hooklog_lines, local_names, project_path, run_root, config_dir_path)[0]
+
+
+def evaluate_s1(
+    events: Sequence[Dict[str, Any]],
+    hooklog_lines: Optional[Sequence[Dict[str, Any]]],
+    local_names: Any,
+    project_path: str,
+    run_root: str,
+    config_dir_path: str,
+) -> S1Outcome:
+    """Evaluate the assertions. Anything but a full pass is a stop for bokiko's decision (D-02)."""
+    assertions, counts = s1_evaluation(
+        events, hooklog_lines, local_names, project_path, run_root, config_dir_path
+    )
+    unassertable = [name for name, how, _passed in assertions if how == HOW_NONE]
+    failed = [name for name, how, passed in assertions if not passed and how != HOW_NONE]
+    if unassertable:
+        reason = (
+            "the instruction audit is not assertable: no InstructionsLoaded entry with a file path "
+            "was seen in the stream or in the logger file"
+        )
+        return S1Outcome("stop", assertions, counts, reason)
+    if failed:
+        return S1Outcome("stop", assertions, counts, "isolation assertion(s) failed: %s" % ", ".join(failed))
+    return S1Outcome("pass", assertions, counts, "")
+
+
+def describe_s1(outcome: S1Outcome) -> List[str]:
+    """Return the lines to print: assertion ids with pass or fail, counts only, never a name."""
+    lines = []
+    for name, how, passed in outcome.assertions:
+        lines.append("assertion %s: %s (%s)" % (name, "pass" if passed else "FAIL", how))
+    c = outcome.counts
+    lines.append(
+        "user names: %d listed, %d excluded, %d hit(s); audit source: %s"
+        % (c["user_names"], c["user_names_excluded"], c["user_name_hits"], c["audit_source"])
+    )
+    lines.append(
+        "instruction entries: user=%d project=%d local=%d managed=%d unknown=%d"
+        % (c["entries_user"], c["entries_project"], c["entries_local"], c["entries_managed"], c["entries_unknown"])
+    )
+    if outcome.status != "pass":
+        lines.append("STOP: %s" % outcome.reason)
+        if any(how == HOW_NONE for _name, how, _passed in outcome.assertions):
+            lines.append(S1_ALTERNATIVES)
+        lines.append(
+            "the isolation claim is not shown as specified; no manifest and no findings were written, "
+            "and bokiko decides what happens next"
+        )
+    return lines
+
+
+# ---------------------------------------------------------------------------------------------
+# Sanitised data files (T-02-32): sanitiser, Python gate, then an exclusive write
+# ---------------------------------------------------------------------------------------------
+
+
+def sanitize_to_data(data: bytes, dest: str, sanitizer: Any) -> None:
+    """Sanitise DATA, require zero gate findings and create DEST exclusively.
+
+    An existing target is never overwritten (FileExistsError, checked first). A capture that the
+    sanitiser cannot process or that still holds a finding is refused (LeakRefused, exit 14) and
+    nothing is written; messages name rule ids and counts only, never a value.
+    """
+    if os.path.lexists(dest):
+        raise FileExistsError("the data file already exists")
+    try:
+        clean = sanitizer.sanitize_bytes(data)
+    except pc_sanitize.SanitizerError:
+        raise LeakRefused("the sanitiser could not process the capture; nothing was written") from None
+    try:
+        findings = pc_leakgate.scan_bytes(os.path.basename(dest), clean, sanitizer.deny_entries())
+    except pc_leakgate.ScannerError:
+        raise LeakRefused("the leak gate could not scan the capture; nothing was written") from None
+    if findings:
+        shown = ", ".join("%s x%d" % (rule, count) for rule, count in findings)
+        raise LeakRefused("the leak gate found a leak after sanitising (%s); nothing was written" % shown)
+    pc_runroot.write_exclusive(dest, clean, 0o644)
+
+
+# ---------------------------------------------------------------------------------------------
+# The paid path: one launcher for every call
+# ---------------------------------------------------------------------------------------------
+
+
+class CallResult(NamedTuple):
+    returncode: Optional[int]
+    timed_out: bool
+    stdout: bytes
+    stderr: bytes
+
+
+def run_claude(
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    cwd: str,
+    prompt: str,
+    timeout: int,
+    raw_dir: str,
+    stem: str,
+) -> CallResult:
+    """Run one claude -p call and keep the raw bytes under raw_dir by exclusive creation.
+
+    The prompt goes to standard input, never to argv. A timeout kills the child and keeps whatever
+    it wrote. The raw files stay under the run root inside the harness home, outside the repository.
+    """
+    try:
+        done = subprocess.run(
+            list(argv),
+            env=dict(env),
+            cwd=cwd,
+            input=prompt.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            shell=False,
+        )
+        result = CallResult(done.returncode, False, done.stdout, done.stderr)
+    except subprocess.TimeoutExpired as expired:
+        result = CallResult(None, True, expired.stdout or b"", expired.stderr or b"")
+    except OSError:
+        result = CallResult(None, False, b"", b"")
+    pc_runroot.write_exclusive(os.path.join(raw_dir, stem + ".stdout"), result.stdout, 0o600)
+    pc_runroot.write_exclusive(os.path.join(raw_dir, stem + ".stderr"), result.stderr, 0o600)
+    return result
+
+
+def _read_hooklog(path: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    """Return the logger file's records, or None when the file does not exist."""
+    if path is None or not os.path.exists(path):
+        return None
+    records: List[Dict[str, Any]] = []
+    for line in _read_bytes(path).decode("utf-8", "replace").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            record = None
+        records.append(record if isinstance(record, dict) else {"error": "unparseable"})
+    return records
+
+
+def _plain_init_event(stdout: bytes) -> Dict[str, Any]:
+    """Return the init event with plain json (floats stay floats) for the manifest file."""
+    for line in stdout.split(b"\n"):
+        if not line:
+            continue
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(event, dict) and event.get("type") == "system" and event.get("subtype") == "init":
+            return event
+    raise pc_stream.StreamError("no init event")
+
+
+def build_manifest(init_event: Dict[str, Any], assertions: Sequence[Tuple[str, str, bool]]) -> Dict[str, Any]:
+    """Return the init event's own fields plus the frozen assertion baseline."""
+    manifest = dict(init_event)
+    manifest["baseline"] = {
+        "skills": init_event.get("skills"),
+        "plugins": init_event.get("plugins"),
+        "mcp_servers": init_event.get("mcp_servers"),
+        "agents": init_event.get("agents"),
+        "slash_commands": init_event.get("slash_commands"),
+        "tools": init_event.get("tools"),
+        "assertions": dict((name, how) for name, how, _passed in assertions),
+    }
+    return manifest
+
+
+def _caller_map(paths: Mapping[str, Optional[str]]) -> Dict[str, str]:
+    mapping = {str(paths["run_root"]): "<run>"}
+    if paths.get("wrapper"):
+        mapping[str(paths["wrapper"])] = "<helper>"
+    if paths.get("auto_memory"):
+        mapping[str(paths["auto_memory"])] = "<auto-memory-root>"
+    return mapping
+
+
+def _reconcile(home: str, call: str, attempt: int, version: Optional[str], stdout: bytes) -> Tuple[Optional[Any], str]:
+    """Append the actual-cost line for an attempt; return (parsed events or None, subtype)."""
+    try:
+        events = pc_stream.parse_stream(stdout)
+        summary = pc_stream.result_summary(events)
+        pc_stream.init_manifest(events)
+    except pc_stream.StreamError:
+        append_spend(home, call, attempt, None, "no-result", version)
+        return None, "no-result"
+    subtype = summary["subtype"] if isinstance(summary["subtype"], str) else "no-result"
+    cost = summary["total_cost_usd"]
+    append_spend(home, call, attempt, cost, subtype, version)
+    return events, subtype
+
+
+def run_s1(
+    home: str,
+    base_env: Mapping[str, str],
+    repo_root: str,
+    data_dir: str,
+    search_path: Optional[Sequence[str]],
+    home_dir: Optional[str],
+) -> Tuple[int, List[str]]:
+    """Run spike S1 for real and return (exit code, lines to print). Spends tokens.
+
+    Order: the guard (BudgetRefused propagates), the zero-token preflight (nothing is recorded when
+    it blocks), a fresh run root with the logger hook, the pessimistic ledger line, the call, the
+    reconciling ledger line, the assertions. A pass writes the sanitised init manifest; a failed or
+    unassertable assertion, or an infrastructure failure, writes nothing under data_dir.
+    """
+    attempt = guard(home, "s1")
+    cfg, _created = ensure_config_dir(base_env, home_dir, repo_root)
+    result, version = spike_preflight(search_path, cfg, base_env)
+    if result.state != pc_preflight.OK:
+        return result.exit_code, [result.line()]
+    claude = pc_preflight.find_claude(search_path)
+    if claude is None:
+        return pc_exitcodes.PREFLIGHT_BLOCKED, ["claude not found on PATH"]
+    spec = CALLS["s1"]
+    session_id = str(uuid.uuid4())
+    run_root = new_run_root(home, "s1", attempt)
+    paths = materialize(repo_root, run_root, session_id, home, audit_hook=True)
+    tools = pc_flags.build_allowed_tools(str(paths["wrapper"]), pc_flags.MODEL_FACING_WRAPPER_VERBS)
+    argv = pc_flags.build_argv(
+        claude, session_id, str(paths["settings"]), tools, spec.turns, spec.cap, include_hook_events=True
+    )
+    env = pc_flags.build_env(base_env, cfg, str(paths["ckpt"]))
+    append_spend(home, "s1", attempt, None, "launched", version)
+    outcome_call = run_claude(argv, env, str(paths["project"]), S1_PROMPT, CALL_TIMEOUT_SECONDS, str(paths["raw"]), "s1")
+    events, subtype = _reconcile(home, "s1", attempt, version, outcome_call.stdout)
+    lines = ["call s1 attempt %d finished: %s" % (attempt, subtype)]
+    if events is None or outcome_call.timed_out or subtype != "success":
+        lines.append(
+            "infrastructure failure (timeout, no result or malformed stream); one retry is allowed by the guard"
+            if attempt < MAX_ATTEMPTS
+            else "infrastructure failure and no retry is left"
+        )
+        return pc_exitcodes.PREFLIGHT_FAIL, lines
+    outcome = evaluate_s1(
+        events,
+        _read_hooklog(paths["hooklog"]),
+        local_user_names(home_dir) if home_dir else frozenset(),
+        str(paths["project"]),
+        str(paths["run_root"]),
+        cfg,
+    )
+    lines.extend(describe_s1(outcome))
+    if outcome.status != "pass":
+        return pc_exitcodes.PREFLIGHT_FAIL, lines
+    manifest = build_manifest(_plain_init_event(outcome_call.stdout), outcome.assertions)
+    sanitizer = pc_sanitize.Sanitizer.from_machine(repo_root, _caller_map(paths))
+    text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    sanitize_to_data(text.encode("utf-8"), os.path.join(data_dir, "s1-init-manifest.json"), sanitizer)
+    lines.append("wrote the sanitised init manifest to the data folder")
+    return pc_exitcodes.OK, lines
 
 
 # ---------------------------------------------------------------------------------------------
@@ -853,8 +1354,14 @@ def main(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] 
             return _cmd_probes(home)
         call = _COMMAND_CALL[args.command]
         if args.run:
+            if call == "s1":
+                data_dir = os.path.join(_REPO_ROOT, "tests", "harness", "data")
+                code, lines = run_s1(home, source, _REPO_ROOT, data_dir, search_path, home_dir)
+                for line in lines:
+                    _write(sys.stdout, line + "\n")
+                return code
             guard(home, call)
-            _write(sys.stderr, "paid path is enabled in task 3\n")
+            _write(sys.stderr, "paid path is enabled in task 4\n")
             return pc_exitcodes.USAGE
         for line in describe_call(call, home, getattr(args, "from_run", None)):
             _write(sys.stdout, line + "\n")
