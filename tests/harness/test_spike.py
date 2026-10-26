@@ -514,13 +514,6 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
 
-    def test_the_calls_not_yet_enabled_stop_at_the_paid_boundary_without_a_process(self) -> None:
-        for name in ("s2a", "s2b", "verbose-probe"):
-            code, out, err = run_cli([name, "--run"], self.env)
-            self.assertEqual(code, 2, name)
-            self.assertIn("paid path is enabled in task 4", err)
-        self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
-
     def test_run_is_refused_with_exit_18_when_the_guard_says_so(self) -> None:
         m = spike()
         home = os.path.join(scratch(), "h")
@@ -1048,6 +1041,18 @@ settings = json.load(open(args[args.index("--settings") + 1]))
 sid = args[args.index("--resume") + 1] if "--resume" in args else args[args.index("--session-id") + 1]
 cwd = os.getcwd()
 config = os.environ.get("CLAUDE_CONFIG_DIR", "")
+if cfg.get("verbose_refuse") and "--verbose" not in args:
+    sys.stderr.write("Error: stream-json requires --verbose\\n")
+    sys.exit(1)
+subs = {"$SID": sid, "$CWD": cwd, "$RUN": os.path.dirname(cwd),
+        "$WRAPPER": os.path.join(os.path.dirname(cwd), "wrapper", "checkpoint")}
+if cfg.get("events"):
+    for event in cfg["events"]:
+        line = json.dumps(event)
+        for key in subs:
+            line = line.replace(key, subs[key])
+        print(line)
+    sys.exit(0)
 hooks = settings.get("hooks", {}).get("InstructionsLoaded")
 if hooks and cfg.get("hook_payloads"):
     command = hooks[0]["hooks"][0]["command"]
@@ -1433,6 +1438,371 @@ class VolatileScrubTests(unittest.TestCase):
         text = read_text(dest)
         self.assertIn("<tmp>/cc-socks/<pid>.sock", text)
         self.assertNotIn("51276", text)
+
+
+
+# ---------------------------------------------------------------------------------------------
+# Task 4: spike S2 (probe commands, prompts, the paid S2a, S2b and verbose paths through the fake)
+# ---------------------------------------------------------------------------------------------
+
+PROBE_KEYS = (
+    "wrapper-status",
+    "git-status",
+    "pwd",
+    "pwd-and-status",
+    "pwd-and-echo",
+    "variable-expansion",
+    "wrapper-bind",
+)
+EXPECTED = ("allowed", "allowed", "allowed", "allowed", "denied", "denied", "denied")
+BIND_SESSION = "aaaaaaaa-0000-4000-8000-000000000001"
+
+
+def s2_init(**over) -> dict:
+    base = {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "$SID",
+        "claude_code_version": "2.1.310",
+        "cwd": "$CWD",
+        "tools": ["Bash"],
+        "mcp_servers": [],
+        "model": "claude-sonnet-5-5",
+        "permissionMode": "default",
+        "slash_commands": [],
+        "skills": ["preclear"],
+        "plugins": [],
+        "agents": [],
+        "apiKeySource": "none",
+        "memory_paths": {"auto": "$RUN/auto-memory/"},
+    }
+    base.update(over)
+    return base
+
+
+def s2_result(denials=None, cost=0.2, session="$SID", turns=9) -> dict:
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "num_turns": turns,
+        "session_id": session,
+        "total_cost_usd": cost,
+        "permission_denials": denials or [],
+        "terminal_reason": "completed",
+    }
+
+
+def s2a_events(deny=None, skip=(), cost=0.2, signal="both"):
+    m = spike()
+    denied_keys = [probe.key for probe in m.PROBE_COMMANDS if probe.expected == "denied"] if deny is None else deny
+    events = [s2_init()]
+    denials = []
+    for index, probe in enumerate(m.PROBE_COMMANDS):
+        if probe.key in skip:
+            continue
+        tid = "toolu_%02d" % index
+        command = probe.template.replace("{wrapper}", "$WRAPPER").replace("{run_root}", "$RUN")
+        events.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": command}}]}})
+        denied = probe.key in denied_keys
+        events.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tid, "is_error": denied, "content": "x"}]}})
+        if denied and signal in ("both", "event"):
+            events.append({"type": "system", "subtype": "permission_denied", "tool_use_id": tid})
+        if denied and signal in ("both", "result"):
+            denials.append({"tool_use_id": tid, "tool_name": "Bash", "tool_input": {"command": command}})
+    events.append(s2_result(denials, cost))
+    return events
+
+
+class ProbeConstantsTests(unittest.TestCase):
+    def test_seven_commands_in_the_declared_order_with_their_expectations(self) -> None:
+        m = spike()
+        self.assertEqual([probe.key for probe in m.PROBE_COMMANDS], list(PROBE_KEYS))
+        self.assertEqual([probe.expected for probe in m.PROBE_COMMANDS], list(EXPECTED))
+        by_key = dict((probe.key, probe.template) for probe in m.PROBE_COMMANDS)
+        self.assertEqual(by_key["wrapper-status"], "{wrapper} status")
+        self.assertEqual(
+            by_key["git-status"],
+            "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none",
+        )
+        self.assertEqual(by_key["pwd"], "pwd -P")
+        self.assertEqual(by_key["pwd-and-status"], "pwd -P && {wrapper} status")
+        self.assertEqual(by_key["pwd-and-echo"], "pwd -P && echo done")
+        self.assertEqual(by_key["variable-expansion"], 'wc -c "$PWD/CLAUDE.md"')
+        self.assertTrue(by_key["wrapper-bind"].startswith("{wrapper} bind --ledger {run_root}/"))
+        self.assertIn("--session " + BIND_SESSION, by_key["wrapper-bind"])
+
+    def test_probe_commands_fills_the_placeholders_and_leaves_the_variable_form_alone(self) -> None:
+        m = spike()
+        filled = m.probe_commands("/w/checkpoint", "/r")
+        self.assertEqual(len(filled), 7)
+        self.assertEqual(filled[0][1], "/w/checkpoint status")
+        self.assertEqual(filled[5][1], 'wc -c "$PWD/CLAUDE.md"')
+        self.assertTrue(filled[6][1].startswith("/w/checkpoint bind --ledger /r/"))
+        for probe, command in filled:
+            self.assertNotIn("{", command)
+
+    def test_the_prompts_are_declared_and_the_s2a_prompt_lists_every_command_verbatim(self) -> None:
+        m = spike()
+        self.assertEqual(m.PROMPTS["s1"], "Reply with exactly the one word: ready.")
+        self.assertEqual(m.PROMPTS["s2b"], "Reply with exactly the one word: resumed.")
+        self.assertEqual(m.PROMPTS["verbose"], "x")
+        commands = m.probe_commands("/w/checkpoint", "/r")
+        text = m.s2a_prompt(commands)
+        for _probe, command in commands:
+            self.assertIn(command, text)
+        for phrase in ("one per Bash tool call", "in order", "without combining", "retrying", "done"):
+            self.assertIn(phrase, text)
+
+    def test_the_budget_of_every_declared_call_is_unchanged(self) -> None:
+        m = spike()
+        self.assertEqual(m.CALLS["s2a"].turns, 12)
+        self.assertEqual(m.CALLS["verbose"].cap, Decimal("0.05"))
+
+
+class ProbeRowsTests(unittest.TestCase):
+    def rows(self, events):
+        import pc_stream
+
+        m = spike()
+        commands = m.probe_commands("/w/checkpoint", "/r")
+        filled = []
+        for event in events:
+            line = json.dumps(event).replace("$WRAPPER", "/w/checkpoint").replace("$RUN", "/r")
+            filled.append(json.loads(line))
+        parsed = pc_stream.parse_stream(("\n".join(json.dumps(e) for e in filled) + "\n").encode("utf-8"))
+        return m.probe_rows(parsed, commands)
+
+    def test_each_command_is_paired_with_id_error_and_both_denial_signals(self) -> None:
+        rows = self.rows(s2a_events())
+        self.assertEqual([row["key"] for row in rows], list(PROBE_KEYS))
+        self.assertEqual([row["observed"] for row in rows], ["allowed"] * 4 + ["denied"] * 3)
+        for row in rows[:4]:
+            self.assertIs(row["is_error"], False)
+            self.assertIs(row["permission_denied_event"], False)
+            self.assertIs(row["permission_denials_entry"], False)
+        for row in rows[4:]:
+            self.assertIs(row["is_error"], True)
+            self.assertIs(row["permission_denied_event"], True)
+            self.assertIs(row["permission_denials_entry"], True)
+        self.assertEqual(rows[0]["tool_use_id"], "toolu_00")
+
+    def test_an_unmatched_command_is_reported_missing(self) -> None:
+        rows = self.rows(s2a_events(skip=("pwd",)))
+        by_key = dict((row["key"], row) for row in rows)
+        self.assertEqual(by_key["pwd"]["status"], "missing")
+        self.assertIsNone(by_key["pwd"]["observed"])
+        self.assertEqual(by_key["wrapper-status"]["status"], "observed")
+
+    def test_one_denial_signal_alone_still_counts_as_denied_and_is_flagged_per_signal(self) -> None:
+        rows = self.rows(s2a_events(signal="event"))
+        row = dict((r["key"], r) for r in rows)["wrapper-bind"]
+        self.assertEqual(row["observed"], "denied")
+        self.assertIs(row["permission_denied_event"], True)
+        self.assertIs(row["permission_denials_entry"], False)
+
+    def test_a_reply_with_the_word_denied_is_not_a_denial(self) -> None:
+        events = s2a_events(deny=[])
+        events[2]["message"]["content"][0]["content"] = "denied denied denied"
+        rows = self.rows(events)
+        self.assertEqual(rows[0]["observed"], "allowed")
+
+
+class SessionFactsTests(unittest.TestCase):
+    def test_init_and_result_session_ids_are_compared_with_the_requested_id(self) -> None:
+        import pc_stream
+
+        m = spike()
+        events = pc_stream.parse_stream(
+            ("\n".join(json.dumps(e) for e in [s2_init(session_id=SESSION), s2_result(session=SESSION)]) + "\n").encode("utf-8")
+        )
+        facts = m.session_facts(events, SESSION)
+        self.assertEqual(facts, {"init_matches": True, "result_matches": True})
+        other = m.session_facts(events, "22222222-2222-4222-8222-222222222222")
+        self.assertEqual(other, {"init_matches": False, "result_matches": False})
+
+
+class PaidS2Tests(unittest.TestCase):
+    def rig(self, events=None) -> "PaidRig":
+        rig = PaidRig(hooks="none")
+        rig.config["events"] = events if events is not None else s2a_events()
+        rig.write_config()
+        return rig
+
+    def run_a(self, rig):
+        return spike().run_s2a(
+            rig.home, rig.env, rig.repo, rig.data, rig.env["PATH"].split(os.pathsep), rig.user_home
+        )
+
+    def run_b(self, rig, name):
+        return spike().run_s2b(
+            rig.home, rig.env, rig.repo, rig.data, rig.env["PATH"].split(os.pathsep), rig.user_home, name
+        )
+
+    def run_v(self, rig):
+        return spike().run_verbose(
+            rig.home, rig.env, rig.repo, rig.data, rig.env["PATH"].split(os.pathsep), rig.user_home
+        )
+
+    def test_s2a_runs_the_matrix_flag_set_and_writes_the_sanitised_fixture_and_labels(self) -> None:
+        rig = self.rig()
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, 0, "\n".join(lines))
+        calls = rig.calls()
+        self.assertEqual(len(calls), 1)
+        argv = calls[0]["args"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "1.00")
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "12")
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-sonnet-5-5")
+        self.assertNotIn("--include-hook-events", argv)
+        self.assertNotIn("--resume", argv)
+        self.assertIn("--session-id", argv)
+        tools = argv[argv.index("--allowedTools") + 1]
+        self.assertIn("checkpoint status:*", tools)
+        self.assertNotIn("bind", tools)
+        for forbidden in ("--bare", "--dangerously-skip-permissions"):
+            self.assertNotIn(forbidden, argv)
+        self.assertIn("done", calls[0]["prompt"])
+        self.assertIn("pwd -P && echo done", calls[0]["prompt"])
+        runs_dir = os.path.realpath(rig.runs)
+        name = os.listdir(runs_dir)[0]
+        raw = os.path.join(runs_dir, name, "raw")
+        for stem in ("s2a.stdout", "s2a.stderr", "session-id"):
+            self.assertTrue(os.path.isfile(os.path.join(raw, stem)), stem)
+        self.assertEqual(read_text(os.path.join(raw, "session-id")).strip(), argv[argv.index("--session-id") + 1])
+        self.assertFalse(os.path.exists(os.path.join(raw, "hooklog.jsonl")))
+        stream_path = os.path.join(rig.data, "s2-stream.jsonl")
+        labels_path = os.path.join(rig.data, "s2-probe-labels.json")
+        import pc_stream
+
+        events = pc_stream.parse_stream(read_bytes(stream_path))
+        self.assertEqual(len(pc_stream.init_manifest(events)), 14)
+        text = read_text(stream_path)
+        self.assertIn("<run>/project", text)
+        self.assertIn("<helper>", text)
+        self.assertNotIn(rig.base, text)
+        labels = json.loads(read_text(labels_path))
+        self.assertEqual([row["key"] for row in labels["probes"]], list(PROBE_KEYS))
+        self.assertEqual([row["expected"] for row in labels["probes"]], list(EXPECTED))
+        self.assertEqual([row["observed"] for row in labels["probes"]], ["allowed"] * 4 + ["denied"] * 3)
+        self.assertIn("<helper> bind", labels["probes"][6]["command"])
+        self.assertNotIn(rig.base, read_text(labels_path))
+        self.assertEqual(labels["claude_code_version"], "2.1.310")
+        ledger = [json.loads(line) for line in read_text(os.path.join(os.path.realpath(rig.home), "spike-spend.jsonl")).splitlines()]
+        self.assertEqual([(r["call"], r["total_cost_usd"]) for r in ledger], [("s2a", None), ("s2a", "0.2")])
+        printed = "\n".join(lines)
+        self.assertIn("probe wrapper-bind: expected denied, observed denied", printed)
+        self.assertNotIn(rig.base, printed)
+
+    def test_a_bind_that_the_binary_allowed_stops_with_exit_11_and_writes_nothing(self) -> None:
+        rig = self.rig(s2a_events(deny=["pwd-and-echo", "variable-expansion"]))
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("STOP", "\n".join(lines))
+        self.assertEqual(os.listdir(rig.data), [])
+
+    def test_a_probe_the_model_never_ran_is_a_retry_case_and_writes_nothing(self) -> None:
+        rig = self.rig(s2a_events(skip=("pwd",)))
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("retry", "\n".join(lines))
+        self.assertIn("probe pwd: missing", "\n".join(lines))
+        self.assertEqual(os.listdir(rig.data), [])
+
+    def test_a_disagreement_with_the_matcher_model_is_printed_and_does_not_stop(self) -> None:
+        rig = self.rig(s2a_events(deny=["pwd-and-echo", "variable-expansion", "wrapper-bind", "pwd"]))
+        code, lines = self.run_a(rig)
+        self.assertEqual(code, 0, "\n".join(lines))
+        self.assertIn("probe pwd: expected allowed, observed denied", "\n".join(lines))
+        self.assertIn("DISAGREES", "\n".join(lines))
+
+    def test_s2b_resumes_the_s2a_session_in_the_same_run_root_and_writes_its_fixture(self) -> None:
+        rig = self.rig()
+        self.assertEqual(self.run_a(rig)[0], 0)
+        name = os.listdir(os.path.realpath(rig.runs))[0]
+        rig.config["events"] = [s2_init(), {"type": "assistant", "message": {"content": [{"type": "text", "text": "resumed"}]}}, s2_result(turns=1, cost=0.01)]
+        rig.write_config()
+        code, lines = self.run_b(rig, name)
+        self.assertEqual(code, 0, "\n".join(lines))
+        calls = rig.calls()
+        first, second = calls[0]["args"], calls[1]["args"]
+        self.assertIn("--resume", second)
+        self.assertNotIn("--session-id", second)
+        self.assertEqual(second[second.index("--resume") + 1], first[first.index("--session-id") + 1])
+        self.assertEqual(second[second.index("--max-budget-usd") + 1], "0.50")
+        self.assertEqual(second[second.index("--max-turns") + 1], "2")
+        self.assertEqual(calls[1]["prompt"], "Reply with exactly the one word: resumed.")
+        self.assertEqual(calls[0]["cwd"], calls[1]["cwd"])
+        self.assertEqual(len(os.listdir(os.path.realpath(rig.runs))), 1)
+        raw = os.path.join(os.path.realpath(rig.runs), name, "raw")
+        for stem in ("s2b.stdout", "s2b.stderr"):
+            self.assertTrue(os.path.isfile(os.path.join(raw, stem)), stem)
+        self.assertTrue(os.path.isfile(os.path.join(rig.data, "s2b-stream.jsonl")))
+        printed = "\n".join(lines)
+        self.assertIn("init.session_id matches the requested id: True", printed)
+        self.assertIn("result.session_id matches the requested id: True", printed)
+
+    def test_s2b_refuses_a_missing_or_escaping_run_name(self) -> None:
+        m = spike()
+        rig = self.rig()
+        self.assertEqual(self.run_a(rig)[0], 0)
+        for bad in ("", "..", "a/b", "no-such-run", "/abs"):
+            with self.assertRaises(m.HomeRefused):
+                self.run_b(rig, bad)
+        self.assertEqual(len(rig.calls()), 1)
+
+    def test_s2b_refuses_a_second_write_over_its_own_fixture(self) -> None:
+        rig = self.rig()
+        self.assertEqual(self.run_a(rig)[0], 0)
+        name = os.listdir(os.path.realpath(rig.runs))[0]
+        rig.config["events"] = [s2_init(), s2_result(turns=1, cost=0.01)]
+        rig.write_config()
+        self.assertEqual(self.run_b(rig, name)[0], 0)
+        with self.assertRaises(FileExistsError):
+            self.run_b(rig, name)
+
+    def test_the_verbose_probe_leaves_out_verbose_records_the_exit_code_and_the_message(self) -> None:
+        rig = self.rig()
+        rig.config["verbose_refuse"] = True
+        rig.write_config()
+        code, lines = self.run_v(rig)
+        self.assertEqual(code, 0, "\n".join(lines))
+        self.assertNotIn("--verbose", rig.calls()[0]["args"])
+        printed = "\n".join(lines)
+        self.assertIn("verbose probe exit code: 1", printed)
+        self.assertIn("requires --verbose", printed)
+        self.assertIn("stderr", printed)
+
+    def test_the_verbose_probe_argv_has_the_caps_and_no_verbose_flag(self) -> None:
+        rig = self.rig()
+        code, lines = self.run_v(rig)
+        argv = rig.calls()[0]["args"]
+        self.assertNotIn("--verbose", argv)
+        self.assertEqual(argv[argv.index("--max-turns") + 1], "1")
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "0.05")
+        self.assertEqual(rig.calls()[0]["prompt"], "x")
+        self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
+
+    def test_every_paid_call_goes_through_the_guard(self) -> None:
+        m = spike()
+        rig = self.rig()
+        home = os.path.realpath(rig.home)
+        os.makedirs(home)
+        for call in ("s2a", "verbose"):
+            m.append_spend(home, call, 1, Decimal("0.01"), "success", "2.1.310")
+            m.append_spend(home, call, 2, Decimal("0.01"), "success", "2.1.310")
+        with self.assertRaises(m.BudgetRefused):
+            self.run_a(rig)
+        with self.assertRaises(m.BudgetRefused):
+            self.run_v(rig)
+        self.assertEqual(rig.calls(), [])
+
+    def test_the_cli_requires_from_run_for_s2b_and_enables_the_other_calls(self) -> None:
+        rig = self.rig()
+        code, out, err = run_cli(["s2b", "--run"], rig.env)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("--from-run", err)
+        self.assertEqual(rig.calls(), [])
 
 
 if __name__ == "__main__":
