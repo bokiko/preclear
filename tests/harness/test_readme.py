@@ -34,8 +34,9 @@ README = os.path.join(HARNESS_DIR, "README.md")
 STUB = os.path.join(HARNESS_DIR, "checkpoint_stub.py")
 GITIGNORE = os.path.join(HARNESS_DIR, ".gitignore")
 
-# The files the spike plan creates, listed in the README by these names (relative to the harness
-# folder). They may be absent until that plan has run; the spike fixture test asserts they exist.
+# The files the spike plan created, listed in the README by these names (relative to the harness
+# folder). All of them exist since the spikes ran; the spike fixture test asserts that they do, and
+# this tuple stays so a missing one is caught by name.
 PENDING_SPIKE_FILES = (
     "pc_spike.py",
     "pc_hooklog.py",

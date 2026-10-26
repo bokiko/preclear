@@ -397,12 +397,12 @@ class RenderSettingsTests(unittest.TestCase):
 
 
 class FlagTableTests(unittest.TestCase):
-    def test_rows_have_valid_status_and_unconfirmed_source(self) -> None:
+    def test_rows_have_valid_status_and_a_known_confirmation_source(self) -> None:
         names = [row.name for row in pc_flags.FLAG_TABLE]
         self.assertEqual(len(names), len(set(names)))
         for row in pc_flags.FLAG_TABLE:
             self.assertIn(row.status, ("PINNED", "ADDED", "NOT_PINNED"))
-            self.assertEqual(row.confirmed_by, "research")
+            self.assertIn(row.confirmed_by, ("research", "S1", "S2"))
             self.assertTrue(row.rationale)
 
     def test_pinned_values_match_the_constants(self) -> None:

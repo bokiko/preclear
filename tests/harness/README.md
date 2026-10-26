@@ -23,8 +23,8 @@ does the same without the PATH check.
   and the pinned `claude -p` contract.
 - The stub reproduces the recorded behaviour of the checkpoint helper wherever committed
   evidence exists (the replay suite), and says so on every call.
-- The allowlist model agrees with the committed traces. A real capture joins them after the
-  spikes have run (see Spike spend).
+- The allowlist model agrees with the committed traces and with the real capture of the spikes
+  (see Spike spend), except where the findings list a disagreement.
 - The harness folder needs only the standard library, no module shadows one, and both shell
   entry points avoid anything bash 3.2 lacks.
 - The tables in this guide equal the code: a test compares each one at every run.
@@ -114,32 +114,32 @@ not available, and otherwise with unittest's own status.
 
 Every flag and environment variable the harness decides about, and where each one came from. The
 Confirmed by column says what observed the row: `research` means documentation and earlier probes
-only, not a run of this harness. The table is generated from `pc_flags.py` and a test keeps it
+only, not a run of this harness; `S1` and `S2` mean the isolation spike or the stream spike ran it. The table is generated from `pc_flags.py` and a test keeps it
 equal to that code.
 
 <!-- flag-table:begin -->
 | Flag or env | Pinned value | Status | Why | Source | Confirmed by |
 |---|---|---|---|---|---|
-| `prompt` | stdin | PINNED | the prompt is piped; --allowedTools is variadic, so a positional prompt could be read as a tool name | prior harness; cli-reference | research |
-| `-p` | always | PINNED | print mode; judge success from the result event, not the exit status | headless | research |
-| `--output-format` | stream-json | PINNED | one JSON event per line | headless | research |
-| `--verbose` | always | PINNED | required with -p and stream-json | prior live probe | research |
-| `--setting-sources` | project,local | PINNED | leaving out user also stops claude.ai skill sync | cli-reference; skills | research |
-| `--settings` | absolute realpath of a regular file | PINNED | overrides same keys in settings files for the session | cli-reference | research |
-| `--session-id` | lowercase UUID, one per stage | PINNED | must be a valid UUID | cli-reference | research |
-| `--resume` | the stage's session id | PINNED | continues a stage's session | cli-reference | research |
-| `--permission-mode` | default | PINNED | asserted later against init.permissionMode | cli-reference; permission-modes | research |
-| `--allowedTools` | one comma-joined argument | PINNED | naming Glob or Grep restores both tools; one argument avoids variadic parsing | permissions | research |
-| `--model` | claude-sonnet-5-5 | PINNED | D-05: the full model id; aliases move | model-config | research |
-| `--max-turns` | small integer per call | PINNED | print mode only; ends with an error at the limit | cli-reference | research |
-| `--max-budget-usd` | exact two-decimal value, at most 5.00 | PINNED | client-side estimate that may overshoot slightly; per-call caps leave headroom | cli-reference | research |
-| `--strict-mcp-config` | no --mcp-config given | ADDED | only servers from --mcp-config are used; zero servers is asserted from init.mcp_servers | cli-reference | research |
-| `--effort` | high | ADDED | pinning blocks drift of the default; init.effort is recorded when present | model-config | research |
-| `--include-hook-events` | spike audit only | ADDED | surfaces hook events for the isolation audit | agent-sdk | research |
+| `prompt` | stdin | PINNED | the prompt is piped; --allowedTools is variadic, so a positional prompt could be read as a tool name | prior harness; cli-reference | S1 |
+| `-p` | always | PINNED | print mode; judge success from the result event, not the exit status | headless | S1 |
+| `--output-format` | stream-json | PINNED | one JSON event per line | headless | S1 |
+| `--verbose` | always | PINNED | required with -p and stream-json | prior live probe | S2 |
+| `--setting-sources` | project,local | PINNED | leaving out user also stops claude.ai skill sync | cli-reference; skills | S1 |
+| `--settings` | absolute realpath of a regular file | PINNED | overrides same keys in settings files for the session | cli-reference | S1 |
+| `--session-id` | lowercase UUID, one per stage | PINNED | must be a valid UUID | cli-reference | S2 |
+| `--resume` | the stage's session id | PINNED | continues a stage's session | cli-reference | S2 |
+| `--permission-mode` | default | PINNED | asserted later against init.permissionMode | cli-reference; permission-modes | S1 |
+| `--allowedTools` | one comma-joined argument | PINNED | naming Glob or Grep restores both tools; one argument avoids variadic parsing | permissions | S2 |
+| `--model` | claude-sonnet-5-5 | PINNED | D-05: the full model id; aliases move | model-config | S1 |
+| `--max-turns` | small integer per call | PINNED | print mode only; accepted although 2.1.310 hides it from --help; the limit itself was not reached | cli-reference | S1 |
+| `--max-budget-usd` | exact two-decimal value, at most 5.00 | PINNED | client-side estimate that may overshoot slightly; per-call caps leave headroom | cli-reference | S1 |
+| `--strict-mcp-config` | no --mcp-config given | ADDED | only servers from --mcp-config are used; zero servers is asserted from init.mcp_servers | cli-reference | S1 |
+| `--effort` | high | ADDED | pinning blocks drift of the default; accepted, but 2.1.310 reports no effort in the init event | model-config | S1 |
+| `--include-hook-events` | spike audit only | ADDED | accepted, but 2.1.310 put no hook events in the stream; the audit reads the logger file instead | agent-sdk | S1 |
 | `DISABLE_AUTOUPDATER` | 1 | PINNED | the build under test must not change mid-run | env-vars | research |
-| `CLAUDE_CONFIG_DIR` | harness-owned directory | PINNED | credentials, settings, history and plugins live under it (D-02) | env-vars; authentication | research |
+| `CLAUDE_CONFIG_DIR` | harness-owned directory | PINNED | credentials, settings, history and plugins live under it (D-02) | env-vars; authentication | S1 |
 | `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` | 1 | ADDED | strips credential-shaped variables from the model's Bash subprocesses | env-vars | research |
-| `CKPT_HOME` | run-owned directory | PINNED | the stub keeps all state under it; the model's Bash inherits it | prior harness | research |
+| `CKPT_HOME` | run-owned directory | PINNED | the stub keeps all state under it; the model's Bash inherits it | prior harness | S2 |
 | `--bare` | not passed | NOT_PINNED | changes what the skill sees; not what the matrix measures | cli-reference | research |
 | `--safe-mode` | not passed | NOT_PINNED | restricts the run beyond the baseline | cli-reference | research |
 | `--restricted` | not passed | NOT_PINNED | restricts the run beyond the baseline | cli-reference | research |
@@ -156,8 +156,9 @@ equal to that code.
 | `--permission-prompts` | not passed | NOT_PINNED | with no host, prompts are denied either way; the flag only adds a message to the model | headless | research |
 <!-- flag-table:end -->
 
-Until the spikes have seeded the tested-version set, a real preflight reports a well-formed but
-untested Claude Code version as exit 13 (VERSION_UNTESTED), not as a pass.
+The tested-version set holds exactly the one Claude Code build the spikes ran against (the findings
+name it). A real preflight reports every other well-formed version as exit 13 (VERSION_UNTESTED),
+not as a pass, until spike S2 is rerun on that build and the set is updated.
 
 ## Isolation and the one-time login
 
@@ -179,7 +180,20 @@ CLAUDE_CONFIG_DIR=<home>/.preclear-harness/claude-config claude auth login
   keyed to that folder, and survives the delete. A recreated folder at the same path may or may not
   pick it up again, so do not delete the folder casually.
 
-<!-- anchor: the login step as it ran, and its result, is added here after the spikes -->
+How it ran: the login was done once by hand in the owner's own terminal. The first zero-token check
+on the new folder reported logged out (exit 12), and the check after the login reported logged in. The
+isolation spike then found that Claude Code loads the global `.claude/CLAUDE.md` and `.claude/rules`
+files of every ancestor folder of the working directory as Project instructions, so a run root below a
+home folder loads that user's own rules even with the harness config folder and `--setting-sources
+project,local` in place. Run roots therefore live in a separate runs root outside every home folder
+(a shared folder for all users by default; `PRECLEAR_RUNS_ROOT` overrides it). The driver refuses a
+runs root inside any local user's home folder, inside the repository, or below a folder that holds an
+instruction file or folder. The config folder and its login stay in the harness home, so moving the
+runs root needs no new login. Phase 3 and Phase 4 place their run roots the same way.
+
+Two of the isolation assertions are worded with bokiko's decision of 2026-10-26: plugins that Claude
+Code ships with itself (source ending `@builtin`) are allowed, and a skill name that the binary itself
+defines counts as a collision, not a leak. The findings carry the counts.
 
 
 ## Spike spend
@@ -188,7 +202,14 @@ The two paid spikes that confirm the isolation claim and the stream shape are re
 `tests/harness/data/spike-findings.md`, which carries the Total spend line. No figure is copied
 here, so there is one place to look and nothing to drift.
 
-<!-- anchor: further pointers to the spike findings are added here after the spikes -->
+Where to look after the spikes: `tests/harness/data/` holds the findings (the isolation claim and
+its evidence, the probe table, the stream facts, session handling, the flag confirmations and the
+per-call spend), the frozen init manifest of the isolation capture, the sanitized real streams and the
+observed truth per policy-probe command, under the names in the layout below.
+
+To rerun a spike on a new Claude Code build, start with the spend subcommand of `pc_spike.py` (its
+header gives the exact command line), then run the call with `--run`; without `--run` a call only
+prints its plan.
 
 
 ## Replacement tokens
@@ -206,8 +227,7 @@ bash proves the syntax travels, not the 3.2 floor. Windows is not covered.
 
 ## Layout
 
-Every file in this folder, once. `data/` is the only subfolder and holds non-code data. The files
-marked planned are created by the spike plan and are listed here by their final names.
+Every file in this folder, once. `data/` is the only subfolder and holds non-code data.
 
 - `.gitignore` - keeps bytecode and `__pycache__` out of history
 - `README.md` - this guide
@@ -226,8 +246,8 @@ marked planned are created by the spike plan and are listed here by their final 
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
 - `pc_seeds.py` - run-time assembly of leak-shaped test strings (test support)
-- `pc_spike.py` - planned: the spike driver
-- `pc_hooklog.py` - planned: the hook logger for the spikes
+- `pc_spike.py` - the spike driver: harness home, runs root, spend guard, S1 assertions, S2 probe
+- `pc_hooklog.py` - the hook logger for the spikes
 - `pc_stream.py` - strict stream-json parser and structured denial detection
 - `pc_testutil.py` - fake and tripwire claude, shared-directory layout, minimal environments (test support)
 - `replay-cases.json` - the mined helper calls the replay suite runs against the stub
@@ -248,19 +268,19 @@ marked planned are created by the spike plan and are listed here by their final 
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
 - `test_selftest_shim.py` - tests for the `selftest` shim with a tripwire claude
-- `test_spike.py` - planned: tests for the spike driver and hook logger
-- `test_spike_fixture.py` - planned: zero-token checks of the committed spike captures
+- `test_spike.py` - tests for the spike driver and hook logger
+- `test_spike_fixture.py` - zero-token checks of the committed spike captures
 - `test_stream.py` - tests for the stream parser
 - `test_stub_cli.py` - command-line tests for the stub
 - `test_stub_concurrency.py` - races, a contended lock and the timeout switch
 - `test_stub_replay.py` - zero-token replay of every mined helper call
 - `test_wrapper_conflict.py` - tests for the wrapper and its conflict injection
 - `data/branch-table.md` - the stub's branch table
-- `data/spike-findings.md` - planned: the spike findings, with the Total spend line
-- `data/s1-init-manifest.json` - planned: the init facts frozen from spike S1
-- `data/s2-stream.jsonl` - planned: the sanitized real stream from spike S2
-- `data/s2b-stream.jsonl` - planned: the sanitized resume stream from spike S2
-- `data/s2-probe-labels.json` - planned: the policy-probe labels for spike S2
+- `data/spike-findings.md` - the spike findings, with the Total spend line
+- `data/s1-init-manifest.json` - the init facts frozen from spike S1
+- `data/s2-stream.jsonl` - the sanitized real stream from spike S2
+- `data/s2b-stream.jsonl` - the sanitized resume stream from spike S2
+- `data/s2-probe-labels.json` - the policy-probe labels for spike S2
 
 ## Limits
 
