@@ -9,14 +9,17 @@ or a deny entry is never printed, logged or put in an error message. A file name
 matches is labelled "(file name)", the precedent set by .githooks/checks/denylist.sh.
 
 Every scanner failure fails closed. An exception inside a scan, an empty rule set, an
-unreadable deny file or unreadable input is ScannerError (exit 15), never a clean result. A
+unreadable or unlocatable deny list or unreadable input is ScannerError (exit 15), never a clean
+result. A
 NUL byte, undecodable bytes, a symlink, a special file, a file above MAX_FILE_BYTES and a run of
 name characters above MAX_RUN are refusals, never skips. Each file is read once into memory and
 scanned as one buffer, so a leak at byte 0, at the very end or across any chunk boundary is
 found, and promote writes the same bytes it scanned.
 
 Rules: the six identifier rules and two allowlists are copied byte for byte from .gitleaks.toml
-(test_leakgate reads the TOML and asserts they are identical). Two Python-only rules (home paths
+(test_leakgate reads the TOML and asserts they are identical). A home path ends at any character
+that is not a name character (a JSON escape, a bracket, a pipe and so on), the identifier rules
+are ASCII-only and the private host suffix is case-insensitive. Two Python-only rules (home paths
 of the superuser and Windows-style home paths) are an explicit named set: the commit hooks lack those
 two shapes, so the gate is stricter than the hooks there. The credential-shape list is a small
 documented subset: the default gitleaks secret rules cannot be mirrored in Python, and the
@@ -68,11 +71,15 @@ Entry = collections.namedtuple("Entry", "rel kind data mode")
 
 
 def make_rule(rule_id, pattern, secret_group=None):
-    """Compile one rule; an empty id or a pattern that does not compile is ScannerError."""
+    """Compile one rule; an empty id or a pattern that does not compile is ScannerError.
+
+    Every pattern is compiled with re.ASCII so that \\b and the classes behave as they do in the
+    commit hooks' engine: a non-ASCII letter next to a value is a boundary, never part of a name.
+    """
     if not rule_id:
         raise ScannerError(SCANNER_ERROR_TEXT)
     try:
-        regex = re.compile(pattern)
+        regex = re.compile(pattern, re.ASCII)
     except re.error:
         raise ScannerError(SCANNER_ERROR_TEXT) from None
     return Rule(rule_id, pattern, secret_group, regex)
@@ -81,7 +88,7 @@ def make_rule(rule_id, pattern, secret_group=None):
 # The six identifier rules, byte for byte as in .gitleaks.toml (test_leakgate reads the TOML and
 # asserts the ids, patterns and secretGroup are identical, so the two cannot drift silently).
 RULES = (
-    make_rule("home-path-unix", r'''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[/\s"'`:;,)\]]|$)'''),
+    make_rule("home-path-unix", r'''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[^A-Za-z0-9._-]|$)'''),
     make_rule("home-path-dash-slug", r'''-(?:Users|home)-[A-Za-z0-9._]{1,64}-'''),
     make_rule("mac-temp-root", r'''/(?:private/)?var/folders/[A-Za-z0-9_]{2}/'''),
     make_rule(
@@ -91,7 +98,7 @@ RULES = (
     ),
     make_rule(
         "internal-hostname",
-        r'''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)''',
+        r'''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?i:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)''',
     ),
     make_rule("email-address", r'''[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''),
 )
@@ -126,8 +133,8 @@ ALLOWLISTS = (
 # gate is stricter than the hooks there, never weaker. They are the explicit named set the parity
 # test allows.
 PYTHON_ONLY_RULES = (
-    make_rule("home-path-root", r'''(?<![A-Za-z0-9._-])/root(?:[/\s"'`:;,)\]]|$)'''),
-    make_rule("home-path-windows", r'''(?i)\b[a-z]:\\users\\[a-z0-9._-]{1,64}(?:[\\/\s"'`:;,)\]]|$)'''),
+    make_rule("home-path-root", r'''(?<![A-Za-z0-9._-])[/]root(?![A-Za-z0-9_-]|\.[A-Za-z0-9_-])'''),
+    make_rule("home-path-windows", r'''(?i)\b[a-z]:\\users\\[a-z0-9._-]{1,64}(?:[^a-z0-9._-]|$)'''),
 )
 
 # Credential shapes: a small documented subset. The default gitleaks secret rules cannot be
@@ -457,11 +464,34 @@ def host_entries(hostnames=None):
     return sorted(kept)
 
 
+DENY_LOCATE_TEXT = "could not locate the local deny list"
+
+
+def _inside_a_repository(start):
+    """True when START or any ancestor folder holds an entry named .git (a worktree's file counts)."""
+    current = os.path.abspath(os.fspath(start))
+    while True:
+        if os.path.lexists(os.path.join(current, ".git")):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
 def _git_deny_path(repo_root):
+    """Where the local deny list lives, or None for a tree that has no repository at all.
+
+    Every other failure to establish the location raises ScannerError: a root that is not a
+    folder, git missing or timing out, a failing git while a .git entry exists, an empty answer.
+    """
+    root = os.fspath(repo_root)
+    if not os.path.isdir(root):
+        raise ScannerError(DENY_LOCATE_TEXT)
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--git-path", "info/preclear-deny.txt"],
-            cwd=os.fspath(repo_root),
+            cwd=root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -470,14 +500,16 @@ def _git_deny_path(repo_root):
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
+        raise ScannerError(DENY_LOCATE_TEXT) from None
     if result.returncode != 0:
-        return None
+        if not _inside_a_repository(root):
+            return None
+        raise ScannerError(DENY_LOCATE_TEXT)
     path = result.stdout.decode("utf-8", "replace").strip()
     if path == "":
-        return None
+        raise ScannerError(DENY_LOCATE_TEXT)
     if not os.path.isabs(path):
-        path = os.path.join(os.fspath(repo_root), path)
+        path = os.path.join(root, path)
     return path
 
 
@@ -485,10 +517,11 @@ def local_file_entries(repo_root, deny_file=None):
     """Read the local deny file and return its usable entries (sorted, unique).
 
     DENY_FILE overrides the default location .git/info/preclear-deny.txt (resolved with
-    git rev-parse --git-path). No git or no file means no entries. Comment and blank lines are
-    skipped, carriage returns are stripped and entries under four characters are dropped. A file
-    that exists but cannot be read or decoded raises ScannerError with a fixed message. The
-    entries are private: they are never printed, logged or put in a message.
+    git rev-parse --git-path, no git call when DENY_FILE is given). No repository means no
+    entries; every other failure to locate the list is ScannerError, and so is a file that exists
+    but cannot be read or decoded. A leading byte-order mark is ignored, each line is stripped,
+    blank and comment lines (also indented ones) are skipped and entries under four characters
+    are dropped. The entries are private: they are never printed, logged or put in a message.
     """
     path = deny_file if deny_file is not None else _git_deny_path(repo_root)
     if path is None or not os.path.lexists(path):
@@ -496,13 +529,13 @@ def local_file_entries(repo_root, deny_file=None):
     try:
         with open(path, "rb") as handle:
             raw = handle.read()
-        text = raw.decode("utf-8")
+        text = raw.decode("utf-8-sig")
     except (OSError, UnicodeDecodeError):
         raise ScannerError("could not read the local deny list") from None
     entries = set()
     for line in text.split("\n"):
-        line = line.rstrip("\r")
-        if line.strip() == "" or line.lstrip().startswith("#"):
+        line = line.strip()
+        if line == "" or line.startswith("#"):
             continue
         if len(line) >= LOCAL_FLOOR:
             entries.add(line)
