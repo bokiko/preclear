@@ -25,7 +25,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **HARN-01**: A stranger runs one command under `tests/harness/` with `--list`, `--row <id>`, `--layout <name>`, `--all` and `--dry-run`; dry run prints the session count and spends no tokens
 - [ ] **HARN-02**: Preflight distinguishes SKIP, FAIL and BLOCKED with distinct exit codes, and a skipped row can never be read as a pass
 - [x] **HARN-03**: Every run root is created exclusively and never overwritten or deleted by the harness; a collision is an error
-- [ ] **HARN-04**: Every `claude -p` invocation pins its behaviour explicitly (`--output-format stream-json --verbose`, `--setting-sources project,local`, `--settings` with an absolute realpath `autoMemoryDirectory`, `--session-id`, `--permission-mode default`, `--allowedTools` as a literal list, one full model id, `--max-turns`, `--max-budget-usd`, `DISABLE_AUTOUPDATER=1`) and a version gate refuses an untested Claude Code version
+- [x] **HARN-04**: Every `claude -p` invocation pins its behaviour explicitly (`--output-format stream-json --verbose`, `--setting-sources project,local`, `--settings` with an absolute realpath `autoMemoryDirectory`, `--session-id`, `--permission-mode default`, `--allowedTools` as a literal list, one full model id, `--max-turns`, `--max-budget-usd`, `DISABLE_AUTOUPDATER=1`) and a version gate refuses an untested Claude Code version
 - [ ] **HARN-05**: Each run records provenance: Claude Code version, `init.model`, skill and adapter digests, harness version, isolation mode, tool set, allowlist, and per-stage usage and `total_cost_usd`
 - [x] **HARN-06**: The allowlist is checked against the skill's exact commands by a self-test, and any unexpected `permission_denied` event or `result.permission_denials` entry fails the row; refusals are never detected by substring on the reply
 - [ ] **HARN-07**: The `system/init` manifest (skills, permission mode, memory paths) is asserted every run, and the isolation mode in force (default or strict) is recorded per row after spike S1 decides which the matrix claims
@@ -110,7 +110,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-01 | Phase 3 | Pending |
 | HARN-02 | Phase 3 | Pending |
 | HARN-03 | Phase 2 | Complete |
-| HARN-04 | Phase 2 | Pending |
+| HARN-04 | Phase 2 | Complete |
 | HARN-05 | Phase 3 | Pending |
 | HARN-06 | Phase 2 | Complete |
 | HARN-07 | Phase 3 | Pending |
