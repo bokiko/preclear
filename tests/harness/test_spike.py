@@ -1421,5 +1421,19 @@ class RunsRootTests(unittest.TestCase):
             m.materialize(repo, other, str(uuid.uuid4()), home)  # the default runs folder is not this one
 
 
+class VolatileScrubTests(unittest.TestCase):
+    def test_the_process_bound_socket_path_is_replaced_before_the_gate_looks(self) -> None:
+        m = spike()
+        base = scratch()
+        import pc_sanitize
+
+        san = pc_sanitize.Sanitizer.from_machine(base, {}, None, pc_sanitize.Sources([], "", [], [], ""))
+        dest = os.path.join(base, "out.json")
+        m.sanitize_to_data(b'{"messaging_socket_path": "/tmp/cc-socks/51276.sock"}\n', dest, san)
+        text = read_text(dest)
+        self.assertIn("<tmp>/cc-socks/<pid>.sock", text)
+        self.assertNotIn("51276", text)
+
+
 if __name__ == "__main__":
     unittest.main()

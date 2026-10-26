@@ -1213,6 +1213,14 @@ def describe_s1(outcome: S1Outcome) -> List[str]:
 # ---------------------------------------------------------------------------------------------
 
 
+_SOCKET_PATH = re.compile(rb"/tmp/cc-socks/[0-9]+\.sock")
+
+
+def scrub_volatile(data: bytes) -> bytes:
+    """Replace the init event's process-bound socket path (a temp path with a pid) by a token."""
+    return _SOCKET_PATH.sub(b"<tmp>/cc-socks/<pid>.sock", data)
+
+
 def sanitize_to_data(data: bytes, dest: str, sanitizer: Any) -> None:
     """Sanitise DATA, require zero gate findings and create DEST exclusively.
 
@@ -1223,7 +1231,7 @@ def sanitize_to_data(data: bytes, dest: str, sanitizer: Any) -> None:
     if os.path.lexists(dest):
         raise FileExistsError("the data file already exists")
     try:
-        clean = sanitizer.sanitize_bytes(data)
+        clean = sanitizer.sanitize_bytes(scrub_volatile(data))
     except pc_sanitize.SanitizerError:
         raise LeakRefused("the sanitiser could not process the capture; nothing was written") from None
     try:
