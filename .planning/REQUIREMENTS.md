@@ -55,7 +55,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **EVID-04**: Filed rows follow the committed per-row file set (README, tools, digests, short and full traces, snapshots, measurements) plus `mechanical-checks.md`, `usage.txt`, `model-id.txt`, `isolation-mode.txt`, `harness-version.txt`, and are written with exclusive creation into a new dated folder
 - [ ] **EVID-05**: The harness never prints a verdict; each row ends with `Reviewer verdict: PENDING` and a reviewer checklist of mechanical facts
 - [ ] **EVID-06**: A read-only structural comparer reports per-row differences between a rerun and `tests/evidence/publication-2026-10-20/` without editing either
-- [ ] **EVID-07**: A model-free `unittest` self-test suite (stub conformance, sanitizer, leak scan, collision refusal, NUL manifest, preflight paths, allowlist check, measurer) passes with zero tokens and is the first thing a stranger runs
+- [x] **EVID-07**: A model-free `unittest` self-test suite (stub conformance, sanitizer, leak scan, collision refusal, NUL manifest, preflight paths, allowlist check, measurer) passes with zero tokens and is the first thing a stranger runs
 
 ### Rerun
 
@@ -134,7 +134,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVID-04 | Phase 3 | Pending |
 | EVID-05 | Phase 3 | Pending |
 | EVID-06 | Phase 3 | Pending |
-| EVID-07 | Phase 2 | Pending |
+| EVID-07 | Phase 2 | Complete |
 | RERUN-01 | Phase 4 | Pending |
 | RERUN-02 | Phase 4 | Pending |
 | RERUN-03 | Phase 4 | Pending |

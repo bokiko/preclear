@@ -70,7 +70,7 @@ Plans:
   4. The spike findings (isolation mode, flag semantics, `init` manifest, session-id handling) are committed with a real captured stream-json fixture. One committed flag table pins every `claude -p` behaviour. The version gate refuses a simulated untested version with a distinct exit code. The allowlist self-test matches the skill's exact commands taken from committed traces. A synthetic `permission_denied` event or `permission_denials` entry fails a row, and a reply that merely contains the word "denied" does not. (HARN-04, HARN-06)
   5. Run-root creation is exclusive: a second creation of the same path is an error, and nothing in the harness deletes or overwrites a run root. The sanitizer builds its deny-list at run time from the live machine, and a seeded leak makes both the leak gate and `promote` refuse to copy into `tests/evidence/`. A scan of the harness imports finds only the standard library, and the bash entry shims run under bash 3.2. (HARN-03, HARN-14, EVID-02, EVID-03)
 
-**Plans:** 7/8 plans executed
+**Plans:** 8/8 plans executed
 
 Plans:
 **Wave 1**
@@ -87,7 +87,7 @@ Plans:
 - [x] 02-07-PLAN.md — Tracer: the real shim runs every module's tests under bash 3.2 with a tripwire `claude`, alone and sharing a directory with python3 and git; standard-library, shadowing, bash and exit-code agreement tests; stranger README with tables tied to the code; the model-free phase gate (HARN-14, EVID-07)
 
 **Wave 4** *(blocked on Wave 3 completion; autonomous: false)*
-- [ ] 02-08-PLAN.md — Spikes S1 and S2: driver and zero-token dry run with a login-probe record, one-time manual login by bokiko (blocking), measured isolation capture that stops and asks bokiko if the instruction audit cannot be asserted, real stream fixture, seven-command policy probe, resume turn, tested-version seed, committed findings, README flag-table regeneration and gate rerun; total spend at most 5 USD (HARN-04, HARN-06)
+- [x] 02-08-PLAN.md — Spikes S1 and S2: driver and zero-token dry run with a login-probe record, one-time manual login by bokiko (blocking), measured isolation capture that stops and asks bokiko if the instruction audit cannot be asserted, real stream fixture, seven-command policy probe, resume turn, tested-version seed, committed findings, README flag-table regeneration and gate rerun; total spend at most 5 USD (HARN-04, HARN-06)
 
 *Plan count note: the earlier three-plan outline (02-01 spikes and flag table, 02-02 stub, 02-03 foundation and wiring) could not fit the 50 percent context target, the 3-task limit and the checkpoint-isolation rule, so each outline plan was split by concern. A plan check then reshaped the seven-plan split: the stub's completion became its own plan (02-06) to keep 02-02 inside the context budget, and the README and model-free gate (02-07) now come before the login-gated spikes (02-08), so finishing the model-free work never waits on bokiko's login. No requirement or decision moved.*
 
@@ -150,6 +150,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
-| 2. Model-Free Foundation and Stub | 7/8 | In Progress | - |
+| 2. Model-Free Foundation and Stub | 8/8 | In Progress | - |
 | 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
