@@ -794,7 +794,7 @@ class S1AssertionTests(unittest.TestCase):
                 "model-pinned",
                 "skill-preclear-present",
                 "mcp-servers-empty",
-                "plugins-empty",
+                "no-non-builtin-plugins",
                 "user-names-absent",
                 "no-user-instruction-outside-config",
                 "project-claude-md-loaded",
@@ -823,7 +823,7 @@ class S1AssertionTests(unittest.TestCase):
             ("model-pinned", dict(event=rig.init(model="some-other-model"))),
             ("skill-preclear-present", dict(event=rig.init(skills=["update-config"]))),
             ("mcp-servers-empty", dict(event=rig.init(mcp_servers=[{"name": "x", "status": "connected"}]))),
-            ("plugins-empty", dict(event=rig.init(plugins=[{"name": "p", "path": "q"}]))),
+            ("no-non-builtin-plugins", dict(event=rig.init(plugins=[{"name": "p", "path": "q", "source": "p@market"}]))),
             ("user-names-absent", dict(event=rig.init(skills=["preclear", USER_NAME]), names=frozenset([USER_NAME]))),
             ("no-user-instruction-outside-config", dict(hooks=rig.good_hooks() + [user_leak])),
             ("project-claude-md-loaded", dict(hooks=user_only)),
@@ -1103,9 +1103,17 @@ class PaidRig(object):
         self.write_config()
         self.repo = make_repo(self.base)
         self.home = os.path.join(self.base, "harness")
+        self.user_home = os.path.join(self.base, "user-home")
+        os.makedirs(self.user_home)
+        self.runs = os.path.join(self.base, "runs-root", "runs")
         self.data = os.path.join(self.base, "data")
         os.makedirs(self.data)
-        self.env = cli_env(self.base, [self.bin], harness_home=self.home)
+        self.env = cli_env(
+            self.base,
+            [self.bin],
+            harness_home=self.home,
+            extra={"HOME": self.user_home, "PRECLEAR_RUNS_ROOT": self.runs},
+        )
 
     def write_config(self) -> None:
         with open(os.path.join(self.bin, "fake.json"), "w", encoding="utf-8") as handle:
@@ -1125,11 +1133,14 @@ class PaidRig(object):
             self.repo,
             self.data,
             self.env["PATH"].split(os.pathsep),
-            self.base,
+            self.user_home,
         )
 
 
 class PaidS1Tests(unittest.TestCase):
+    def runs_of(self, rig) -> str:
+        return rig.runs
+
     def test_a_clean_run_writes_raw_files_the_ledger_and_the_sanitised_manifest(self) -> None:
         rig = PaidRig()
         code, lines = rig.run_s1()
@@ -1151,13 +1162,16 @@ class PaidS1Tests(unittest.TestCase):
         self.assertEqual(calls[0]["env"]["DISABLE_AUTOUPDATER"], "1")
         inherited = [n for n in calls[0]["names"] if n.startswith(("ANTHROPIC", "CLAUDE_CODE", "CLAUDECODE"))]
         self.assertEqual(inherited, ["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"])
-        runs = os.listdir(os.path.join(home, "runs"))
+        runs_dir = os.path.realpath(self.runs_of(rig))
+        runs = os.listdir(runs_dir)
         self.assertEqual(len(runs), 1)
+        self.assertFalse(os.path.exists(os.path.join(home, "runs")))
+        self.assertEqual(stat.S_IMODE(os.stat(runs_dir).st_mode), 0o700)
         self.assertRegex(runs[0], r"^spike-s1-a1-\d{8}T\d{6}Z$")
-        raw = os.path.join(home, "runs", runs[0], "raw")
+        raw = os.path.join(runs_dir, runs[0], "raw")
         for name in ("s1.stdout", "s1.stderr", "hooklog.jsonl"):
             self.assertTrue(os.path.isfile(os.path.join(raw, name)), name)
-        self.assertEqual(calls[0]["cwd"], os.path.join(home, "runs", runs[0], "project"))
+        self.assertEqual(calls[0]["cwd"], os.path.join(runs_dir, runs[0], "project"))
         ledger = [json.loads(line) for line in read_text(os.path.join(home, "spike-spend.jsonl")).splitlines()]
         self.assertEqual(
             [(r["call"], r["attempt"], r["total_cost_usd"], r["subtype"]) for r in ledger],
@@ -1172,6 +1186,8 @@ class PaidS1Tests(unittest.TestCase):
         self.assertEqual(manifest["cwd"], "<run>/project")
         self.assertEqual(manifest["baseline"]["assertions"]["model-pinned"], "init")
         self.assertEqual(manifest["baseline"]["assertions"]["project-claude-md-loaded"], "hook")
+        self.assertEqual(manifest["baseline"]["builtin_plugins"], [])
+        self.assertEqual(manifest["baseline"]["counts"]["user_names_excluded"], 0)
         self.assertNotIn(rig.base, read_text(manifest_path))
         printed = "\n".join(lines)
         self.assertIn("permission-mode-default: pass", printed)
@@ -1210,7 +1226,7 @@ class PaidS1Tests(unittest.TestCase):
         with self.assertRaises(m.BudgetRefused):
             rig.run_s1()
         self.assertEqual(len(rig.calls()), 2)
-        self.assertEqual(len(os.listdir(os.path.join(os.path.realpath(rig.home), "runs"))), 2)
+        self.assertEqual(len(os.listdir(os.path.realpath(rig.runs))), 2)
 
     def test_a_refused_guard_starts_no_claude_at_all(self) -> None:
         m = spike()
@@ -1240,6 +1256,169 @@ class PaidS1Tests(unittest.TestCase):
         code, out, err = run_cli(["s1", "--run"], rig.env)
         self.assertEqual(code, pc_exitcodes.PREFLIGHT_BLOCKED, out + err)
         self.assertEqual(rig.calls(), [])
+
+
+
+class RefinedAssertionTests(unittest.TestCase):
+    """bokiko's decision of 2026-10-26: built-in plugins and binary-defined names are not leaks."""
+
+    def test_builtin_plugins_pass(self) -> None:
+        rig = S1Rig()
+        plugins = [
+            {"name": "a", "path": "builtin", "source": "a@builtin"},
+            {"name": "b", "path": "builtin", "source": "b@builtin"},
+        ]
+        result = by_id(rig.run(event=rig.init(plugins=plugins)))
+        self.assertTrue(result["no-non-builtin-plugins"][2])
+
+    def test_a_plugin_without_a_builtin_source_or_a_bare_string_fails(self) -> None:
+        rig = S1Rig()
+        good = {"name": "a", "path": "builtin", "source": "a@builtin"}
+        for plugins in (
+            [good, {"name": "b", "path": "p", "source": "b@elsewhere"}],
+            [{"name": "a", "path": "builtin"}],
+            ["a@builtin"],
+        ):
+            result = by_id(rig.run(event=rig.init(plugins=plugins)))
+            self.assertFalse(result["no-non-builtin-plugins"][2], plugins)
+
+    def test_a_name_that_the_binary_itself_defines_is_a_collision_not_a_leak(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        event = rig.init(skills=["preclear", USER_NAME], slash_commands=["compact", USER_NAME])
+        outcome = m.evaluate_s1(
+            [event],
+            rig.good_hooks(),
+            frozenset([USER_NAME, "other", "preclear"]),
+            rig.project,
+            rig.run_root,
+            rig.config,
+            binary_defined=frozenset([USER_NAME]),
+        )
+        self.assertEqual(outcome.status, "pass")
+        self.assertEqual(outcome.counts["user_name_hits"], 0)
+        self.assertEqual(outcome.counts["user_name_collisions"], 2)
+        self.assertEqual(outcome.counts["user_names_excluded"], 1)
+        self.assertNotIn(USER_NAME, repr(outcome) + "\n".join(m.describe_s1(outcome)))
+
+    def test_a_name_the_binary_does_not_define_is_still_a_leak(self) -> None:
+        m = spike()
+        rig = S1Rig()
+        event = rig.init(skills=["preclear", USER_NAME, "secondhidden"])
+        outcome = m.evaluate_s1(
+            [event],
+            rig.good_hooks(),
+            frozenset([USER_NAME, "secondhidden"]),
+            rig.project,
+            rig.run_root,
+            rig.config,
+            binary_defined=frozenset([USER_NAME]),
+        )
+        self.assertEqual(outcome.status, "stop")
+        self.assertEqual(outcome.counts["user_name_hits"], 1)
+        self.assertEqual(outcome.counts["user_name_collisions"], 1)
+
+    def test_binary_defines_finds_a_name_definition_in_a_file_and_returns_only_matches(self) -> None:
+        m = spike()
+        base = scratch()
+        blob = os.path.join(base, "fake-binary")
+        with open(blob, "wb") as handle:
+            handle.write(b"xx" * 10 + b'{name:"' + USER_NAME.encode() + b'",description:"d"}' + b"yy" * 10)
+        self.assertEqual(m.binary_defines(blob, frozenset([USER_NAME, "notthere"])), frozenset([USER_NAME]))
+
+    def test_binary_defines_sees_a_name_that_straddles_a_chunk_boundary(self) -> None:
+        m = spike()
+        base = scratch()
+        blob = os.path.join(base, "fake-binary")
+        needle = b'name:"' + USER_NAME.encode() + b'"'
+        with open(blob, "wb") as handle:
+            handle.write(b"z" * (m.BINARY_CHUNK - 5) + needle + b"z" * 100)
+        self.assertEqual(m.binary_defines(blob, frozenset([USER_NAME])), frozenset([USER_NAME]))
+
+
+class RunsRootTests(unittest.TestCase):
+    """Leak 1 of 2026-10-26: the runs root must lie outside every home folder."""
+
+    def test_the_default_is_a_shared_folder_outside_any_home(self) -> None:
+        m = spike()
+        self.assertEqual(m.DEFAULT_RUNS_ROOT, os.sep.join(["", "Users", "Shared", "preclear-harness", "runs"]))
+        self.assertEqual(m.RUNS_ROOT_ENV, "PRECLEAR_RUNS_ROOT")
+
+    def test_a_runs_root_inside_a_local_user_home_is_refused(self) -> None:
+        m = spike()
+        base = scratch()
+        home = os.path.join(base, "home-a")
+        os.makedirs(home)
+        for inside in (home, os.path.join(home, ".preclear-harness", "runs")):
+            with self.assertRaises(m.HomeRefused) as caught:
+                m.runs_root({"PRECLEAR_RUNS_ROOT": inside}, home, os.path.join(base, "repo"), homes=[home])
+            self.assertEqual(caught.exception.exit_code, pc_exitcodes.USAGE)
+
+    def test_a_runs_root_outside_every_home_is_accepted_and_resolved(self) -> None:
+        m = spike()
+        base = scratch()
+        home = os.path.join(base, "home-a")
+        os.makedirs(home)
+        target = os.path.join(base, "shared", "runs")
+        got = m.runs_root({"PRECLEAR_RUNS_ROOT": target}, home, os.path.join(base, "repo"), homes=[home])
+        self.assertEqual(got, os.path.realpath(target))
+        self.assertFalse(os.path.exists(target))
+
+    def test_a_relative_path_the_repository_and_the_users_claude_folder_are_refused(self) -> None:
+        m = spike()
+        base = scratch()
+        home = os.path.join(base, "home-a")
+        os.makedirs(home)
+        repo = os.path.join(base, "repo")
+        os.makedirs(repo)
+        for bad in ("relative/runs", os.path.join(repo, "runs"), os.path.join(home, ".claude", "runs")):
+            with self.assertRaises(m.HomeRefused):
+                m.runs_root({"PRECLEAR_RUNS_ROOT": bad}, home, repo, homes=[])
+
+    def test_an_ancestor_folder_with_an_instruction_file_or_folder_is_refused(self) -> None:
+        m = spike()
+        base = scratch()
+        repo = os.path.join(base, "repo")
+        plants = ("CLAUDE.md", "CLAUDE.local.md", os.path.join(".claude", "CLAUDE.md"), os.path.join(".claude", "rules", "x.md"))
+        for index, plant in enumerate(plants):
+            top = os.path.join(base, "anc%d" % index)
+            path = os.path.join(top, plant)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("x\n")
+            with self.assertRaises(m.HomeRefused):
+                m.runs_root({"PRECLEAR_RUNS_ROOT": os.path.join(top, "deeper", "runs")}, None, repo, homes=[])
+
+    def test_local_user_homes_lists_the_given_home_and_never_the_shared_folder(self) -> None:
+        m = spike()
+        base = scratch()
+        homes = m.local_user_homes(base)
+        self.assertIn(os.path.realpath(base), homes)
+        self.assertNotIn(os.sep.join(["", "Users", "Shared"]), homes)
+        self.assertTrue(all(os.path.isabs(item) for item in homes))
+
+    def test_ensure_runs_root_creates_every_missing_level_with_mode_0700_and_tolerates_existing(self) -> None:
+        m = spike()
+        base = scratch()
+        target = os.path.join(base, "a", "b", "runs")
+        m.ensure_runs_root(target)
+        for level in (os.path.join(base, "a"), os.path.join(base, "a", "b"), target):
+            self.assertEqual(stat.S_IMODE(os.stat(level).st_mode), 0o700)
+        m.ensure_runs_root(target)
+
+    def test_new_run_root_and_materialize_accept_a_runs_dir_outside_the_harness_home(self) -> None:
+        m = spike()
+        base = scratch()
+        repo = make_repo(base)
+        home = os.path.join(base, "harness")
+        runs = os.path.join(base, "elsewhere", "runs")
+        root = m.new_run_root(home, "s1", 1, runs_dir=runs)
+        self.assertEqual(os.path.dirname(root), os.path.realpath(runs))
+        paths = m.materialize(repo, root, str(uuid.uuid4()), home, runs_dir=runs)
+        self.assertTrue(os.path.isdir(paths["project"]))
+        other = m.new_run_root(home, "s2a", 1, runs_dir=runs)
+        with self.assertRaises(ValueError):
+            m.materialize(repo, other, str(uuid.uuid4()), home)  # the default runs folder is not this one
 
 
 if __name__ == "__main__":
