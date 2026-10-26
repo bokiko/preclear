@@ -89,6 +89,9 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion; autonomous: false)*
 - [x] 02-08-PLAN.md — Spikes S1 and S2: driver and zero-token dry run with a login-probe record, one-time manual login by bokiko (blocking), measured isolation capture that stops and asks bokiko if the instruction audit cannot be asserted, real stream fixture, seven-command policy probe, resume turn, tested-version seed, committed findings, README flag-table regeneration and gate rerun; total spend at most 5 USD (HARN-04, HARN-06)
 
+**Wave 5** *(gap closure after verification; blocked on Wave 4 completion)*
+- [ ] 02-09-PLAN.md — Gap closure: sanitizer login boundary after JSON escapes and login deny entry (CR-01), leak-gate home-path, ASCII identifier and case-insensitive host rules with the `.gitleaks.toml` twin (CR-02, WR-01), fail-closed deny-list lookup with BOM-tolerant reader (WR-02), boundary tests over the committed fixtures (IN-07) (EVID-02, EVID-03)
+
 *Plan count note: the earlier three-plan outline (02-01 spikes and flag table, 02-02 stub, 02-03 foundation and wiring) could not fit the 50 percent context target, the 3-task limit and the checkpoint-isolation rule, so each outline plan was split by concern. A plan check then reshaped the seven-plan split: the stub's completion became its own plan (02-06) to keep 02-02 inside the context budget, and the README and model-free gate (02-07) now come before the login-gated spikes (02-08), so finishing the model-free work never waits on bokiko's login. No requirement or decision moved.*
 
 ### Phase 3: Walking Skeleton (Row 1)
