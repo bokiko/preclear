@@ -6,7 +6,7 @@ useDefault = true
 [[rules]]
 id = "home-path-unix"
 description = "Home-folder path with a user name segment (macOS or Linux)"
-regex = '''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[/\s"'`:;,)\]]|$)'''
+regex = '''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[^A-Za-z0-9._-]|$)'''
 tags = ["identifier", "path"]
 
 [[rules]]
@@ -31,7 +31,7 @@ tags = ["identifier", "network"]
 [[rules]]
 id = "internal-hostname"
 description = "Hostname under a private or mDNS suffix"
-regex = '''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)'''
+regex = '''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?i:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)'''
 tags = ["identifier", "host"]
 
 [[rules]]

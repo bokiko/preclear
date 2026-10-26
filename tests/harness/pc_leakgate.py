@@ -16,7 +16,9 @@ scanned as one buffer, so a leak at byte 0, at the very end or across any chunk 
 found, and promote writes the same bytes it scanned.
 
 Rules: the six identifier rules and two allowlists are copied byte for byte from .gitleaks.toml
-(test_leakgate reads the TOML and asserts they are identical). Two Python-only rules (home paths
+(test_leakgate reads the TOML and asserts they are identical). A home path ends at any character
+that is not a name character (a JSON escape, a bracket, a pipe and so on), the identifier rules
+are ASCII-only and the private host suffix is case-insensitive. Two Python-only rules (home paths
 of the superuser and Windows-style home paths) are an explicit named set: the commit hooks lack those
 two shapes, so the gate is stricter than the hooks there. The credential-shape list is a small
 documented subset: the default gitleaks secret rules cannot be mirrored in Python, and the
@@ -68,11 +70,15 @@ Entry = collections.namedtuple("Entry", "rel kind data mode")
 
 
 def make_rule(rule_id, pattern, secret_group=None):
-    """Compile one rule; an empty id or a pattern that does not compile is ScannerError."""
+    """Compile one rule; an empty id or a pattern that does not compile is ScannerError.
+
+    Every pattern is compiled with re.ASCII so that \\b and the classes behave as they do in the
+    commit hooks' engine: a non-ASCII letter next to a value is a boundary, never part of a name.
+    """
     if not rule_id:
         raise ScannerError(SCANNER_ERROR_TEXT)
     try:
-        regex = re.compile(pattern)
+        regex = re.compile(pattern, re.ASCII)
     except re.error:
         raise ScannerError(SCANNER_ERROR_TEXT) from None
     return Rule(rule_id, pattern, secret_group, regex)
@@ -81,7 +87,7 @@ def make_rule(rule_id, pattern, secret_group=None):
 # The six identifier rules, byte for byte as in .gitleaks.toml (test_leakgate reads the TOML and
 # asserts the ids, patterns and secretGroup are identical, so the two cannot drift silently).
 RULES = (
-    make_rule("home-path-unix", r'''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[/\s"'`:;,)\]]|$)'''),
+    make_rule("home-path-unix", r'''/(?:Users|home)/[A-Za-z0-9._-]{1,64}(?:[^A-Za-z0-9._-]|$)'''),
     make_rule("home-path-dash-slug", r'''-(?:Users|home)-[A-Za-z0-9._]{1,64}-'''),
     make_rule("mac-temp-root", r'''/(?:private/)?var/folders/[A-Za-z0-9_]{2}/'''),
     make_rule(
@@ -91,7 +97,7 @@ RULES = (
     ),
     make_rule(
         "internal-hostname",
-        r'''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)''',
+        r'''\b[A-Za-z0-9][A-Za-z0-9-]*\.(?i:local|lan|home\.arpa|internal|localdomain|ts\.net)(?:[^A-Za-z0-9._-]|$)''',
     ),
     make_rule("email-address", r'''[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''),
 )
@@ -126,8 +132,8 @@ ALLOWLISTS = (
 # gate is stricter than the hooks there, never weaker. They are the explicit named set the parity
 # test allows.
 PYTHON_ONLY_RULES = (
-    make_rule("home-path-root", r'''(?<![A-Za-z0-9._-])/root(?:[/\s"'`:;,)\]]|$)'''),
-    make_rule("home-path-windows", r'''(?i)\b[a-z]:\\users\\[a-z0-9._-]{1,64}(?:[\\/\s"'`:;,)\]]|$)'''),
+    make_rule("home-path-root", r'''(?<![A-Za-z0-9._-])[/]root(?![A-Za-z0-9_-]|\.[A-Za-z0-9_-])'''),
+    make_rule("home-path-windows", r'''(?i)\b[a-z]:\\users\\[a-z0-9._-]{1,64}(?:[^a-z0-9._-]|$)'''),
 )
 
 # Credential shapes: a small documented subset. The default gitleaks secret rules cannot be
