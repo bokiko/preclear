@@ -1,0 +1,597 @@
+"""Row 1 (wrong binding): seed the run root, run the stages, record the facts (plan 03-02; HARN-05, HARN-07).
+
+What a row 1 run is, in order:
+
+  * seed_row1         the committed wrong-binding setup in a fresh run root: the scratch project (CLAUDE.md
+                      filled from the committed row's fixture, the three-step plan, a git repository on main,
+                      the frozen skill as untracked files), the logging wrapper, two ledgers of which only the
+                      second is bound to the work session, the audit hook and the settings file
+  * take_snapshot     one boundary snapshot (manifest, git status, ledger listings, copies of the ledgers,
+                      the helper's fallback folder and the auto-memory folder)
+  * run_stage         one claude -p call: the pinned argv from pc_flags, a ledger reservation before the process
+                      and a settlement after it, the raw bytes, a stage record and a snapshot
+  * read_stage_prompts  the work-turn prompt from the data file and the /preclear prompt read in place from the
+                      committed publication folder (never copied, so it is byte-identical by construction)
+
+Every file and folder is created exclusively (pc_runroot); nothing here deletes, renames, moves or truncates, and
+nothing here starts the real claude by itself: the caller names the executable through the run context.
+Messages are fixed text with row and stage ids, counts and states only, never a path or an argument value.
+
+Standard library only, Python 3.9 floor.
+"""
+from __future__ import annotations
+
+import datetime
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import uuid
+from decimal import Decimal
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+
+import pc_flags
+import pc_manifest
+import pc_rows
+import pc_runroot
+import pc_spend
+import pc_spike
+import pc_stream
+
+ROW_ID = pc_rows.ROW1
+
+PUBLICATION = "tests/evidence/publication-2026-10-20/row1-wrong-binding"
+DATA_DIR = "tests/harness/data"
+PLAN_DATA = DATA_DIR + "/row1-plan.md"
+S1_PROMPT_DATA = DATA_DIR + "/row1-s1-prompt.md"
+S2_PROMPT_COMMITTED = PUBLICATION + "/s2-preclear-prompt.md"
+FIXTURE_CLAUDE_MD = PUBLICATION + "/fixture-CLAUDE.md"
+LEDGER_A_NAME = "CONTINUITY_CLAUDE-widget-export.md"
+LEDGER_B_NAME = "CONTINUITY_CLAUDE-other-task.md"
+PLAN_NAME = "2026-10-15-widget-export.md"
+TOKEN_PROJECT = "<repo>/<run>/project"
+LEDGER_PLACEHOLDER = "$LEDGER"
+
+# The boundary snapshot each stage takes after its process ends.
+SNAPSHOT_SETUP = "snap-0-setup"
+SNAPSHOT_NAMES: Dict[str, str] = {
+    "s1": "snap-1-after-work",
+    "s2": "snap-2-after-preclear",
+    "s3": "snap-3-after-resume",
+}
+
+PROBLEM_TIMEOUT = "timeout"
+PROBLEM_EXIT = "exit"
+PROBLEM_STREAM = "stream"
+PROBLEM_SUBTYPE = "subtype"
+PROBLEM_IS_ERROR = "is-error"
+PROBLEM_TERMINAL = "terminal"
+
+USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
+CONSISTENCY_TOLERANCE = Decimal("0.000001")
+_STUB_TIMEOUT_SECONDS = 60
+_ISOLATION_PREFIX = "Isolation claim: "
+
+
+def _utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _read(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def _within(path: str, parent: str) -> bool:
+    return path == parent or path.startswith(parent.rstrip(os.sep) + os.sep)
+
+
+def isolation_mode() -> str:
+    """The isolation mode word, taken from the pinned isolation claim and never typed here."""
+    claim = pc_flags.ISOLATION_CLAIM
+    if not claim.startswith(_ISOLATION_PREFIX):
+        raise ValueError("the pinned isolation claim has an unexpected shape")
+    found = re.match(r"[A-Za-z]+", claim[len(_ISOLATION_PREFIX):])
+    if found is None:
+        raise ValueError("the pinned isolation claim has an unexpected shape")
+    return found.group(0)
+
+
+def read_stage_prompts(repo_root: str, ledger_a_path: str) -> Tuple[str, str]:
+    """Return (the s1 prompt, the s2 prompt).
+
+    The s1 prompt is the data file with the ledger placeholder replaced by the ledger A path. The s2 prompt is
+    the committed publication file, read in place and never copied, so the bytes are the committed bytes.
+    """
+    s1 = _read(os.path.join(repo_root, *S1_PROMPT_DATA.split("/"))).decode("utf-8")
+    s2 = _read(os.path.join(repo_root, *S2_PROMPT_COMMITTED.split("/"))).decode("utf-8")
+    return s1.replace(LEDGER_PLACEHOLDER, ledger_a_path), s2
+
+
+# ---------------------------------------------------------------------------------------------
+# Seeding
+# ---------------------------------------------------------------------------------------------
+
+_SOURCE_FILES = (
+    ("skill", "SKILL.md"),
+    ("wrapper", "tests/harness/checkpoint-wrapper"),
+    ("stub", "tests/harness/checkpoint_stub.py"),
+    ("hooklog", "tests/harness/pc_hooklog.py"),
+    ("claude_md", FIXTURE_CLAUDE_MD),
+    ("ledger_a", PUBLICATION + "/snap-0-setup/" + LEDGER_A_NAME),
+    ("ledger_b", PUBLICATION + "/snap-0-setup/" + LEDGER_B_NAME),
+    ("plan", PLAN_DATA),
+)
+_SOURCE_DIRS = (
+    ("references", "references"),
+    ("fixture", "tests/fixtures/bound-ledger/project"),
+)
+
+
+def _sources(repo: str) -> Dict[str, str]:
+    """Return the absolute path of every seed source; a missing one is a SpikeError naming it repo-relative."""
+    found: Dict[str, str] = {}
+    for key, relative in _SOURCE_FILES:
+        path = os.path.join(repo, *relative.split("/"))
+        if not os.path.isfile(path):
+            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % relative)
+        found[key] = path
+    for key, relative in _SOURCE_DIRS:
+        path = os.path.join(repo, *relative.split("/"))
+        if not os.path.isdir(path):
+            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % relative)
+        found[key] = path
+    return found
+
+
+def _copy_fixture_project(source: str, dest: str) -> None:
+    """Create dest and copy the fixture project into it without its CLAUDE.md and without thoughts/ledgers."""
+    entries = pc_manifest.tree_manifest(source)
+    for entry in entries:
+        if entry["kind"] not in ("d", "f"):
+            raise ValueError("a source tree holds a symlink or special file")
+    pc_runroot.exclusive_dir(dest, 0o700)
+    for entry in entries:
+        relative = os.fsdecode(entry["path"])
+        if relative == "CLAUDE.md" or relative == "thoughts/ledgers" or relative.startswith("thoughts/ledgers/"):
+            continue
+        target = os.path.join(dest, relative)
+        if entry["kind"] == "d":
+            pc_runroot.exclusive_dir(target, 0o700)
+        else:
+            pc_runroot.write_exclusive(target, _read(os.path.join(source, relative)), 0o644)
+
+
+def _real_ledger(data: bytes, project: str) -> bytes:
+    """Return a committed ledger copy with the token project path replaced by the real project path."""
+    text = data.decode("utf-8").replace(TOKEN_PROJECT, project)
+    if "<repo>" in text or "<run>" in text:
+        raise pc_spike.SpikeError("a committed ledger copy holds a token this seed does not know")
+    return text.encode("utf-8")
+
+
+def _run_stub(interpreter: str, stub: str, project: str, ckpt: str, args: Sequence[str]) -> bytes:
+    """Call the checkpoint stub directly (never the wrapper) and return its standard output."""
+    try:
+        done = subprocess.run(
+            [interpreter, "-I", "-B", stub] + list(args),
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "CKPT_HOME": ckpt},
+            cwd=project,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=_STUB_TIMEOUT_SECONDS,
+            shell=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise pc_spike.SpikeError("the checkpoint stub could not run for the state setup") from None
+    if done.returncode != 0:
+        raise pc_spike.SpikeError("the checkpoint stub refused the state setup")
+    return done.stdout
+
+
+def seed_row1(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """Build the row 1 setup inside the already-created run root and return its paths.
+
+    Everything is created exclusively, so a second call on the same run root raises FileExistsError. Created,
+    in order: project, wrapper, ckpt (two ledgers, the second bound to the session through the stub's own bind),
+    raw (the stub's status and lint output from before the first stage), auto-memory, snaps, settings.json and
+    raw/run.json (row, model, evidence date, session id, isolation mode).
+    """
+    try:
+        canonical = str(uuid.UUID(session_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("the session id must be a UUID") from None
+    if canonical != session_id:
+        raise ValueError("the session id must be the canonical lowercase form")
+    repo = os.path.realpath(repo_root)
+    root = os.path.realpath(run_root)
+    runs = os.path.realpath(runs_dir)
+    if not os.path.isdir(root):
+        raise ValueError("the run root does not exist")
+    if not _within(root, runs) or root == runs:
+        raise ValueError("the run root must lie under the runs folder")
+    if _within(root, repo):
+        raise ValueError("the run root must be outside the repository")
+    source = _sources(repo)
+    interpreter = os.path.realpath(sys.executable)
+    if not interpreter:
+        raise ValueError("no interpreter path is known")
+
+    project = os.path.join(root, "project")
+    wrapper_dir = os.path.join(root, "wrapper")
+    wrapper = os.path.join(wrapper_dir, "checkpoint")
+    ckpt = os.path.join(root, "ckpt")
+    ledgers = os.path.join(ckpt, "ledgers")
+    ledger_a = os.path.join(ledgers, LEDGER_A_NAME)
+    ledger_b = os.path.join(ledgers, LEDGER_B_NAME)
+    auto_memory = os.path.join(root, "auto-memory")
+    raw = os.path.join(root, "raw")
+    snaps = os.path.join(root, "snaps")
+    settings = os.path.join(root, "settings.json")
+    hooklog = os.path.join(raw, "hooklog.jsonl")
+
+    _copy_fixture_project(source["fixture"], project)
+    thoughts = os.path.join(project, "thoughts")
+    if not os.path.isdir(thoughts):
+        pc_runroot.exclusive_dir(thoughts, 0o700)
+    plans = os.path.join(thoughts, "plans")
+    pc_runroot.exclusive_dir(plans, 0o700)
+    pc_runroot.write_exclusive(os.path.join(plans, PLAN_NAME), _read(source["plan"]), 0o644)
+    values = {
+        "executable": wrapper,
+        "project": project,
+        "ledger": ledger_a,
+        "fallback_directory": os.path.join(project, ".preclear"),
+    }
+    configuration = pc_spike._fill_configuration(_read(source["claude_md"]).decode("utf-8"), values)
+    pc_runroot.write_exclusive(os.path.join(project, "CLAUDE.md"), configuration.encode("utf-8"), 0o644)
+    pc_spike._run_git(project, ["init", "-q"])
+    pc_spike._run_git(project, ["symbolic-ref", "HEAD", "refs/heads/main"])
+    pc_spike._run_git(project, ["add", "-A"])
+    pc_spike._run_git(project, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial fixture commit"])
+
+    skill_dir = os.path.join(project, ".claude", "skills", "preclear")
+    pc_runroot.exclusive_dir(os.path.join(project, ".claude"), 0o700)
+    pc_runroot.exclusive_dir(os.path.join(project, ".claude", "skills"), 0o700)
+    pc_runroot.exclusive_dir(skill_dir, 0o700)
+    pc_runroot.write_exclusive(os.path.join(skill_dir, "SKILL.md"), _read(source["skill"]), 0o644)
+    pc_spike._copy_tree_with(source["references"], os.path.join(skill_dir, "references"))
+
+    pc_runroot.exclusive_dir(wrapper_dir, 0o700)
+    pc_runroot.write_exclusive(wrapper, _read(source["wrapper"]), 0o755)
+    pc_runroot.write_exclusive(os.path.join(wrapper_dir, "py"), interpreter.encode("utf-8"), 0o644)
+    pc_runroot.write_exclusive(os.path.join(wrapper_dir, "stub"), source["stub"].encode("utf-8"), 0o644)
+    pc_runroot.write_exclusive(os.path.join(wrapper_dir, "calls.log"), b"", 0o644)
+
+    pc_runroot.exclusive_dir(ckpt, 0o700)
+    pc_runroot.exclusive_dir(ledgers, 0o700)
+    pc_runroot.write_exclusive(ledger_a, _real_ledger(_read(source["ledger_a"]), project), 0o644)
+    pc_runroot.write_exclusive(ledger_b, _real_ledger(_read(source["ledger_b"]), project), 0o644)
+    _run_stub(interpreter, source["stub"], project, ckpt, ["bind", "--ledger", ledger_b, "--session", session_id])
+
+    pc_runroot.exclusive_dir(raw, 0o700)
+    status = _run_stub(interpreter, source["stub"], project, ckpt, ["status", "--session", session_id])
+    lint = _run_stub(interpreter, source["stub"], project, ckpt, ["lint"])
+    pc_runroot.write_exclusive(os.path.join(raw, "status-before.txt"), status, 0o600)
+    pc_runroot.write_exclusive(os.path.join(raw, "lint-before.txt"), lint, 0o600)
+
+    pc_runroot.exclusive_dir(auto_memory, 0o700)
+    pc_runroot.exclusive_dir(snaps, 0o700)
+    command = " ".join(shlex.quote(part) for part in (interpreter, "-I", "-B", source["hooklog"], hooklog))
+    rendered = pc_flags.render_settings(auto_memory, command)
+    pc_runroot.write_exclusive(settings, (json.dumps(rendered, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600)
+    run_facts = {
+        "row": ROW_ID,
+        "model": model,
+        "evidence_date": evidence_date,
+        "session_id": session_id,
+        "isolation": isolation_mode(),
+    }
+    pc_runroot.write_exclusive(
+        os.path.join(raw, "run.json"), (json.dumps(run_facts, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
+    )
+
+    return {
+        "run_root": root,
+        "project": project,
+        "skill_dir": skill_dir,
+        "wrapper_dir": wrapper_dir,
+        "wrapper": wrapper,
+        "ckpt": ckpt,
+        "ledgers": ledgers,
+        "ledger_a": ledger_a,
+        "ledger_b": ledger_b,
+        "auto_memory": auto_memory,
+        "raw": raw,
+        "snaps": snaps,
+        "settings": settings,
+        "hooklog": hooklog,
+    }
+
+
+# ---------------------------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------------------------
+
+
+def _excluded(path: bytes) -> bool:
+    """True for entries a boundary snapshot leaves out: raw, snaps, stage-prefixed folders, the project's .git."""
+    top = path.split(b"/", 1)[0]
+    if top in (b"raw", b"snaps") or top.startswith(b"stage"):
+        return True
+    return path == b"project/.git" or path.startswith(b"project/.git/")
+
+
+def _sorted_names(names: Sequence[str]) -> List[str]:
+    return sorted(names, key=os.fsencode)
+
+
+def _listing(names: Sequence[str]) -> bytes:
+    return "".join(name + "\n" for name in names).encode("utf-8", "surrogateescape")
+
+
+def take_snapshot(
+    paths: Mapping[str, Optional[str]],
+    name: str,
+    git: str,
+    refuse_under: Sequence[str] = (),
+) -> List[str]:
+    """Write snaps/<name> and return the names of model-written trees whose copy was skipped.
+
+    The folder holds sha.txt and manifest.jsonl of the run root (without raw, snaps, any stage-prefixed
+    top-level folder and the project's .git), status.txt and status.raw from git status, ledgers-ls.txt and
+    bindings-ls.txt, a copy of each ledger markdown file and, when present, copies of project/.preclear
+    (as preclear) and the auto-memory folder (as auto-memory). A symlink or special file inside one of those
+    two trees skips that one copy only; the manifest still lists the entry. A taken name is FileExistsError.
+    """
+    run_root = str(paths["run_root"])
+    entries = [e for e in pc_manifest.tree_manifest(run_root, tuple(refuse_under)) if not _excluded(e["path"])]
+    dest = os.path.join(str(paths["snaps"]), name)
+    pc_manifest.write_snapshot(dest, entries)
+    raw_status, text_status = pc_manifest.capture_git_status(str(paths["project"]), git)
+    pc_runroot.write_exclusive(os.path.join(dest, "status.raw"), raw_status, 0o600)
+    pc_runroot.write_exclusive(os.path.join(dest, "status.txt"), text_status, 0o600)
+    ledgers = str(paths["ledgers"])
+    ledger_names = _sorted_names([n for n in os.listdir(ledgers) if not n.startswith(".")])
+    pc_runroot.write_exclusive(os.path.join(dest, "ledgers-ls.txt"), _listing(ledger_names), 0o600)
+    bindings = os.path.join(str(paths["ckpt"]), "bindings")
+    binding_names = _sorted_names(os.listdir(bindings)) if os.path.isdir(bindings) else []
+    pc_runroot.write_exclusive(os.path.join(dest, "bindings-ls.txt"), _listing(binding_names), 0o600)
+    for ledger_name in ledger_names:
+        full = os.path.join(ledgers, ledger_name)
+        if ledger_name.endswith(".md") and os.path.isfile(full) and not os.path.islink(full):
+            pc_runroot.write_exclusive(os.path.join(dest, ledger_name), _read(full), 0o600)
+    skipped: List[str] = []
+    for source, label in (
+        (os.path.join(str(paths["project"]), ".preclear"), "preclear"),
+        (str(paths["auto_memory"]), "auto-memory"),
+    ):
+        if os.path.lexists(source) and (os.path.isdir(source) or os.path.islink(source)):
+            try:
+                pc_runroot.copy_tree_exclusive(source, os.path.join(dest, label))
+            except pc_runroot.RunRootError:
+                skipped.append(label)
+    return skipped
+
+
+# ---------------------------------------------------------------------------------------------
+# One stage
+# ---------------------------------------------------------------------------------------------
+
+
+class StageResult(NamedTuple):
+    """The outcome of one stage. events, summary, delta and cumulative are None where nothing usable arrived."""
+
+    name: str
+    session_id: str
+    resume: bool
+    returncode: Optional[int]
+    timed_out: bool
+    wall_seconds: float
+    events: Optional[List[Dict[str, Any]]]
+    summary: Optional[Dict[str, Any]]
+    usage: Optional[Dict[str, int]]
+    delta: Optional[Decimal]
+    cumulative: Optional[Decimal]
+    attempt: int
+    ok: bool
+    problem: str
+    stdout_sha256: str
+    stdout_size: int
+
+
+def _row_stage_keys() -> Tuple[str, ...]:
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
+    if entry is None:
+        raise pc_spike.SpikeError("the row is not in the registry")
+    return tuple(pc_rows.stage_key(ROW_ID, stage.name) for stage in entry.stages)
+
+
+def _git_executable(env: Mapping[str, str]) -> str:
+    found = shutil.which("git", path=env.get("PATH") or os.defpath)
+    if found is None:
+        found = shutil.which("git", path=os.environ.get("PATH", os.defpath))
+    if found is None:
+        raise pc_spike.SpikeError("git was not found on the search path")
+    return found
+
+
+def _line_count(path: str, marker: Optional[bytes] = None) -> int:
+    """Count the lines of a file (those holding marker when given); a missing file counts zero."""
+    if not os.path.isfile(path):
+        return 0
+    count = 0
+    for line in _read(path).split(b"\n"):
+        if line and (marker is None or marker in line):
+            count += 1
+    return count
+
+
+def _usage_of(result_event: Mapping[str, Any]) -> Optional[Dict[str, int]]:
+    usage = result_event.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    found = {}
+    for key in USAGE_KEYS:
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            found[key] = value
+    return found
+
+
+def _consistent(previous_total: Optional[Decimal], delta: Optional[Decimal], cumulative: Optional[Decimal]) -> str:
+    """yes when the cumulative total equals the previous total plus this call's delta (to a millionth)."""
+    if delta is None or cumulative is None:
+        return "unknown"
+    expected = delta if previous_total is None else previous_total + delta
+    return "yes" if abs(cumulative - expected) <= CONSISTENCY_TOLERANCE else "no"
+
+
+def _cost_text(value: Optional[Decimal]) -> Optional[str]:
+    return None if value is None else format(value, "f")
+
+
+def _classify(call: Any, events: Any, summary: Any) -> str:
+    if call.timed_out:
+        return PROBLEM_TIMEOUT
+    if call.returncode != 0:
+        return PROBLEM_EXIT
+    if events is None or summary is None:
+        return PROBLEM_STREAM
+    if summary["subtype"] != "success":
+        return PROBLEM_SUBTYPE
+    if summary["is_error"] is True:
+        return PROBLEM_IS_ERROR
+    terminal = summary["terminal_reason"]
+    if terminal is not None and terminal != "completed":
+        return PROBLEM_TERMINAL
+    return ""
+
+
+def run_stage(
+    ctx: pc_rows.RunContext,
+    paths: Mapping[str, Optional[str]],
+    spec: pc_rows.StageSpec,
+    session_id: str,
+    prompt: str,
+    resume: bool,
+    previous_total: Optional[Decimal],
+    timeout: int,
+) -> StageResult:
+    """Run one stage: reserve its cap, run the process, settle the cost, keep the raw bytes, snapshot.
+
+    The command is built only by pc_flags (build_argv, build_env, build_allowed_tools). The reservation is a
+    pessimistic launch line written before the process; the settlement replaces it with the call's own cost
+    (a timeout settles with no delta, so the cap stays counted). A stage is never started a second time: the
+    ledger refuses a second launch. The stage record and the snapshot are written whatever the outcome.
+    """
+    tools = pc_flags.build_allowed_tools(str(paths["wrapper"]), pc_flags.MODEL_FACING_WRAPPER_VERBS)
+    argv = pc_flags.build_argv(
+        str(ctx.claude), session_id, str(paths["settings"]), tools, spec.max_turns, spec.cap, resume=resume, model=ctx.model
+    )
+    env = pc_flags.build_env(ctx.env, ctx.config_dir, str(paths["ckpt"]))
+    key = pc_rows.stage_key(ROW_ID, spec.name)
+    attempt = pc_spend.append_launch(ctx.harness_home, ROW_ID, key, spec.cap, ctx.version, _row_stage_keys())
+
+    started = datetime.datetime.now(datetime.timezone.utc)
+    call = pc_spike.run_claude(argv, env, str(paths["project"]), prompt, timeout, str(paths["raw"]), spec.name)
+    wall = (datetime.datetime.now(datetime.timezone.utc) - started).total_seconds()
+
+    events: Optional[List[Dict[str, Any]]] = None
+    summary: Optional[Dict[str, Any]] = None
+    result_event: Optional[Dict[str, Any]] = None
+    try:
+        parsed = pc_stream.parse_stream(call.stdout)
+        result_event = pc_stream.require_single_result(parsed)
+        summary = pc_stream.result_summary(parsed)
+        pc_stream.init_manifest(parsed)
+        events = parsed
+    except pc_stream.StreamError:
+        events = summary = result_event = None
+
+    delta: Optional[Decimal] = None
+    cumulative: Optional[Decimal] = None
+    if events is not None and summary is not None and result_event is not None and not call.timed_out:
+        cumulative = summary["total_cost_usd"]
+        try:
+            delta = pc_spend.call_cost(result_event, previous_total)
+        except pc_spend.SpendError:
+            delta = None
+    if call.timed_out:
+        subtype = "timeout"
+    elif summary is not None and isinstance(summary["subtype"], str) and summary["subtype"]:
+        subtype = summary["subtype"][:64]
+    else:
+        subtype = "no-result"
+    pc_spend.settle(ctx.harness_home, ROW_ID, key, attempt, subtype, delta, cumulative, ctx.version)
+
+    problem = _classify(call, events, summary)
+    snapshot = SNAPSHOT_NAMES[spec.name]
+    skipped = take_snapshot(paths, snapshot, _git_executable(ctx.env))
+    usage = _usage_of(result_event) if result_event is not None else None
+    stdout_sha = _sha256(call.stdout)
+    record = {
+        "stage": spec.name,
+        "session_id": session_id,
+        "resume": bool(resume),
+        "returncode": call.returncode,
+        "timed_out": call.timed_out,
+        "wall_seconds": "%.1f" % wall,
+        "attempt": attempt,
+        "cap": _cost_text(spec.cap),
+        "max_turns": spec.max_turns,
+        "version": ctx.version,
+        "wrapper_calls": _line_count(os.path.join(str(paths["wrapper_dir"]), "calls.log"), b" CALL"),
+        "hooklog_lines": _line_count(str(paths["hooklog"])),
+        "snapshot": snapshot,
+        "snapshot_copy_skipped": skipped,
+        "subtype": subtype,
+        "turns": summary["num_turns"] if summary is not None else None,
+        "delta": _cost_text(delta),
+        "cumulative": _cost_text(cumulative),
+        "cumulative_consistent": _consistent(previous_total, delta, cumulative),
+        "usage": usage,
+        "problem": problem,
+        "stdout_sha256": stdout_sha,
+        "stdout_size": len(call.stdout),
+    }
+    pc_runroot.write_exclusive(
+        os.path.join(str(paths["raw"]), spec.name + ".record.json"),
+        (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        0o600,
+    )
+    return StageResult(
+        spec.name,
+        session_id,
+        bool(resume),
+        call.returncode,
+        call.timed_out,
+        wall,
+        events,
+        summary,
+        usage,
+        delta,
+        cumulative,
+        attempt,
+        problem == "",
+        problem,
+        stdout_sha,
+        len(call.stdout),
+    )
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
