@@ -40,6 +40,7 @@ import uuid
 from decimal import Decimal
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+import pc_checks
 import pc_exitcodes
 import pc_flags
 import pc_leakgate
@@ -967,10 +968,46 @@ def _chain_totals(results: Sequence[StageResult]) -> List[Optional[Decimal]]:
     return list(last.values())
 
 
+MESSAGE_CHECKS_UNREADABLE = (
+    "FAIL: the mechanical checks could not read the run root; nothing is filed and the raw files stay in the run root"
+)
+MESSAGE_NOTHING_FILED = "nothing is filed; the raw files and snapshots stay in the run root"
+_BREACH_TEXT = {
+    pc_checks.BREACH_WRITES: "writes outside approved roots",
+    pc_checks.BREACH_GIT: "git mutations",
+}
+
+
+def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) -> Optional[pc_rows.RowOutcome]:
+    """Run the mechanical checks over the run root as it is on disk; a breach is exit 11 and files nothing.
+
+    Only a concrete write outside the approved roots or a git mutation is a breach (HARN-09). Every other
+    fact (denials, ledger changes, helper-call disagreement, Bash path mentions) is left for the reviewer.
+    The lines hold counts and ids only, never a path. A run root the checks cannot read is a broken harness
+    and is also exit 11, because a run whose isolation cannot be shown must not be filed.
+    """
+    try:
+        facts = pc_checks.compute_facts(str(paths["run_root"]), ctx.config_dir)
+    except pc_checks.CheckError:
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_CHECKS_UNREADABLE,))
+    found = pc_checks.breaches(facts)
+    if not found:
+        return None
+    lines = ["isolation or git breach: %s: %d" % (_BREACH_TEXT[name], count) for name, count in found]
+    lines.append(MESSAGE_NOTHING_FILED)
+    return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, tuple(lines))
+
+
 def finish(
     ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]], results: Sequence[StageResult]
 ) -> pc_rows.RowOutcome:
-    """Close a completed chain: one fixed line per stage and the row total (later plans extend this)."""
+    """Close a completed chain: the mechanical checks, then one fixed line per stage and the row total.
+
+    A breach found by the checks ends the row with 11 and prints counts only (later plans extend this).
+    """
+    blocked = breach_outcome(ctx, paths)
+    if blocked is not None:
+        return blocked
     lines: List[str] = []
     for result in results:
         turns = result.summary["num_turns"] if result.summary is not None else None
@@ -1045,6 +1082,10 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
                 second = str(uuid.uuid4())
             result = run_stage(ctx, paths, stage, second, resume_line, False, None, timeout, boundary, scan)
         results.append(result)
+        blocked = breach_outcome(ctx, paths)
+        if blocked is not None:
+            extra = () if result.ok else _stopped(stage.name, result.problem).lines
+            return pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra))
         if not result.ok:
             return _stopped(stage.name, result.problem)
         if result.evaluation is not None and result.evaluation.status != STATUS_PASS:
