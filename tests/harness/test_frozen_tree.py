@@ -33,10 +33,11 @@ PUBLICATION = os.path.join(ROOT, "tests", "evidence", "publication-2026-10-20")
 
 SKILL_MAX_BYTES = 12000
 
-SKILL_SHA256 = "0" * 64
-REFERENCES_TREE_SHA256 = "0" * 64
-FIXTURES_TREE_SHA256 = "0" * 64
-PUBLICATION_TREE_SHA256 = "0" * 64
+# Computed from the tree that the base-commit diff above shows unchanged (base commit 56e155c).
+SKILL_SHA256 = "86e5b14e64b17397e3876768de398f15ddb40d6e31a3e605227dafed984c5a06"
+REFERENCES_TREE_SHA256 = "0c2e133dedc56cf451206df72ab3cd894b7563bd0a51cfb9e1247cfd8b58fe25"
+FIXTURES_TREE_SHA256 = "7f8ecc9bfe4d0e3fd7fee870c6f0f5b7d4dab8900a67389865ed30c58556a668"
+PUBLICATION_TREE_SHA256 = "268818206a76c809ce832ba245e5bda648b7f48a46a56c6d9da8b08ef2aea117"
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
