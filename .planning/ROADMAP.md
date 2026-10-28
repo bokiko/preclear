@@ -107,7 +107,7 @@ Plans:
   4. The row README ends with `Reviewer verdict: PENDING` and a checklist of mechanical facts, and no filed file from the harness contains an accepted, passed or failed verdict. (EVID-05)
   5. The read-only comparer prints per-row differences between the rerun and `tests/evidence/publication-2026-10-20/row1-wrong-binding`, and tree digests of both evidence trees are identical before and after it runs. `git diff` shows `SKILL.md`, `references/` and `tests/fixtures/` unchanged, `SKILL.md` is at or under 12,000 bytes, and all new code sits under `tests/harness/`. (EVID-06, HARN-13)
 
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 
 Plans:
 **Wave 1**
@@ -123,7 +123,7 @@ Plans:
 - [x] 03-04-PLAN.md — Tracer: file a finished run through the sanitizer, the leak gate and promote with the deny entries (WR-14); the full per-row file set with provenance, usage, mechanical checks and the reviewer checklist ending in `Reviewer verdict: PENDING`; SKIPPED filing and the zero-token `--refile` (HARN-05, EVID-04, EVID-05)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 03-05-PLAN.md — Tracer: the read-only comparer with tree digests before and after; structural comparison, measurement shapes and read-only proofs; pinned frozen trees, the SKILL.md size cap, the allowlist corpus scope and the zero-token phase gate (EVID-06, HARN-13)
+- [x] 03-05-PLAN.md — Tracer: the read-only comparer with tree digests before and after; structural comparison, measurement shapes and read-only proofs; pinned frozen trees, the SKILL.md size cap, the allowlist corpus scope and the zero-token phase gate (EVID-06, HARN-13)
 
 **Wave 6** *(blocked on Wave 5 completion; autonomous: false)*
 - [ ] 03-06-PLAN.md — Tracer: zero-token rehearsal against the real 2.1.310 build; blocking-human checkpoint for the build, the cap and the green gate; the one paid row 1 run, filed, compared and costed (HARN-05, HARN-07, HARN-09, EVID-04, EVID-05, EVID-06, HARN-13)
@@ -170,5 +170,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
-| 3. Walking Skeleton (Row 1) | 4/6 | In Progress | - |
+| 3. Walking Skeleton (Row 1) | 5/6 | In Progress | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
