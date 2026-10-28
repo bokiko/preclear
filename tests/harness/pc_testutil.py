@@ -481,6 +481,21 @@ def stages_with(stages: list, index: int, **changes: Any) -> list:
     return copied
 
 
+def _with_ops(stages: list, index: int, ops: list) -> list:
+    """Return a deep copy of the stage list with ops appended to the ops of one stage."""
+    copied = json.loads(json.dumps(stages))
+    copied[index]["ops"] = list(copied[index].get("ops", [])) + json.loads(json.dumps(ops))
+    return copied
+
+
+def seed_outside_write(stages: list, stage_index: int = 1) -> list:
+    """A stage list whose stage really writes a small file directly under the run root, outside every
+    approved root (a snapshot-path breach; no stream event announces it)."""
+    return _with_ops(stages, stage_index, [
+        {"op": "write", "path": "$RUN/outside.txt", "text": "outside the approved roots\n"},
+    ])
+
+
 _HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_HARNESS_DIR))
 _COPIED_FILES = (
