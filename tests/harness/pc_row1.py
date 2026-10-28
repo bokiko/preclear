@@ -18,6 +18,8 @@ What a row 1 run is, in order:
                       did not complete cleanly
   * extract_resume_line, caller_map, finish   the resume-line rule, the sanitizer's caller map and the closing
                       lines of a completed chain
+  * breach_outcome    the mechanical checks of pc_checks over the run root after every stage and in finish: a
+                      write outside the approved roots or a git mutation is exit 11, counts only, nothing filed
 
 Every file and folder is created exclusively (pc_runroot); nothing here deletes, renames, moves or truncates, and
 nothing here starts the real claude by itself: the caller names the executable through the run context.
@@ -40,6 +42,7 @@ import uuid
 from decimal import Decimal
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+import pc_checks
 import pc_exitcodes
 import pc_flags
 import pc_leakgate
@@ -760,7 +763,9 @@ def run_stage(
 
     problem = _classify(call, events, summary)
     snapshot = SNAPSHOT_NAMES[spec.name]
-    skipped = take_snapshot(paths, snapshot, _git_executable(ctx.env))
+    vcs = _git_executable(ctx.env)
+    skipped = take_snapshot(paths, snapshot, vcs)
+    pc_checks.capture_boundary_state(paths, spec.name, vcs)
     usage = _usage_of(result_event) if result_event is not None else None
     stdout_sha = _sha256(call.stdout)
     evaluation: Optional[Evaluation] = None
@@ -967,10 +972,46 @@ def _chain_totals(results: Sequence[StageResult]) -> List[Optional[Decimal]]:
     return list(last.values())
 
 
+MESSAGE_CHECKS_UNREADABLE = (
+    "FAIL: the mechanical checks could not read the run root; nothing is filed and the raw files stay in the run root"
+)
+MESSAGE_NOTHING_FILED = "nothing is filed; the raw files and snapshots stay in the run root"
+_BREACH_TEXT = {
+    pc_checks.BREACH_WRITES: "writes outside approved roots",
+    pc_checks.BREACH_GIT: "git mutations",
+}
+
+
+def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) -> Optional[pc_rows.RowOutcome]:
+    """Run the mechanical checks over the run root as it is on disk; a breach is exit 11 and files nothing.
+
+    Only a concrete write outside the approved roots or a git mutation is a breach (HARN-09). Every other
+    fact (denials, ledger changes, helper-call disagreement, Bash path mentions) is left for the reviewer.
+    The lines hold counts and ids only, never a path. A run root the checks cannot read is a broken harness
+    and is also exit 11, because a run whose isolation cannot be shown must not be filed.
+    """
+    try:
+        facts = pc_checks.compute_facts(str(paths["run_root"]), ctx.config_dir)
+    except pc_checks.CheckError:
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_CHECKS_UNREADABLE,))
+    found = pc_checks.breaches(facts)
+    if not found:
+        return None
+    lines = ["isolation or git breach: %s: %d" % (_BREACH_TEXT[name], count) for name, count in found]
+    lines.append(MESSAGE_NOTHING_FILED)
+    return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, tuple(lines))
+
+
 def finish(
     ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]], results: Sequence[StageResult]
 ) -> pc_rows.RowOutcome:
-    """Close a completed chain: one fixed line per stage and the row total (later plans extend this)."""
+    """Close a completed chain: the mechanical checks, then one fixed line per stage and the row total.
+
+    A breach found by the checks ends the row with 11 and prints counts only (later plans extend this).
+    """
+    blocked = breach_outcome(ctx, paths)
+    if blocked is not None:
+        return blocked
     lines: List[str] = []
     for result in results:
         turns = result.summary["num_turns"] if result.summary is not None else None
@@ -1020,6 +1061,7 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
     session = str(uuid.uuid4())
     paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
     take_snapshot(paths, SNAPSHOT_SETUP, vcs)
+    pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs)
     entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
     if entry is None:
         raise pc_spike.SpikeError("the row is not in the registry")
@@ -1045,6 +1087,10 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
                 second = str(uuid.uuid4())
             result = run_stage(ctx, paths, stage, second, resume_line, False, None, timeout, boundary, scan)
         results.append(result)
+        blocked = breach_outcome(ctx, paths)
+        if blocked is not None:
+            extra = () if result.ok else _stopped(stage.name, result.problem).lines
+            return pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra))
         if not result.ok:
             return _stopped(stage.name, result.problem)
         if result.evaluation is not None and result.evaluation.status != STATUS_PASS:

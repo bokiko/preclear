@@ -66,6 +66,12 @@ temporary file (the only deletion anywhere in it), leaves the target as it was a
 exits 1 with ``checkpoint: internal error: <exception class name>`` and nothing
 else. Any unexpected exception maps to the same exit 1 line.
 
+Marker lines in an update body (review WR-03). After the stale-hash check and before any write, update
+refuses a body that holds a line equal to the end marker or a line that starts a begin marker, with exit 4 and
+the ledger bytes unchanged: such a line would end or restart the block early and leave a ledger no real helper
+would produce, which a test could mistake for a skill failure. A marker mentioned inside a longer line is
+accepted. note writes to the history region after the block and init is driver-only, so neither changes.
+
 UNCONFIRMED behaviours. Where references/checkpoint-v1.md and the committed
 evidence are silent the stub takes the most literal reading and marks it here so
 the branch table can mirror this list. None of these was observed against the
@@ -683,6 +689,8 @@ def verb_update(ctx: Context, args) -> int:
     new_body = new_body_raw.rstrip("\n")
     if any(line.startswith("## ") for line in new_body.split("\n")):
         raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: body contains a section heading line")
+    if any(line == END_LINE or BEGIN_LINE_RE.match(line) for line in new_body.split("\n")):
+        raise Exit(EXIT_INVALID, "checkpoint: invalid checkpoint: body contains a checkpoint marker line")
     updated_sections = [(n, new_body if n == name else b) for n, b in sections]
     updated = utc_iso_ms(time.time_ns())
     reason = check_block(updated, ctx.id8, updated_sections)
