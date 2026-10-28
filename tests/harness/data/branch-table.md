@@ -44,6 +44,7 @@ to appear here, so the two cannot drift.
 | update conflict, first and second attempt | update | 3 | `tests/evidence/publication-2026-10-20/row2-double-conflict/s2-preclear-full-trace.md`; `tests/evidence/publication-2026-10-20/row2-double-conflict/snap-2-after-preclear` | CONFIRMED |
 | the conflict message goes to standard error | update | 3 | document only; the committed trace merges the two streams | UNCONFIRMED |
 | validate rejection codes (exit 4 and the invalid checkpoint message) | validate, update | 4 | document only | UNCONFIRMED |
+| update: a body line equal to the checkpoint end marker or matching a begin marker is refused, so a model-written body cannot corrupt the block | update | 4 | `tests/harness/test_stub_cli.py` | STUB-ONLY |
 | exit 5 kill switch (kill switch scope: write verbs only) | any write verb | 5 | none | UNCONFIRMED |
 | exit 6 lock timeout | any write verb | 6 | none | UNCONFIRMED |
 | exit 64 CKPT_HOME missing or not a directory | any | 64 | `tests/harness/test_stub_cli.py` | STUB-ONLY |
