@@ -563,6 +563,111 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(2, code)
 
 
+END_MARKER = "<!-- CHECKPOINT:" + "END -->"
+BEGIN_PREFIX = "<!-- CHECKPOINT:" + "BEGIN "
+MARKER_MESSAGE = "checkpoint: invalid checkpoint: body contains a checkpoint marker line"
+
+
+class MarkerLineTests(unittest.TestCase):
+    """Review WR-03: an update body that holds a checkpoint marker line would corrupt the block."""
+
+    def update(self, rig, name, text, expect=None):
+        hashes = rig.show_hashes()
+        body = rig.file("marker-body.md", text)
+        return rig.run(["update", "--section", name, "--expect-section", expect or hashes[name], "--from", body])
+
+    def assert_refused_untouched(self, text, name="Next action") -> None:
+        rig = Rig()
+        hashes = rig.show_hashes()
+        body = rig.file("marker-body.md", text)
+        before_ledger = rig.read()
+        before_tree = tree_digest(rig.home)
+        code, out, err = rig.run(["update", "--section", name, "--expect-section", hashes[name], "--from", body])
+        self.assertEqual(4, code, err)
+        self.assertEqual("", out)
+        self.assertIn(MARKER_MESSAGE + "\n", err)
+        self.assertEqual(before_ledger, rig.read(), "the ledger bytes are unchanged")
+        self.assertEqual(before_tree, tree_digest(rig.home), "no conflict file, no audit line, nothing new")
+        self.assertEqual([], rig.conflicts())
+        self.assertEqual((0, "ledger lint OK\n"), rig.run(["lint"])[:2], "lint still reports OK")
+        self.assertEqual(len(SECTIONS), len(rig.show_hashes()), "show still prints all six sections")
+        follow = rig.file("next.md", "A later valid body.\n")
+        code, out, err = rig.run(
+            ["update", "--section", name, "--expect-section", rig.show_hashes()[name], "--from", follow]
+        )
+        self.assertEqual(0, code, err)
+
+    def test_a_body_line_equal_to_the_end_marker_exits_4_and_changes_nothing(self) -> None:
+        self.assert_refused_untouched("first line\n" + END_MARKER + "\nlast line\n")
+
+    def test_the_end_marker_alone_and_at_either_edge_of_the_body_is_refused(self) -> None:
+        self.assert_refused_untouched(END_MARKER + "\n")
+        self.assert_refused_untouched("text\n" + END_MARKER)
+
+    def test_a_body_line_that_starts_a_begin_marker_exits_4_with_or_without_its_fields(self) -> None:
+        full = BEGIN_PREFIX + "updated: 2026-10-19T23:10:27.227Z by: " + ID8 + " -->"
+        self.assert_refused_untouched("before\n" + full + "\nafter\n")
+        self.assert_refused_untouched(BEGIN_PREFIX + "anything at all\n")
+        self.assert_refused_untouched(BEGIN_PREFIX + "\n")
+
+    def test_the_refusal_applies_to_every_section_it_can_reach(self) -> None:
+        self.assert_refused_untouched(END_MARKER, name="Goal & current state")
+        self.assert_refused_untouched(END_MARKER, name="Decisions (with reasons)")
+
+    def test_a_marker_mentioned_inside_a_longer_line_is_accepted_and_the_block_still_parses(self) -> None:
+        for text in (
+            "Do not write " + END_MARKER + " in a body.\n",
+            "`" + END_MARKER + "` and `" + BEGIN_PREFIX + "` are the markers.\n",
+            "see:" + BEGIN_PREFIX + "updated: x by: y -->\n",
+        ):
+            rig = Rig()
+            code, out, err = self.update(rig, "Next action", text)
+            self.assertEqual(0, code, err)
+            self.assertEqual((0, "ledger lint OK\n"), rig.run(["lint"])[:2])
+            self.assertEqual(len(SECTIONS), len(rig.show_hashes()))
+
+    def test_a_line_that_differs_by_one_character_follows_the_existing_rules(self) -> None:
+        for text in (
+            END_MARKER + " \n",
+            END_MARKER.lower() + "\n",
+            " " + END_MARKER + "\n",
+            BEGIN_PREFIX.lower() + "x\n",
+            " " + BEGIN_PREFIX + "x\n",
+        ):
+            rig = Rig()
+            code, out, err = self.update(rig, "Next action", text)
+            self.assertEqual(0, code, err)
+            self.assertEqual((0, "ledger lint OK\n"), rig.run(["lint"])[:2])
+            self.assertEqual(len(SECTIONS), len(rig.show_hashes()))
+
+    def test_a_stale_hash_still_conflicts_first_with_exit_3_and_the_conflict_file(self) -> None:
+        rig = Rig()
+        before = rig.read()
+        code, out, err = self.update(rig, "Next action", END_MARKER + "\n", expect="e" * 64)
+        self.assertEqual(3, code, err)
+        self.assertEqual(before, rig.read())
+        self.assertEqual(1, len(rig.conflicts()))
+
+    def test_the_heading_refusal_and_the_usage_error_are_unchanged(self) -> None:
+        rig = Rig()
+        code, out, err = self.update(rig, "Next action", "text\n## Smuggled\n")
+        self.assertEqual(4, code)
+        self.assertIn("checkpoint: invalid checkpoint: body contains a section heading line", err)
+        self.assertNotIn(MARKER_MESSAGE, err)
+        code, out, err = self.update(rig, "Next action", "## Smuggled\n" + END_MARKER + "\n")
+        self.assertIn("section heading line", err, "the heading check keeps its place before the marker check")
+        body = rig.file("x.md", "x")
+        code, out, err = rig.run(["update", "--section", "No such section", "--expect-section", "f" * 64, "--from", body])
+        self.assertEqual(2, code)
+
+    def test_note_and_the_history_region_are_not_affected(self) -> None:
+        rig = Rig()
+        body = rig.file("note.md", "History may mention " + END_MARKER + " inside a sentence.\n")
+        code, out, err = rig.run(["note", "--from", body])
+        self.assertEqual(0, code, err)
+        self.assertEqual((0, "ledger lint OK\n"), rig.run(["lint"])[:2])
+
+
 class LintTests(unittest.TestCase):
     def test_lint_ok_for_a_good_ledger_and_conflict_files_are_not_linted(self) -> None:
         rig = Rig()
