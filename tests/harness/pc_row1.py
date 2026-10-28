@@ -397,6 +397,209 @@ def take_snapshot(
 
 
 # ---------------------------------------------------------------------------------------------
+# The init manifest and the instruction audit, asserted after every stage (HARN-07)
+# ---------------------------------------------------------------------------------------------
+
+# The nine spike ids, then three more. The order is part of the contract and is stated only here.
+ROW_ASSERTION_IDS: Tuple[str, ...] = tuple(pc_spike.S1_ASSERTION_IDS) + (
+    "memory-path-as-set",
+    "cwd-is-project",
+    "session-id-as-requested",
+)
+_HOOK_IDS: Tuple[str, ...] = tuple(pc_spike.S1_ASSERTION_IDS[6:])
+KIND_FRESH = "fresh"
+KIND_RESUME = "resume"
+HOW_NOT_ON_RESUME = "not-asserted-on-resume"
+STATUS_PASS = "pass"
+STATUS_STOP = "stop"
+
+
+class Evaluation(NamedTuple):
+    """The assertions of one stage: status pass or stop, the triples, counts and a fixed-text reason."""
+
+    status: str
+    assertions: List[Tuple[str, str, bool]]
+    counts: Dict[str, Any]
+    reason: str
+
+
+class BinaryScan(object):
+    """Reads the claude executable for defined names at most once per name, and only when asked.
+
+    The scan is asked only when the init lists show a candidate hit. Answers are cached for the life of the
+    object, so one run reads the binary once however many stages show the same candidates.
+    """
+
+    def __init__(self, claude_path: str, lookup: Any = None) -> None:
+        self._path = claude_path
+        self._lookup = lookup
+        self._known: Dict[str, bool] = {}
+
+    def __call__(self, candidates: Any) -> frozenset:
+        wanted = frozenset(candidates)
+        unknown = wanted - frozenset(self._known)
+        if unknown:
+            lookup = self._lookup if self._lookup is not None else pc_spike.binary_defines
+            found = frozenset(lookup(os.path.realpath(self._path), unknown))
+            for name in unknown:
+                self._known[name] = name in found
+        return frozenset(name for name in wanted if self._known[name])
+
+
+def _memory_path_ok(init: Mapping[str, Any], auto_memory: str) -> bool:
+    """memory_paths must be a mapping whose auto value is an absolute path naming the auto-memory folder.
+
+    Compared by realpath with a trailing separator tolerated; a sibling folder that shares a name prefix is not
+    equal, and an absent, empty or non-text value is a failure, never a pass.
+    """
+    memory_paths = init.get("memory_paths")
+    if not isinstance(memory_paths, dict):
+        return False
+    auto = memory_paths.get("auto")
+    if not isinstance(auto, str) or not auto or not os.path.isabs(auto):
+        return False
+    trimmed = auto.rstrip(os.sep)
+    if trimmed == "":
+        return False
+    return os.path.realpath(trimmed) == os.path.realpath(auto_memory)
+
+
+def _cwd_ok(init: Mapping[str, Any], project: str) -> bool:
+    cwd = init.get("cwd")
+    return isinstance(cwd, str) and cwd != "" and os.path.realpath(cwd) == os.path.realpath(project)
+
+
+def _session_ok(events: Sequence[Dict[str, Any]], init: Mapping[str, Any], requested: str) -> bool:
+    try:
+        result = pc_stream.require_single_result(events)
+    except pc_stream.StreamError:
+        return False
+    return init.get("session_id") == requested and result.get("session_id") == requested
+
+
+def _evaluate_parts(
+    events: Sequence[Dict[str, Any]],
+    hooklog_slice: Sequence[Dict[str, Any]],
+    paths: Mapping[str, Optional[str]],
+    requested_session: str,
+    kind: str,
+    user_names: Any,
+    binary_defined: Any,
+    config_dir: str,
+) -> Tuple[List[Tuple[str, str, bool]], Dict[str, Any]]:
+    triples, counts = pc_spike.s1_evaluation(
+        events,
+        list(hooklog_slice),
+        user_names,
+        str(paths["project"]),
+        str(paths["run_root"]),
+        config_dir,
+        binary_defined,
+    )
+    adjusted: List[Tuple[str, str, bool]] = []
+    for name, how, ok in triples:
+        if kind == KIND_RESUME and name in _HOOK_IDS and how == pc_spike.HOW_NONE:
+            adjusted.append((name, HOW_NOT_ON_RESUME, True))
+        else:
+            adjusted.append((name, how, ok))
+    init = pc_stream.init_manifest(events)
+    adjusted.append(("memory-path-as-set", pc_spike.HOW_INIT, _memory_path_ok(init, str(paths["auto_memory"]))))
+    adjusted.append(("cwd-is-project", pc_spike.HOW_INIT, _cwd_ok(init, str(paths["project"]))))
+    adjusted.append(
+        ("session-id-as-requested", pc_spike.HOW_INIT, _session_ok(events, init, requested_session))
+    )
+    return adjusted, counts
+
+
+def stage_assertions(
+    events: Sequence[Dict[str, Any]],
+    hooklog_slice: Sequence[Dict[str, Any]],
+    paths: Mapping[str, Optional[str]],
+    requested_session: str,
+    kind: str,
+    user_names: Any,
+    binary_defined: Any,
+    config_dir: str,
+) -> List[Tuple[str, str, bool]]:
+    """Return the twelve (id, how, ok) triples in the order of ROW_ASSERTION_IDS.
+
+    The nine spike assertions come from pc_spike.s1_evaluation. For a resumed stage whose hook slice holds no
+    entry the three hook ids are recorded as not asserted on resume and are ok (silence on resume is a fact,
+    not a failure); for any other empty slice they are not assertable and fail. A boundary violation in a
+    non-empty slice fails in either kind of stage.
+    """
+    return _evaluate_parts(
+        events, hooklog_slice, paths, requested_session, kind, user_names, binary_defined, config_dir
+    )[0]
+
+
+def evaluate_stage(
+    events: Sequence[Dict[str, Any]],
+    hooklog_slice: Sequence[Dict[str, Any]],
+    paths: Mapping[str, Optional[str]],
+    requested_session: str,
+    kind: str,
+    user_names: Any,
+    scan: Any,
+    config_dir: str,
+) -> Evaluation:
+    """Evaluate one stage: pass only when every assertion is ok, otherwise stop (D-02, HARN-07).
+
+    The binary is scanned (through scan, cached) only when the init lists show a candidate user-name hit.
+    """
+    init = pc_stream.init_manifest(events)
+    candidates = pc_spike.hit_candidates(init, user_names)
+    defined = scan(candidates) if candidates else frozenset()
+    triples, counts = _evaluate_parts(
+        events, hooklog_slice, paths, requested_session, kind, user_names, defined, config_dir
+    )
+    unassertable = [name for name, how, _ok in triples if how == pc_spike.HOW_NONE]
+    failed = [name for name, how, ok in triples if not ok and how != pc_spike.HOW_NONE]
+    parts = []
+    if unassertable:
+        parts.append("no instruction entry was seen for this stage so the instruction audit is not assertable")
+    if failed:
+        parts.append("isolation assertion(s) failed: %s" % ", ".join(failed))
+    if parts:
+        return Evaluation(STATUS_STOP, triples, counts, ", ".join(parts))
+    return Evaluation(STATUS_PASS, triples, counts, "")
+
+
+def describe_evaluation(stage_name: str, evaluation: Evaluation) -> List[str]:
+    """Return the lines to print: ids, yes or no, and counts. Never a name, a path or a host."""
+    lines = ["stage %s isolation: %s" % (stage_name, evaluation.status)]
+    for name, how, ok in evaluation.assertions:
+        lines.append("assertion %s: %s (%s)" % (name, "yes" if ok else "no", how))
+    c = evaluation.counts
+    lines.append(
+        "user names: %d listed, %d excluded, %d hit(s), %d collision(s), audit source %s"
+        % (c["user_names"], c["user_names_excluded"], c["user_name_hits"], c["user_name_collisions"], c["audit_source"])
+    )
+    lines.append(
+        "instruction entries: user=%d project=%d local=%d managed=%d unknown=%d"
+        % (c["entries_user"], c["entries_project"], c["entries_local"], c["entries_managed"], c["entries_unknown"])
+    )
+    if evaluation.status != STATUS_PASS:
+        lines.append("STOP: %s" % evaluation.reason)
+    return lines
+
+
+def _hook_slice(path: str, start: int) -> List[Dict[str, Any]]:
+    """The records the audit hook appended after the first `start` lines of its log."""
+    if not os.path.isfile(path):
+        return []
+    lines = [line for line in _read(path).decode("utf-8", "replace").splitlines() if line.strip()]
+    found: List[Dict[str, Any]] = []
+    for line in lines[start:]:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            record = None
+        found.append(record if isinstance(record, dict) else {"error": "unparseable"})
+    return found
+
+
+# ---------------------------------------------------------------------------------------------
 # One stage
 # ---------------------------------------------------------------------------------------------
 
@@ -420,6 +623,8 @@ class StageResult(NamedTuple):
     problem: str
     stdout_sha256: str
     stdout_size: int
+    evaluation: Any = None
+    hooklog_lines: int = 0
 
 
 def _row_stage_keys() -> Tuple[str, ...]:
@@ -499,6 +704,8 @@ def run_stage(
     resume: bool,
     previous_total: Optional[Decimal],
     timeout: int,
+    hook_start: int = 0,
+    scan: Any = None,
 ) -> StageResult:
     """Run one stage: reserve its cap, run the process, settle the cost, keep the raw bytes, snapshot.
 
@@ -506,6 +713,10 @@ def run_stage(
     pessimistic launch line written before the process; the settlement replaces it with the call's own cost
     (a timeout settles with no delta, so the cap stays counted). A stage is never started a second time: the
     ledger refuses a second launch. The stage record and the snapshot are written whatever the outcome.
+
+    When the stream parses, the init manifest and the instruction audit are asserted for this stage on the hook
+    log lines added since the previous stage boundary (hook_start is the line count that boundary recorded);
+    the triples and the entry counts go into the stage record. scan is the cached binary lookup of the run.
     """
     tools = pc_flags.build_allowed_tools(str(paths["wrapper"]), pc_flags.MODEL_FACING_WRAPPER_VERBS)
     argv = pc_flags.build_argv(
@@ -552,6 +763,21 @@ def run_stage(
     skipped = take_snapshot(paths, snapshot, _git_executable(ctx.env))
     usage = _usage_of(result_event) if result_event is not None else None
     stdout_sha = _sha256(call.stdout)
+    evaluation: Optional[Evaluation] = None
+    if events is not None:
+        home = ctx.env.get("HOME")
+        names = pc_spike.local_user_names(home) if home else frozenset()
+        evaluation = evaluate_stage(
+            events,
+            _hook_slice(str(paths["hooklog"]), hook_start),
+            paths,
+            session_id,
+            KIND_RESUME if resume else KIND_FRESH,
+            names,
+            scan if scan is not None else BinaryScan(str(ctx.claude)),
+            ctx.config_dir,
+        )
+    hooklog_lines = _line_count(str(paths["hooklog"]))
     record = {
         "stage": spec.name,
         "session_id": session_id,
@@ -564,7 +790,7 @@ def run_stage(
         "max_turns": spec.max_turns,
         "version": ctx.version,
         "wrapper_calls": _line_count(os.path.join(str(paths["wrapper_dir"]), "calls.log"), b" CALL"),
-        "hooklog_lines": _line_count(str(paths["hooklog"])),
+        "hooklog_lines": hooklog_lines,
         "snapshot": snapshot,
         "snapshot_copy_skipped": skipped,
         "subtype": subtype,
@@ -576,6 +802,10 @@ def run_stage(
         "problem": problem,
         "stdout_sha256": stdout_sha,
         "stdout_size": len(call.stdout),
+        "evaluation": evaluation.status if evaluation is not None else None,
+        "assertions": [list(triple) for triple in evaluation.assertions] if evaluation is not None else None,
+        "hook_entries": _entry_counts(evaluation),
+        "audit_source": evaluation.counts["audit_source"] if evaluation is not None else None,
     }
     pc_runroot.write_exclusive(
         os.path.join(str(paths["raw"]), spec.name + ".record.json"),
@@ -599,6 +829,16 @@ def run_stage(
         problem,
         stdout_sha,
         len(call.stdout),
+        evaluation,
+        hooklog_lines,
+    )
+
+
+def _entry_counts(evaluation: Optional[Evaluation]) -> Optional[Dict[str, int]]:
+    if evaluation is None:
+        return None
+    return dict(
+        (kind, evaluation.counts["entries_" + kind]) for kind in ("user", "project", "local", "managed", "unknown")
     )
 
 
@@ -691,6 +931,13 @@ def _stopped(stage_name: str, problem: str) -> pc_rows.RowOutcome:
     return pc_rows.RowOutcome(code, (line,))
 
 
+def _isolation_stop(stage_name: str, evaluation: Evaluation) -> pc_rows.RowOutcome:
+    head = "FAIL: stage %s did not meet the isolation baseline; the chain stopped and nothing was filed" % stage_name
+    return pc_rows.RowOutcome(
+        pc_exitcodes.PREFLIGHT_FAIL, tuple([head] + describe_evaluation(stage_name, evaluation))
+    )
+
+
 def _result_text(result: StageResult) -> str:
     if result.events is None:
         return ""
@@ -780,22 +1027,28 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
 
     results: List[StageResult] = []
     resume_line = ""
+    scan = BinaryScan(str(ctx.claude))
     for stage in entry.stages:
         timeout = timeout_override if timeout_override is not None else stage.timeout
+        boundary = results[-1].hooklog_lines if results else 0
         if stage.kind == "work":
-            result = run_stage(ctx, paths, stage, session, s1_prompt, False, None, timeout)
+            result = run_stage(ctx, paths, stage, session, s1_prompt, False, None, timeout, boundary, scan)
         elif stage.kind == "preclear":
-            result = run_stage(ctx, paths, stage, session, s2_prompt, True, results[-1].cumulative, timeout)
+            result = run_stage(
+                ctx, paths, stage, session, s2_prompt, True, results[-1].cumulative, timeout, boundary, scan
+            )
         else:
             if not resume_line:
                 break
             second = str(uuid.uuid4())
             while second == session:
                 second = str(uuid.uuid4())
-            result = run_stage(ctx, paths, stage, second, resume_line, False, None, timeout)
+            result = run_stage(ctx, paths, stage, second, resume_line, False, None, timeout, boundary, scan)
         results.append(result)
         if not result.ok:
             return _stopped(stage.name, result.problem)
+        if result.evaluation is not None and result.evaluation.status != STATUS_PASS:
+            return _isolation_stop(stage.name, result.evaluation)
         if stage.kind == "preclear":
             resume_line = extract_resume_line(_result_text(result))
             _write_chain(paths, resume_line)
