@@ -17,8 +17,11 @@ Run it as python3 -E -s -B pc_matrix.py, never with -I, because the pc_ modules 
     --authorize-retry STAGE append one retry authorization line for a stage that was attempted (a
                             stage key such as row1-s2); a second attempt of a stage never starts
                             without it. Starts no process. A person types it; no task runs it.
+    --refile RUNROOT        repeat the checks and the filing for a finished run folder, for zero
+                            tokens: no claude, no budget, no ledger line. The destination comes from
+                            the evidence date and model recorded in the run folder.
 
-Exactly one of --list, --row, --layout, --all and --authorize-retry is given. An id is matched whole and exactly
+Exactly one of --list, --row, --layout, --all, --authorize-retry and --refile is given. An id is matched whole and exactly
 against the registry before it is used for anything; an unknown or unimplemented id exits 2 with
 fixed text that never repeats the value.
 
@@ -42,6 +45,7 @@ import sys
 from decimal import ROUND_UP, Decimal
 from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, TextIO, Tuple
 
+import pc_evidence
 import pc_exitcodes
 import pc_flags
 import pc_leakgate
@@ -55,7 +59,7 @@ import pc_stream
 
 PROG = "pc_matrix.py"
 USAGE_LINE = (
-    "usage: pc_matrix.py (--list | --row ID | --layout NAME | --all | --authorize-retry STAGE) "
+    "usage: pc_matrix.py (--list | --row ID | --layout NAME | --all | --authorize-retry STAGE | --refile RUNROOT) "
     "[--dry-run] [--claude PATH] [--budget AMOUNT]"
 )
 ALLOWLIST_ROLE_WRAPPER = "/role/wrapper/checkpoint"
@@ -74,6 +78,8 @@ MESSAGE_SHORT_BUDGET = "the budget is below the worst case printed above"
 MESSAGE_NOTHING_TO_RUN = "no implemented row was selected, so nothing was run"
 MESSAGE_UNKNOWN_STAGE = "unknown stage key"
 MESSAGE_NOT_ATTEMPTED = "that stage has not been attempted"
+MESSAGE_RUN_FOLDER = "the run folder is not usable"
+MESSAGE_REFILE_BREACH = "the refile files nothing"
 
 # One line per BLOCKED cause. Each equals a README bullet of the form "- `cause`: line" byte for
 # byte (test_matrix_preflight compares them). The angle token is replaced by the harness config
@@ -164,6 +170,7 @@ def build_parser(out: TextIO, err: TextIO) -> argparse.ArgumentParser:
     parser.add_argument("--claude", default=None)
     parser.add_argument("--budget", default=None)
     parser.add_argument("--authorize-retry", default=None, dest="authorize_retry")
+    parser.add_argument("--refile", default=None)
     return parser
 
 
@@ -444,6 +451,16 @@ def _resolve_runner(runner: Any) -> Optional[Callable[[pc_rows.RunContext], Any]
     return found if callable(found) else None
 
 
+def _exception_code(problem: BaseException, err: TextIO) -> int:
+    """Print the fixed line for an exception and return its exit code. The message and traceback are never printed."""
+    for exception_type, code, line in _EXCEPTION_LINES:
+        if isinstance(problem, exception_type):
+            _write(err, line + "\n")
+            return code
+    _write(err, "FAIL: the row runner stopped unexpectedly\n")
+    return pc_exitcodes.PREFLIGHT_FAIL
+
+
 def execute_row(row: pc_rows.RowSpec, ctx: pc_rows.RunContext, out: TextIO, err: TextIO) -> int:
     """Hand one row to its runner and map the outcome or the exception to an exit code.
 
@@ -456,12 +473,7 @@ def execute_row(row: pc_rows.RowSpec, ctx: pc_rows.RunContext, out: TextIO, err:
     try:
         outcome = runner(ctx)
     except Exception as problem:  # noqa: BLE001 - every failure must map to a fixed line and code
-        for exception_type, code, line in _EXCEPTION_LINES:
-            if isinstance(problem, exception_type):
-                _write(err, line + "\n")
-                return code
-        _write(err, "FAIL: the row runner stopped unexpectedly\n")
-        return pc_exitcodes.PREFLIGHT_FAIL
+        return _exception_code(problem, err)
     if not isinstance(outcome, pc_rows.RowOutcome):
         _write(err, _RUNNER_BAD_RESULT + "\n")
         return pc_exitcodes.PREFLIGHT_FAIL
@@ -492,6 +504,165 @@ def _run_gates(
     for entry in chosen:
         result = gate(entry, repo_root, env, clock, registry)
         _print_result(result, out)
+        if result.code != pc_exitcodes.OK:
+            return result.code
+    return pc_exitcodes.OK
+
+
+def _scratch_map(runs: str) -> Dict[str, str]:
+    """The caller map for a filing that has no run root of its own: the runs root and its parents are scratch."""
+    import pc_row1  # imported late: pc_row1 imports this module's siblings
+
+    return pc_row1.caller_map({"run_root": os.path.join(runs, "placeholder"), "auto_memory": None}, runs)
+
+
+def _config_dir_of(env: Mapping[str, str], root: str) -> Tuple[str, str]:
+    """Return (harness home, harness config folder) as paths; nothing is created."""
+    harness = pc_spike.harness_home(env, env.get("HOME") or None, root)
+    return harness, os.path.join(harness, pc_spike.CONFIG_DIR_NAME)
+
+
+def _file_skipped(
+    entry: pc_rows.RowSpec,
+    result: GateResult,
+    root: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime.datetime],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """File a SKIPPED label folder for a row whose precondition is not met and return the exit code.
+
+    The code is 10 when the label is filed (a skip is never a success) and 14, 15, 17 or 11 when a step refuses.
+    """
+    reason = result.lines[0][len("SKIPPED: "):] if result.lines and result.lines[0].startswith("SKIPPED: ") else ""
+    try:
+        runs = pc_spike.runs_root(env, home_dir=env.get("HOME") or None, repo_root=root)
+        _harness, config_dir = _config_dir_of(env, root)
+    except pc_spike.HomeRefused:
+        _print_result(_blocked("harness-home"), out)
+        return pc_exitcodes.PREFLIGHT_BLOCKED
+    destination = os.path.join(root, "tests", "evidence", _destination_name(clock))
+    try:
+        sanitizer = pc_sanitize.Sanitizer.from_machine(root, _scratch_map(runs))
+        deny_entries = sanitizer.deny_entries()
+        outcome = pc_evidence.file_skipped(
+            root, destination, entry.row_id, reason, sanitizer, deny_entries, config_dir, runs, clock
+        )
+    except Exception as problem:  # noqa: BLE001 - every failure must map to a fixed line and code
+        return _exception_code(problem, err)
+    for line in outcome.lines:
+        _write(out, line + "\n")
+    return int(outcome.code)
+
+
+def _usable_run_folder(text: Any, runs: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Return (the run folder's realpath, its run record) when text names a finished row 1 run folder, else None."""
+    import json
+
+    if not isinstance(text, str) or text == "" or "\x00" in text or not os.path.isabs(text):
+        return None
+    if not os.path.isdir(text):
+        return None
+    real = os.path.realpath(text)
+    if os.path.dirname(real) != runs:
+        return None
+    record_path = os.path.join(real, "raw", "run.json")
+    try:
+        with open(record_path, "rb") as handle:
+            record = json.loads(handle.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("row") != pc_rows.ROW1:
+        return None
+    if not isinstance(record.get("evidence_date"), str) or not isinstance(record.get("model"), str):
+        return None
+    return real, record
+
+
+def _refile(text: str, env: Mapping[str, str], root: str, out: TextIO, err: TextIO) -> int:
+    """Repeat the checks and the filing for a finished run folder, for zero tokens (no claude, no ledger line).
+
+    The destination is recomputed from the evidence date and the model recorded in the run folder, so a later day
+    does not change it. A destination that exists is exit 17, a breach or an unreadable run folder is 11, and a
+    folder that is not usable is 2. The same pc_evidence.file_row as a fresh run does the filing.
+    """
+    import pc_row1  # imported late: pc_row1 imports this module's siblings
+
+    try:
+        runs = pc_spike.runs_root(env, home_dir=env.get("HOME") or None, repo_root=root)
+    except pc_spike.HomeRefused:
+        return _refuse(err, MESSAGE_RUN_FOLDER)
+    found = _usable_run_folder(text, runs)
+    if found is None:
+        return _refuse(err, MESSAGE_RUN_FOLDER)
+    run_root, record = found
+    try:
+        name = pc_rows.evidence_folder_name(record["evidence_date"], record["model"])
+    except ValueError:
+        return _refuse(err, MESSAGE_RUN_FOLDER)
+    destination = os.path.join(root, "tests", "evidence", name)
+    if os.path.lexists(destination):
+        _write(out, "REFUSED: the evidence folder %s already exists; a folder is never reused\n" % name)
+        return pc_exitcodes.PROMOTE_REFUSED
+    try:
+        harness, config_dir = _config_dir_of(env, root)
+    except pc_spike.HomeRefused:
+        _print_result(_blocked("harness-home"), out)
+        return pc_exitcodes.PREFLIGHT_BLOCKED
+    paths = pc_row1.paths_for(run_root)
+    try:
+        sanitizer = pc_sanitize.Sanitizer.from_machine(root, pc_row1.caller_map(paths, runs))
+        deny_entries = sanitizer.deny_entries()
+    except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
+        _write(out, pc_row1.MESSAGE_SANITIZER + "\n")
+        return pc_exitcodes.SCANNER_ERROR
+    ctx = pc_rows.RunContext(
+        repo_root=root,
+        env=dict(env),
+        claude=None,
+        harness_home=harness,
+        config_dir=config_dir,
+        runs_root=runs,
+        run_root=run_root,
+        destination=destination,
+        evidence_date=record["evidence_date"],
+        model=record["model"],
+        sanitizer=sanitizer,
+        deny_entries=deny_entries,
+        budget=Decimal("0"),
+        banner=None,
+        version=None,
+    )
+    try:
+        blocked = pc_row1.breach_outcome(ctx, paths)
+        outcome = blocked if blocked is not None else pc_evidence.file_row(ctx, run_root)
+    except Exception as problem:  # noqa: BLE001 - every failure must map to a fixed line and code
+        return _exception_code(problem, err)
+    for line in outcome.lines:
+        _write(out, line + "\n")
+    return int(outcome.code)
+
+
+def _run_real_gates(
+    chosen: Sequence[pc_rows.RowSpec],
+    repo_root: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime.datetime],
+    registry: Sequence[pc_rows.RowSpec],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Gate each selected row as a real run does: a row whose precondition is not met is filed as SKIPPED (D-10).
+
+    Everything else is as _run_gates: stop at the first row that is not OK and return its code. A skip is exit 10
+    and never 0, whether its label folder was filed or one of the filing steps refused.
+    """
+    for entry in chosen:
+        result = gate(entry, repo_root, env, clock, registry)
+        _print_result(result, out)
+        if result.code == pc_exitcodes.PREFLIGHT_SKIP and result.cause == "precondition":
+            return _file_skipped(entry, result, repo_root, env, clock, out, err)
         if result.code != pc_exitcodes.OK:
             return result.code
     return pc_exitcodes.OK
@@ -590,10 +761,11 @@ def main(
         args.layout is not None,
         args.all_rows,
         args.authorize_retry is not None,
+        args.refile is not None,
     ]
     if sum(1 for chosen_flag in selections if chosen_flag) != 1:
         return _usage(err)
-    if args.dry_run and (args.list_all or args.authorize_retry is not None):
+    if args.dry_run and (args.list_all or args.authorize_retry is not None or args.refile is not None):
         return _usage(err)
 
     source: Mapping[str, str] = dict(os.environ) if env is None else env
@@ -606,6 +778,8 @@ def main(
         return pc_exitcodes.OK
     if args.authorize_retry is not None:
         return _authorize_retry(args.authorize_retry, entries, source, root, out, err)
+    if args.refile is not None:
+        return _refile(args.refile, source, root, out, err)
 
     chosen, refused = _select_entries(args, entries, err)
     if chosen is None:
@@ -621,7 +795,7 @@ def main(
                 return code
         return _run_gates(chosen, root, source, now_of, entries, out)
 
-    code = _run_gates(chosen, root, source, now_of, entries, out)
+    code = _run_real_gates(chosen, root, source, now_of, entries, out, err)
     if code != pc_exitcodes.OK:
         return code
     if not chosen:

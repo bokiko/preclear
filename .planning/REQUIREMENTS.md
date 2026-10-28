@@ -52,8 +52,8 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **EVID-01**: Byte measurement runs on original files before any sanitizing, per section heading-inclusive, against the same caps as the committed evidence
 - [x] **EVID-02**: A sanitizer builds its deny-list at run time from the live machine (raw, realpath, dash-slug and URL-encoded home forms, user, hostname, temp roots) and sanitizes at write time
 - [x] **EVID-03**: A fail-closed leak gate scans every file before it is filed; a `promote` step refuses to copy anything into `tests/evidence/` on a scan failure
-- [ ] **EVID-04**: Filed rows follow the committed per-row file set (README, tools, digests, short and full traces, snapshots, measurements) plus `mechanical-checks.md`, `usage.txt`, `model-id.txt`, `isolation-mode.txt`, `harness-version.txt`, and are written with exclusive creation into a new dated folder
-- [ ] **EVID-05**: The harness never prints a verdict; each row ends with `Reviewer verdict: PENDING` and a reviewer checklist of mechanical facts
+- [x] **EVID-04**: Filed rows follow the committed per-row file set (README, tools, digests, short and full traces, snapshots, measurements) plus `mechanical-checks.md`, `usage.txt`, `model-id.txt`, `isolation-mode.txt`, `harness-version.txt`, and are written with exclusive creation into a new dated folder
+- [x] **EVID-05**: The harness never prints a verdict; each row ends with `Reviewer verdict: PENDING` and a reviewer checklist of mechanical facts
 - [ ] **EVID-06**: A read-only structural comparer reports per-row differences between a rerun and `tests/evidence/publication-2026-10-20/` without editing either
 - [x] **EVID-07**: A model-free `unittest` self-test suite (stub conformance, sanitizer, leak scan, collision refusal, NUL manifest, preflight paths, allowlist check, measurer) passes with zero tokens and is the first thing a stranger runs
 
@@ -131,8 +131,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVID-01 | Phase 2 | Complete |
 | EVID-02 | Phase 2 | Complete |
 | EVID-03 | Phase 2 | Complete |
-| EVID-04 | Phase 3 | Pending |
-| EVID-05 | Phase 3 | Pending |
+| EVID-04 | Phase 3 | Complete |
+| EVID-05 | Phase 3 | Complete |
 | EVID-06 | Phase 3 | Pending |
 | EVID-07 | Phase 2 | Complete |
 | RERUN-01 | Phase 4 | Pending |

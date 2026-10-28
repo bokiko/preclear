@@ -20,6 +20,8 @@ What a row 1 run is, in order:
                       lines of a completed chain
   * breach_outcome    the mechanical checks of pc_checks over the run root after every stage and in finish: a
                       write outside the approved roots or a git mutation is exit 11, counts only, nothing filed
+  * paths_for         the paths mapping of a run root rebuilt from the folder alone (filing and --refile)
+  * finish            after clean checks, files the row through pc_evidence.file_row (plan 03-04)
 
 Every file and folder is created exclusively (pc_runroot); nothing here deletes, renames, moves or truncates, and
 nothing here starts the real claude by itself: the caller names the executable through the run context.
@@ -43,6 +45,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 import pc_checks
+import pc_evidence
 import pc_exitcodes
 import pc_flags
 import pc_leakgate
@@ -331,6 +334,36 @@ def seed_row1(
         "snaps": snaps,
         "settings": settings,
         "hooklog": hooklog,
+    }
+
+
+def paths_for(run_root: str) -> Dict[str, Optional[str]]:
+    """Return the paths mapping seed_row1 returned, rebuilt from a run root alone; it touches nothing.
+
+    Filing and --refile use it so they need no memory of the run. The names are the fixed folder names of the
+    seed, so the same call on the same folder always gives the same mapping.
+    """
+    root = os.path.realpath(run_root)
+    wrapper_dir = os.path.join(root, "wrapper")
+    ckpt = os.path.join(root, "ckpt")
+    ledgers = os.path.join(ckpt, "ledgers")
+    raw = os.path.join(root, "raw")
+    project = os.path.join(root, "project")
+    return {
+        "run_root": root,
+        "project": project,
+        "skill_dir": os.path.join(project, ".claude", "skills", "preclear"),
+        "wrapper_dir": wrapper_dir,
+        "wrapper": os.path.join(wrapper_dir, "checkpoint"),
+        "ckpt": ckpt,
+        "ledgers": ledgers,
+        "ledger_a": os.path.join(ledgers, LEDGER_A_NAME),
+        "ledger_b": os.path.join(ledgers, LEDGER_B_NAME),
+        "auto_memory": os.path.join(root, "auto-memory"),
+        "raw": raw,
+        "snaps": os.path.join(root, "snaps"),
+        "settings": os.path.join(root, "settings.json"),
+        "hooklog": os.path.join(raw, "hooklog.jsonl"),
     }
 
 
@@ -728,6 +761,9 @@ def run_stage(
     env = pc_flags.build_env(ctx.env, ctx.config_dir, str(paths["ckpt"]))
     key = pc_rows.stage_key(ROW_ID, spec.name)
     attempt = pc_spend.append_launch(ctx.harness_home, ROW_ID, key, spec.cap, ctx.version, _row_stage_keys())
+    # The prompt is kept verbatim in raw before the process starts, so a later filing or refile needs nothing from
+    # memory. It comes after the reservation: a second launch of a stage is refused by the ledger first.
+    pc_runroot.write_exclusive(os.path.join(str(paths["raw"]), spec.name + ".prompt"), prompt.encode("utf-8"), 0o600)
 
     started = datetime.datetime.now(datetime.timezone.utc)
     call = pc_spike.run_claude(argv, env, str(paths["project"]), prompt, timeout, str(paths["raw"]), spec.name)
@@ -1005,9 +1041,11 @@ def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) 
 def finish(
     ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]], results: Sequence[StageResult]
 ) -> pc_rows.RowOutcome:
-    """Close a completed chain: the mechanical checks, then one fixed line per stage and the row total.
+    """Close a completed chain: the mechanical checks, one fixed line per stage, the filing and the row total.
 
-    A breach found by the checks ends the row with 11 and prints counts only (later plans extend this).
+    A breach found by the checks ends the row with 11 and prints counts only. When the checks find none, the row
+    is filed through pc_evidence.file_row, the last step; a refusal of the filing is its exit code and its fixed
+    lines (nothing more is printed), and the raw files stay in the run root for a zero-token refile.
     """
     blocked = breach_outcome(ctx, paths)
     if blocked is not None:
@@ -1027,6 +1065,10 @@ def finish(
         )
     if len(results) == 2:
         lines.append("stage s3: not run (%s)" % MARKER_NONE)
+    filed = pc_evidence.file_row(ctx, str(paths["run_root"]))
+    if filed.code != pc_exitcodes.OK:
+        return filed
+    lines.extend(filed.lines)
     totals = _chain_totals(results)
     if any(total is None for total in totals):
         lines.append("row total: unknown (a result carried no cost)")

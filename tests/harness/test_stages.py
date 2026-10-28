@@ -128,7 +128,9 @@ class ChainTests(unittest.TestCase):
             ["snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume"],
         )
         for line in run.outcome.lines:
-            self.assertRegex(line, r"^(stage s[123]: [A-Za-z0-9_, .()-]+|row total: [0-9.]+ USD)$")
+            self.assertRegex(
+                line, r"^(stage s[123]: [A-Za-z0-9_, .()-]+|filed: [A-Za-z0-9_, .()-]+|row total: [0-9.]+ USD)$"
+            )
             self.assertNotIn(run.rig.base, line)
             self.assertNotIn(u1, line)
         self.assertEqual(read_json(run.raw("s2.record.json"))["wrapper_calls"], 1)
