@@ -190,9 +190,10 @@ class ThreeStateTests(unittest.TestCase):
         self.assertNotIn(repo, out + err)
 
     def test_a_missing_evidence_folder_is_a_fail(self) -> None:
-        repo = make_repo(with_evidence=False)
-        code, out, err = self.dry(["--row", ROW1], repo=repo)
+        registry = registry_with(injected_row("row0-no-evidence"))
+        code, out, err = self.dry(["--row", "row0-no-evidence"], repo=scratch(), registry=registry)
         self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, out + err)
+        self.assertIn("evidence folder is missing", out)
 
     def test_an_existing_destination_folder_is_refused_with_exit_17(self) -> None:
         os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION))
@@ -584,7 +585,7 @@ class FixLineTests(unittest.TestCase):
         text = read_text(README)
         for cause, line in matrix().BLOCKED_FIXES.items():
             bullet = "- `%s`: %s" % (cause, line)
-            self.assertIn("\n" + bullet + "\n", text, "a fix line is not a README bullet byte for byte")
+            self.assertTrue(("\n" + bullet + "\n") in text, "a fix line is not a README bullet byte for byte")
             self.assertEqual(text.count(bullet), 1)
 
     def test_no_fix_line_holds_an_absolute_path_or_a_newline(self) -> None:

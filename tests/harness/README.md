@@ -228,6 +228,39 @@ a dry run, then one row.
 - Only row 1 is implemented in this phase. The other rows and the three layouts are listed and
   refused with exit 2, and so is any id that is not an exact, whole match of a listed one (a
   prefix, another case, an empty value). The refusal text is fixed and never repeats the value.
+- `--claude PATH` names the Claude Code executable to use, by its absolute path. The same path
+  feeds the preflight, the argument vector and the scan of the binary, so a tested build that is
+  not first on `PATH` can be selected without changing anything else. It is accepted and unused in
+  a dry run.
+- `--budget AMOUNT` is the most the caller allows a real run to cost. It must be at least the worst
+  case the dry run prints, written with at most two decimals and at most five in total; a real run
+  without one, or with a smaller or malformed one, is refused with exit 18 before any process
+  starts.
+
+The claude-free gate runs inside the dry run, with no process and no `claude`: the runs root is
+outside every home folder and the repository, every file the row reads exists, the evidence folder
+for the run does not exist yet (a name that exists is refused with exit 17 and never reused), and
+the row's own precondition holds. A real run then checks the budget, starts the checkpoint stub
+with `--version` once, and runs the strict preflight, in that order, before the row starts.
+
+The three states, each with its own code and its own label:
+
+- SKIP (exit 10): a row's precondition is not met. The row is labelled SKIPPED with the reason
+  and is never counted as a pass.
+- FAIL (exit 11): the harness or a fixture is broken, for example a file the row reads is missing
+  or `claude` answered with something unusable. Nothing is filed.
+- BLOCKED (exit 12): there is no `claude`, no login, an unusable runs root or an unreachable stub.
+  Exit 13 is the same family for a build outside the tested set. A BLOCKED result prints one
+  line starting with `fix:`, and that line is one of these bullets:
+
+- `no-claude`: install Claude Code, or pass the absolute path of a tested build with --claude
+- `logged-out`: run this once in your own terminal, then rerun: CLAUDE_CONFIG_DIR=<config> claude auth login
+- `untested-version`: pass --claude with the absolute path of a tested build, or seed this build by rerunning the spikes on it as described under Spike spend and adding its version to the tested set in pc_flags.py
+- `runs-root`: set PRECLEAR_RUNS_ROOT to an absolute folder outside every home folder and the repository whose parents hold no instruction file
+- `stub-unreachable`: the checkpoint stub could not be started: check that python3 3.9 or newer runs the stub with --version
+
+The `<config>` token in the login line is replaced by the real harness config folder only when
+the line is printed on your own terminal; this guide never holds a real path.
 
 ## Replacement tokens
 
@@ -280,6 +313,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_leakgate.py` - tests for the leak gate
 - `test_manifest.py` - tests for the manifest writers
 - `test_matrix_cli.py` - tests for the driver's list, selection and dry run
+- `test_matrix_preflight.py` - tests for the driver's gate, the three states, --claude and the budget
 - `test_measure.py` - tests for the byte measurer
 - `test_mine.py` - tests for the call-log miner
 - `test_preflight.py` - tests for the exit-code table and the preflight
@@ -310,4 +344,6 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
   holds the set of versions the harness has actually run against; any other version is reported,
   not trusted.
 - A green self-test says the harness machinery works. It says nothing about the skill.
+- Rerunning the spikes on a new Claude Code build needs fresh output names and a fresh harness home,
+  because the committed outputs and the lifetime attempt limits of the spike ledger stay in the way.
 - Later phases extend this guide with the run matrix, its order and its measured cost.

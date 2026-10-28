@@ -74,6 +74,7 @@ def cli_env(base: str, path_dirs, harness_home=None, extra=None) -> dict:
         "PATH": os.pathsep.join(list(path_dirs) + list(pc_testutil.SYSTEM_DIRS)),
         "HOME": base,
         "LANG": "en_US.UTF-8",
+        "PRECLEAR_RUNS_ROOT": scratch(),
     }
     if harness_home is not None:
         env[HOME_ENV] = harness_home
@@ -357,8 +358,8 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("row1-wrong-binding: 3 stages, 2 sessions", out)
         for identifier in LAYOUTS + ROWS[1:]:
             self.assertIn("%s: not implemented" % identifier, out)
-        last = out.strip().splitlines()[-1]
-        self.assertEqual(last, "total: 1 row(s), 3 stage(s), 2 session(s), worst case 2.00 USD")
+        totals = [line for line in out.splitlines() if line.startswith("total:")]
+        self.assertEqual(totals, ["total: 1 row(s), 3 stage(s), 2 session(s), worst case 2.00 USD"])
 
     def test_an_empty_registry_has_zero_stages_and_zero_sessions(self) -> None:
         code, out, err = run_main(["--dry-run", "--all"], self.env, registry=())

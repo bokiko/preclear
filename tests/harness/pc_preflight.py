@@ -5,7 +5,8 @@ untested Claude Code version (state UNTESTED). The preflight never sends a promp
 
 Checks, in order:
 
-  1. claude on the search path                      else BLOCKED
+  1. claude on the search path, or the explicit    else BLOCKED (cause no-claude); an explicit
+     --claude path (absolute, an executable file)  path replaces the search entirely
   2. the config directory is acceptable             else FAIL (refused by build_env)
   3. claude --version (20 second timeout)           non-zero, empty or malformed output: FAIL
   4. the exact-match version gate                   untested or below the floor: UNTESTED (13)
@@ -25,8 +26,13 @@ modules import each other):
     --config-dir DIR        harness-owned CLAUDE_CONFIG_DIR
     --tested-version X.Y.Z  tested version (repeatable); default is pc_flags.TESTED_VERSIONS
     --row-skip-reason TEXT  pretend the row precondition is unmet (for tests)
+    --claude PATH           the absolute path of the claude executable to check, instead of a search
 
 It prints exactly one line, "<STATE>: <message>", and exits with the state's code.
+
+Every result that is not OK carries a cause (no-claude, no-config, logged-out, untested-version,
+malformed, unusable or precondition) so a caller can print a fixed one-line fix without parsing
+the message; an OK result carries the stripped version banner and the path of the claude it used.
 """
 from __future__ import annotations
 
@@ -61,11 +67,22 @@ _STATE_CODES = {
 class PreflightResult(object):
     """The outcome of a preflight: a state, its exit code, a one-line message and detail."""
 
-    def __init__(self, state: str, message: str, detail: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        state: str,
+        message: str,
+        detail: Optional[str] = None,
+        cause: Optional[str] = None,
+        banner: Optional[str] = None,
+        claude: Optional[str] = None,
+    ) -> None:
         self.state = state
         self.exit_code = _STATE_CODES[state]
         self.message = " ".join(message.split("\n"))
         self.detail = detail
+        self.cause = cause
+        self.banner = banner
+        self.claude = claude
 
     def line(self) -> str:
         return "%s: %s" % (self.state, self.message)
@@ -103,80 +120,117 @@ def _login_instruction(config_dir: str) -> str:
     )
 
 
+def _usable_claude(path: object) -> bool:
+    """True for an absolute path to an executable regular file (a symlink to one is accepted)."""
+    return (
+        isinstance(path, str)
+        and path != ""
+        and os.path.isabs(path)
+        and os.path.isfile(path)
+        and os.access(path, os.X_OK)
+    )
+
+
 def run_preflight(
     search_path: Optional[Sequence[str]] = None,
     config_dir: Optional[str] = None,
     tested_versions: Optional[Sequence[str]] = None,
     row_check: Optional[Callable[[], Optional[str]]] = None,
     base_env: Optional[Mapping[str, str]] = None,
+    claude_path: Optional[str] = None,
 ) -> PreflightResult:
-    """Run the preflight checks in order and return the first state that is not OK."""
-    claude = find_claude(search_path)
+    """Run the preflight checks in order and return the first state that is not OK.
+
+    With claude_path the search path is never consulted: the path must be absolute and name an
+    executable regular file, else the result is BLOCKED with the cause no-claude. The messages
+    never repeat the path.
+    """
+    if claude_path is not None:
+        if not _usable_claude(claude_path):
+            return PreflightResult(
+                BLOCKED,
+                "the given claude path is not an absolute path to an executable file",
+                cause="no-claude",
+            )
+        claude: Optional[str] = claude_path
+    else:
+        claude = find_claude(search_path)
     if claude is None:
-        return PreflightResult(BLOCKED, "claude not found on PATH")
+        return PreflightResult(BLOCKED, "claude not found on PATH", cause="no-claude")
 
     tested = pc_flags.TESTED_VERSIONS if tested_versions is None else tuple(tested_versions)
     try:
         env = pc_flags.build_env(os.environ if base_env is None else base_env, config_dir)
     except ValueError as problem:
-        return PreflightResult(FAIL, "config directory refused: %s" % problem)
+        return PreflightResult(FAIL, "config directory refused: %s" % problem, cause="unusable")
 
     try:
         status, raw = _run([claude, "--version"], env)
     except subprocess.TimeoutExpired:
-        return PreflightResult(FAIL, "claude --version timed out")
+        return PreflightResult(FAIL, "claude --version timed out", cause="unusable")
     except OSError:
-        return PreflightResult(FAIL, "claude --version could not be started")
+        return PreflightResult(FAIL, "claude --version could not be started", cause="unusable")
     if status != 0:
-        return PreflightResult(FAIL, "claude --version exited with a non-zero status")
+        return PreflightResult(FAIL, "claude --version exited with a non-zero status", cause="unusable")
     try:
         banner = raw.decode("utf-8")
     except UnicodeDecodeError:
-        return PreflightResult(FAIL, "claude --version printed bytes that are not UTF-8")
+        return PreflightResult(FAIL, "claude --version printed bytes that are not UTF-8", cause="malformed")
 
     verdict = pc_flags.check_version(banner, tested)
     if verdict.status == "MALFORMED":
-        return PreflightResult(FAIL, "claude --version printed an empty or unrecognised banner")
+        return PreflightResult(
+            FAIL, "claude --version printed an empty or unrecognised banner", cause="malformed"
+        )
     if verdict.status != "TESTED":
         return PreflightResult(
             UNTESTED,
             "Claude Code %s is %s; the tested set is exact-match"
             % (verdict.version, "below the floor" if verdict.status == "BELOW_FLOOR" else "not tested"),
+            cause="untested-version",
         )
 
     if config_dir is None:
         return PreflightResult(
             BLOCKED,
             "no harness config directory was given; the harness never falls back to the user's own config",
+            cause="no-config",
         )
     if not os.path.isdir(config_dir):
-        return PreflightResult(BLOCKED, _login_instruction(config_dir))
+        return PreflightResult(BLOCKED, _login_instruction(config_dir), cause="no-config")
 
     try:
         status, raw = _run([claude, "auth", "status", "--json"], env)
     except subprocess.TimeoutExpired:
-        return PreflightResult(FAIL, "claude auth status timed out")
+        return PreflightResult(FAIL, "claude auth status timed out", cause="unusable")
     except OSError:
-        return PreflightResult(FAIL, "claude auth status could not be started")
+        return PreflightResult(FAIL, "claude auth status could not be started", cause="unusable")
     # Only the boolean loggedIn is read. Everything else in the output is discarded unseen.
     try:
         parsed = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        return PreflightResult(FAIL, "claude auth status did not print a JSON object")
+        return PreflightResult(FAIL, "claude auth status did not print a JSON object", cause="malformed")
     logged_in = parsed.get("loggedIn") if isinstance(parsed, dict) else None
     del parsed
     if not isinstance(logged_in, bool):
-        return PreflightResult(FAIL, "claude auth status carried no boolean loggedIn")
+        return PreflightResult(FAIL, "claude auth status carried no boolean loggedIn", cause="malformed")
     if not logged_in:
-        return PreflightResult(BLOCKED, _login_instruction(config_dir))
+        return PreflightResult(BLOCKED, _login_instruction(config_dir), cause="logged-out")
     if status != 0:
-        return PreflightResult(FAIL, "claude auth status exited non-zero while reporting a login")
+        return PreflightResult(
+            FAIL, "claude auth status exited non-zero while reporting a login", cause="unusable"
+        )
 
     if row_check is not None:
         reason = row_check()
         if reason is not None:
-            return PreflightResult(SKIP, "SKIPPED: %s" % reason)
-    return PreflightResult(OK, "preflight passed for Claude Code %s" % verdict.version)
+            return PreflightResult(SKIP, "SKIPPED: %s" % reason, cause="precondition")
+    return PreflightResult(
+        OK,
+        "preflight passed for Claude Code %s" % verdict.version,
+        banner=banner.strip(),
+        claude=claude,
+    )
 
 
 def _constant_reason(reason: str) -> Callable[[], Optional[str]]:
@@ -192,6 +246,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--config-dir", default=None)
     parser.add_argument("--tested-version", action="append", default=None)
     parser.add_argument("--row-skip-reason", default=None)
+    parser.add_argument("--claude", default=None)
     try:
         args = parser.parse_args(argv)
     except SystemExit as exit_request:
@@ -205,6 +260,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         config_dir=args.config_dir,
         tested_versions=args.tested_version,
         row_check=row_check,
+        claude_path=args.claude,
     )
     sys.stdout.write(result.line() + "\n")
     return result.exit_code
