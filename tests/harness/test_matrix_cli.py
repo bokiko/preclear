@@ -391,5 +391,87 @@ class DryRunTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.home))
 
 
+class AuthorizeRetryTests(unittest.TestCase):
+    """--authorize-retry appends one ledger line, prints counts only and starts no process."""
+
+    def setUp(self) -> None:
+        self.base = scratch()
+        self.bin = os.path.join(self.base, "bin")
+        os.makedirs(self.bin)
+        pc_testutil.make_tripwire(self.bin)
+        self.home = os.path.join(self.base, "hh")
+        self.env = cli_env(self.base, [self.bin], harness_home=self.home)
+
+    def ledger(self) -> str:
+        return os.path.join(self.home, "matrix-spend.jsonl")
+
+    def record_attempt(self, stage: str = "row1-s2", cap: str = "1.30") -> None:
+        import pc_spend
+
+        pc_spend.append_launch(
+            self.home, "row1-wrong-binding", stage, Decimal(cap), "2.1.310", ("row1-s1", "row1-s2", "row1-s3")
+        )
+
+    def kinds(self):
+        import json
+
+        with open(self.ledger(), "r", encoding="ascii") as handle:
+            return [json.loads(line)["kind"] for line in handle.read().splitlines()]
+
+    def test_a_recorded_stage_gets_exactly_one_authorization_line(self) -> None:
+        os.makedirs(self.home)
+        self.record_attempt()
+        code, out, err = run_cli(["--authorize-retry", "row1-s2"], self.env)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.kinds(), ["launch", "authorize"])
+        self.assertEqual(out.strip(), "authorized one more attempt of row1-s2")
+        self.assertNotIn(self.base, out + err)
+        self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
+
+    def test_a_second_authorization_before_the_retry_is_refused_with_exit_18(self) -> None:
+        os.makedirs(self.home)
+        self.record_attempt()
+        self.assertEqual(run_main(["--authorize-retry", "row1-s2"], self.env)[0], 0)
+        code, out, err = run_main(["--authorize-retry", "row1-s2"], self.env)
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertEqual(self.kinds(), ["launch", "authorize"])
+
+    def test_a_never_attempted_stage_exits_2_and_creates_no_ledger(self) -> None:
+        code, out, err = run_cli(["--authorize-retry", "row1-s2"], self.env)
+        self.assertEqual(code, 2)
+        self.assertIn("that stage has not been attempted", err)
+        self.assertEqual(out, "")
+        self.assertFalse(os.path.exists(self.ledger()))
+        self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
+
+    def test_an_unknown_empty_or_odd_stage_key_exits_2_without_an_echo(self) -> None:
+        os.makedirs(self.home)
+        self.record_attempt()
+        marker = "zzprobe-s7"
+        odd = (marker, "row1-s9", "row9-s1", "", "row1-s2 ", "ROW1-S2", "row1-s" + chr(0x0662), "row1-s" + chr(7), "a" * 70)
+        for value in odd:
+            code, out, err = run_main(["--authorize-retry", value], self.env)
+            self.assertEqual(code, pc_exitcodes.USAGE, "a bad stage key was not refused with exit 2")
+            self.assertEqual(out, "")
+            self.assertIn("unknown stage key", err)
+            self.assertNotIn("zzprobe", err)
+        self.assertEqual(self.kinds(), ["launch"])
+
+    def test_the_flag_cannot_be_combined_with_another_selection_or_a_dry_run(self) -> None:
+        os.makedirs(self.home)
+        self.record_attempt()
+        for extra in (["--list"], ["--all"], ["--row", "row1-wrong-binding"], ["--layout", "plain-memory"], ["--dry-run"]):
+            code, out, err = run_main(["--authorize-retry", "row1-s2"] + extra, self.env)
+            self.assertEqual(code, pc_exitcodes.USAGE)
+        self.assertEqual(self.kinds(), ["launch"])
+
+    def test_the_flag_starts_no_process_of_any_kind(self) -> None:
+        os.makedirs(self.home)
+        self.record_attempt()
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("a process was started")):
+            code, out, err = run_main(["--authorize-retry", "row1-s2"], self.env)
+        self.assertEqual(code, 0, err)
+
+
 if __name__ == "__main__":
     unittest.main()
