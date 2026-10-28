@@ -303,5 +303,570 @@ class Wr14Tests(unittest.TestCase):
         self.assertEqual(result.code, 0, "the same bytes without the entries are accepted: " + result.message)
 
 
+# ---------------------------------------------------------------------------------------------
+# Task 2: the full per-row file set
+# ---------------------------------------------------------------------------------------------
+
+COMMITTED_SET = (
+    "README.md", "claude-version.txt", "digests.txt", "fixture-CLAUDE.md", "tools.txt", "measurements.md",
+    "measurements.txt", "s1-work.out", "s1.err", "s1.exit", "s2-preclear-prompt.md", "s2-preclear-trace.md",
+    "s2-preclear-full-trace.md", "s2-preclear.err", "s2-preclear.exit", "session.id", "status-before.txt",
+    "lint-before.txt", "wrapper-calls.log", "wrapper-checkpoint.sh", "snap-0-setup", "snap-1-after-work",
+    "snap-2-after-preclear",
+)
+NEW_SET = (
+    "mechanical-checks.md", "usage.txt", "model-id.txt", "isolation-mode.txt", "harness-version.txt",
+    "s1-work-prompt.md", "s1-work-full-trace.md", "settings.json",
+)
+S3_SET = (
+    "s3-resume-trace.md", "s3-resume-full-trace.md", "s3-resume.err", "s3-resume.exit", "resume-line.txt",
+    "session-resume.id", "snap-3-after-resume",
+)
+SNAPSHOT_SET = ("sha.txt", "manifest.jsonl", "status.txt", "ledgers-ls.txt", "bindings-ls.txt")
+LEDGER_NAMES = ("CONTINUITY_CLAUDE-other-task.md", "CONTINUITY_CLAUDE-widget-export.md")
+ASSERTION_IDS = (
+    "permission-mode-default", "model-pinned", "skill-preclear-present", "mcp-servers-empty",
+    "no-non-builtin-plugins", "user-names-absent", "no-user-instruction-outside-config",
+    "project-claude-md-loaded", "project-local-inside-run-root", "memory-path-as-set", "cwd-is-project",
+    "session-id-as-requested",
+)
+SECTION_NAMES = (
+    "Init manifest", "Instruction audit", "Assertions", "Write boundary", "Git", "Helper calls", "Ledgers",
+    "Sessions", "Denials", "Checkpoint bytes",
+)
+CHECKLIST_PREFIXES = (
+    "helper calls", "ledger digests unchanged", "writes outside approved roots", "git mutations",
+    "checkpoint bytes versus cap", "session ids per stage", "cost and turns per stage",
+)
+PUBLICATION_ROW = os.path.join("tests", "evidence", "publication-2026-10-20", "row1-wrong-binding")
+
+
+def verdict_words() -> tuple:
+    """The words no harness-authored file may hold, assembled from fragments at run time."""
+    return (
+        "pa" + "ss", "pa" + "ssed", "fa" + "il", "fa" + "iled", "fail" + "ure", "acc" + "ept", "acc" + "epted",
+        "ver" + "dict",
+    )
+
+
+def verdict_pattern():
+    import re
+
+    return re.compile(r"\b(?:%s)\b" % "|".join(verdict_words()), re.IGNORECASE)
+
+
+def with_result(stages: list, index: int, **changes) -> list:
+    copied = json.loads(json.dumps(stages))
+    copied[index]["result"].update(changes)
+    return copied
+
+
+def with_ops(stages: list, index: int, ops: list) -> list:
+    copied = json.loads(json.dumps(stages))
+    copied[index]["ops"] = list(copied[index].get("ops", [])) + json.loads(json.dumps(ops))
+    return copied
+
+
+def sha256_of(path: str) -> str:
+    import hashlib
+
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+_FILED = {}
+
+
+def default_filed() -> "Filed":
+    """One filed default run, built once and only read by the tests that use it."""
+    if "default" not in _FILED:
+        _FILED["default"] = Filed()
+    return _FILED["default"]
+
+
+class Filed(object):
+    """An Unfiled world that has been filed once into its own temporary repository."""
+
+    def __init__(self, stages=None, **config) -> None:
+        self.run = Unfiled(stages=stages, **config)
+        self.sanitizer = self.run.sanitizer()
+        self.outcome = self.run.file(sanitizer=self.sanitizer)
+
+    @property
+    def row_dir(self) -> str:
+        return os.path.join(self.run.destination, ROW1)
+
+    def path(self, name: str) -> str:
+        return os.path.join(self.row_dir, name)
+
+    def read(self, name: str) -> str:
+        return read_text(self.path(name))
+
+    def raw(self, name: str) -> str:
+        return os.path.join(self.run.run_root, "raw", name)
+
+
+class FileSetTests(unittest.TestCase):
+    def test_the_row_folder_holds_exactly_the_committed_set_the_new_files_and_the_s3_set(self) -> None:
+        filed = default_filed()
+        self.assertEqual(filed.outcome.code, 0, "\n".join(filed.outcome.lines))
+        expected = sorted(COMMITTED_SET + NEW_SET + S3_SET)
+        self.assertEqual(sorted(os.listdir(filed.row_dir)), expected, "the row folder file set")
+        for snap in ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume"):
+            names = os.listdir(filed.path(snap))
+            for needed in SNAPSHOT_SET + LEDGER_NAMES:
+                self.assertIn(needed, names, "%s holds %s" % (snap, needed))
+            self.assertNotIn("status.raw", names, "the NUL status capture is not filed")
+
+    def test_with_no_resume_line_the_s3_files_are_absent_and_the_marker_is_filed(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, text="Checkpoint written. Nothing to resume from.")
+        filed = Filed(stages)
+        self.assertEqual(filed.outcome.code, 0, "\n".join(filed.outcome.lines))
+        names = sorted(os.listdir(filed.row_dir))
+        self.assertEqual(names, sorted(COMMITTED_SET + NEW_SET + ("resume-line.txt",)), "no s3 file is filed")
+        self.assertEqual(filed.read("resume-line.txt"), "NO-RESUME-LINE\n", "the marker and nothing else")
+
+    def test_a_stage_with_empty_stderr_still_files_a_zero_byte_err_file(self) -> None:
+        filed = default_filed()
+        for name in ("s1.err", "s2-preclear.err", "s3-resume.err"):
+            self.assertTrue(os.path.isfile(filed.path(name)), name + " is filed")
+            self.assertEqual(os.path.getsize(filed.path(name)), 0, name + " is empty")
+        stages = pc_testutil.default_row1_stages()
+        stages[0] = dict(stages[0], stderr="a warning line\n")
+        other = Filed(stages)
+        self.assertEqual(other.read("s1.err"), "a warning line\n", "a stderr text is filed as it is")
+
+    def test_the_s2_prompt_is_a_byte_copy_of_the_committed_file(self) -> None:
+        filed = default_filed()
+        committed = os.path.join(filed.run.rig.repo, PUBLICATION_ROW, "s2-preclear-prompt.md")
+        self.assertEqual(sha256_of(filed.path("s2-preclear-prompt.md")), sha256_of(committed), "same digest")
+
+    def test_the_s1_prompt_is_the_stored_prompt_with_the_ledger_path_tokenised(self) -> None:
+        filed = default_filed()
+        stored = read_text(filed.raw("s1.prompt"))
+        self.assertEqual(filed.read("s1-work-prompt.md"), filed.sanitizer.sanitize_text(stored), "tokenised copy")
+        self.assertIn("<run>", filed.read("s1-work-prompt.md"), "the ledger path is a run token")
+
+    def test_the_resume_line_and_the_two_session_ids_are_filed(self) -> None:
+        filed = default_filed()
+        calls = filed.run.rig.calls()
+        sent = calls[2]["prompt"]
+        self.assertFalse(sent.endswith("\n"), "the prompt that was sent had no newline")
+        line = filed.read("resume-line.txt")
+        self.assertEqual(line, filed.sanitizer.sanitize_text(sent) + "\n", "the sanitized line and one newline")
+        first = filed.read("session.id").strip()
+        second = filed.read("session-resume.id").strip()
+        self.assertRegex(first, r"^[0-9a-f-]{36}$", "the work session id")
+        self.assertRegex(second, r"^[0-9a-f-]{36}$", "the resume session id")
+        self.assertNotEqual(first, second, "the two ids differ")
+        self.assertEqual(filed.read("s1.exit"), "exit 0\n", "an exit file")
+        self.assertEqual(filed.read("s2-preclear.exit"), "exit 0\n", "an exit file")
+
+    def test_the_snapshot_listing_is_rebuilt_without_the_helper_path_files(self) -> None:
+        filed = default_filed()
+        stored = os.path.join(filed.run.run_root, "snaps", "snap-2-after-preclear")
+        full = read_text(os.path.join(stored, "sha.txt"))
+        self.assertIn("wrapper/py", full, "the stored listing holds the interpreter path file")
+        for snap in ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume"):
+            for name in ("sha.txt", "manifest.jsonl"):
+                text = filed.read(os.path.join(snap, name))
+                self.assertNotIn("wrapper/py", text, "%s/%s has no interpreter path entry" % (snap, name))
+                self.assertNotIn("wrapper/stub", text, "%s/%s has no stub path entry" % (snap, name))
+                self.assertIn("wrapper/checkpoint", text, "%s/%s keeps the wrapper entry" % (snap, name))
+        rebuilt = filed.read(os.path.join("snap-2-after-preclear", "sha.txt"))
+        kept = [line for line in full.splitlines() if "wrapper/py" not in line and "wrapper/stub" not in line]
+        self.assertEqual(rebuilt.splitlines(), kept, "the rest of the listing is the stored one")
+        self.assertTrue(os.path.isfile(filed.path(os.path.join("snap-2-after-preclear", "preclear", "widget-export", "checkpoint.md"))))
+        self.assertTrue(os.path.isdir(filed.path(os.path.join("snap-2-after-preclear", "auto-memory"))), "memory tree")
+
+    def test_filing_one_run_twice_gives_the_same_files_except_the_harness_version(self) -> None:
+        run = Unfiled()
+        first = run.file()
+        self.assertEqual(first.code, 0, "\n".join(first.lines))
+        second_ctx = run.file_context()
+        second_dest = os.path.join(os.path.dirname(run.destination), "rerun-2026-10-28-second")
+        second = evidence().file_row(second_ctx._replace(destination=second_dest), run.run_root)
+        self.assertEqual(second.code, 0, "\n".join(second.lines))
+        one = tree_bytes(run.destination)
+        two = tree_bytes(second_dest)
+        self.assertEqual(sorted(one), sorted(two), "equal file lists")
+        for relative in sorted(one):
+            if relative.endswith("harness-version.txt"):
+                continue
+            self.assertEqual(one[relative], two[relative], "equal bytes: " + relative)
+        self.assertEqual(sorted(one), list(sorted(one)), "the listing is sorted")
+
+
+class ProvenanceTests(unittest.TestCase):
+    def test_every_provenance_file_is_filled(self) -> None:
+        filed = default_filed()
+        self.assertEqual(filed.read("claude-version.txt"), "2.1.310 (Claude Code)\n", "the banner line")
+        self.assertEqual(filed.read("model-id.txt"), "claude-sonnet-5-5\n", "the pinned model id")
+        lines = filed.read("isolation-mode.txt").splitlines()
+        self.assertEqual(len(lines), 3, "three lines")
+        self.assertEqual(lines[0], "isolation: strict")
+        self.assertEqual(lines[1], "setting-sources: project,local")
+        import pc_flags
+
+        self.assertEqual(lines[2], pc_flags.ISOLATION_CLAIM, "the claim sentence")
+        version = filed.read("harness-version.txt").splitlines()
+        self.assertEqual(len(version), 3, "three lines")
+        self.assertRegex(version[0], r"^tree-sha256: [0-9a-f]{64}$")
+        self.assertRegex(version[1], r"^head: ([0-9a-f]{40}|unknown)$")
+        self.assertRegex(version[2], r"^harness-tree-clean: (yes|no|unknown)$")
+        for name in ("claude-version.txt", "model-id.txt", "isolation-mode.txt", "harness-version.txt", "digests.txt",
+                     "tools.txt", "usage.txt"):
+            self.assertTrue(filed.read(name).strip(), name + " is not blank")
+
+    def test_digests_list_the_skill_the_references_the_stub_and_the_wrapper(self) -> None:
+        filed = default_filed()
+        lines = filed.read("digests.txt").splitlines()
+        self.assertEqual(len(lines), 6, "SKILL.md, three references, the stub and the wrapper")
+        repo = filed.run.rig.repo
+        tails = [
+            "<run>/project/.claude/skills/preclear/SKILL.md",
+            "<run>/project/.claude/skills/preclear/references/checkpoint-v1.md",
+            "<run>/project/.claude/skills/preclear/references/configuration.md",
+            "<run>/project/.claude/skills/preclear/references/status-sidecar.md",
+            "tests/harness/checkpoint_stub.py",
+            "<run>/wrapper/checkpoint",
+        ]
+        for line, tail in zip(lines, tails):
+            self.assertRegex(line, r"^[0-9a-f]{64}  ", "a digest and two spaces")
+            self.assertTrue(line.endswith("  " + tail), "line for " + tail)
+        self.assertEqual(lines[0][:64], sha256_of(os.path.join(repo, "SKILL.md")), "the skill digest")
+        self.assertEqual(lines[4][:64], sha256_of(os.path.join(repo, "tests", "harness", "checkpoint_stub.py")))
+
+    def test_tools_txt_is_the_forty_rules_with_the_wrapper_path_tokenised(self) -> None:
+        filed = default_filed()
+        text = filed.read("tools.txt")
+        self.assertTrue(text.endswith("\n") and text.count("\n") == 1, "one line")
+        rules = text.strip().split(",")
+        self.assertEqual(len(rules), 40, "forty rules")
+        self.assertIn("Bash(<run>/wrapper/checkpoint status:*)", rules, "the wrapper rule is tokenised")
+        self.assertNotIn(filed.run.rig.base, text, "no folder in the allowlist")
+
+    def test_the_init_manifest_block_names_the_tool_count_and_every_tool(self) -> None:
+        filed = default_filed()
+        sections = parse_sections(filed.read("mechanical-checks.md"))
+        block = sections["Init manifest"]
+        for stage in ("s1", "s2", "s3"):
+            self.assertIn(stage + " tool-count: 4", block, "the tool count of " + stage)
+            tools = [line for line in block if line.startswith(stage + " tools: ")]
+            self.assertEqual(len(tools), 1, "one tools line")
+            for name in ("Bash", "Read", "Write", "Edit"):
+                self.assertIn(name, tools[0], "tool " + name)
+
+    def test_a_stage_without_a_usage_block_prints_unconfirmed_in_each_field(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, omit=["usage"])
+        filed = Filed(stages)
+        self.assertEqual(filed.outcome.code, 0, "\n".join(filed.outcome.lines))
+        line = [item for item in filed.read("usage.txt").splitlines() if item.startswith("stage s2:")][0]
+        self.assertIn("input UNCONFIRMED, cache creation UNCONFIRMED, cache read UNCONFIRMED, output UNCONFIRMED", line)
+        for item in filed.read("usage.txt").splitlines():
+            self.assertNotIn(": ,", item, "no blank field")
+            self.assertFalse(item.endswith(":"), "no blank field")
+
+    def test_measurements_are_taken_on_the_original_checkpoint(self) -> None:
+        import pc_measure
+
+        filed = default_filed()
+        original = os.path.join(filed.run.run_root, "project", ".preclear", "widget-export", "checkpoint.md")
+        report = pc_measure.format_report(original, pc_measure.measure_file(original))
+        self.assertEqual(filed.read("measurements.txt"), filed.sanitizer.sanitize_text(report), "per section actual/cap")
+        md = filed.read("measurements.md")
+        self.assertTrue(md.startswith("# Measurements (UTF-8 bytes on ORIGINAL unsanitized files)\n"), "title")
+        self.assertIn(filed.sanitizer.sanitize_text(report), md, "the same report is inside")
+        ledgers = os.path.join(filed.run.run_root, "ckpt", "ledgers")
+        for name in sorted(os.listdir(ledgers)):
+            path = os.path.join(ledgers, name)
+            expected = "ledger file %s: %d bytes sha256 %s" % (name, os.path.getsize(path), sha256_of(path))
+            self.assertIn(expected, md.splitlines(), "inventory line for " + name)
+        self.assertIn("auto-memory files: ['widget-export-json-default.md']", md.splitlines(), "memory list")
+
+    def test_a_checkpoint_of_exactly_the_cap_is_within_it_and_one_more_byte_is_over_by_one(self) -> None:
+        for extra, over in ((0, False), (1, True)):
+            run = Unfiled()
+            path = os.path.join(run.run_root, "project", ".preclear", "widget-export", "checkpoint.md")
+            head = b"## Identity and state\n"
+            with open(path, "wb") as handle:
+                handle.write(head + b"a" * (4096 + extra - len(head)))
+            self.assertEqual(run.file().code, 0, "filing succeeds")
+            text = read_text(os.path.join(run.destination, ROW1, "measurements.txt"))
+            total = [line for line in text.splitlines() if line.startswith("total ")][0]
+            self.assertTrue(total.startswith("total %d/4096 bytes" % (4096 + extra)), "the total is actual/cap")
+            self.assertEqual(total.endswith(" over by 1"), over, "over by one only for the larger file")
+            self.assertEqual("over by" in total, over, "nothing is over at exactly the cap")
+
+    def test_without_a_checkpoint_file_both_measurement_files_say_unconfirmed(self) -> None:
+        stages = pc_testutil.default_row1_stages()
+        stages[1] = {
+            "ops": [{"op": "text", "text": "no checkpoint was written"}],
+            "result": stages[1]["result"],
+        }
+        filed = Filed(stages)
+        self.assertEqual(filed.outcome.code, 0, "\n".join(filed.outcome.lines))
+        for name in ("measurements.txt", "measurements.md"):
+            text = filed.read(name)
+            self.assertIn("UNCONFIRMED", text, name + " says so")
+            self.assertNotIn("total ", text, name + " invents no total")
+
+
+def parse_sections(text: str) -> dict:
+    """Map each '## ' heading of a file to its non-empty lines."""
+    sections = {}
+    current = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = line[3:]
+            sections[current] = []
+        elif current is not None and line.strip():
+            sections[current].append(line)
+    return sections
+
+
+class UsageTests(unittest.TestCase):
+    LINE = (
+        r"^stage (s[123]): session ([0-9a-f-]{36}), subtype (\S+), turns ([0-9]+), input ([0-9]+), "
+        r"cache creation ([0-9]+), cache read ([0-9]+), output ([0-9]+), cost ([0-9.]+), "
+        r"cumulative ([0-9.]+), wall ([0-9.]+) seconds$"
+    )
+
+    def test_the_stages_are_listed_in_order_with_their_own_cost_and_the_row_total(self) -> None:
+        import re
+
+        filed = default_filed()
+        lines = filed.read("usage.txt").splitlines()
+        stage_lines = [line for line in lines if line.startswith("stage ")]
+        self.assertEqual([line.split(":")[0] for line in stage_lines], ["stage s1", "stage s2", "stage s3"])
+        found = [re.match(self.LINE, line) for line in stage_lines]
+        for line, match in zip(stage_lines, found):
+            self.assertIsNotNone(match, "a usage line has the documented fields")
+        costs = [match.group(9) for match in found]
+        cumulative = [match.group(10) for match in found]
+        self.assertEqual(costs, ["0.03", "0.06", "0.04"], "each call's own cost")
+        self.assertEqual(cumulative, ["0.03", "0.09", "0.04"], "the reported cumulative totals")
+        self.assertEqual([m.group(5) for m in found], ["10", "10", "10"], "input tokens")
+        self.assertEqual([m.group(6) for m in found], ["20", "20", "20"], "cache creation tokens")
+        self.assertEqual([m.group(7) for m in found], ["30", "30", "30"], "cache read tokens")
+        self.assertEqual([m.group(8) for m in found], ["5", "5", "5"], "output tokens")
+        self.assertEqual([m.group(4) for m in found], ["2", "5", "2"], "turns")
+        self.assertIn("row total: 0.13", lines, "the s2 cumulative plus the s3 total")
+        self.assertIn("run total: 0.13", lines, "the run total")
+        self.assertNotIn("0.16", "\n".join(lines), "s1 is never added into s2")
+        self.assertEqual(found[0].group(2), found[1].group(2), "s1 and s2 share a session")
+        self.assertNotEqual(found[1].group(2), found[2].group(2), "s3 is another session")
+
+    def test_without_an_s3_the_row_total_is_the_s2_cumulative_total(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, text="Checkpoint written. Nothing to resume.")
+        filed = Filed(stages)
+        lines = filed.read("usage.txt").splitlines()
+        self.assertEqual([line.split(":")[0] for line in lines if line.startswith("stage ")], ["stage s1", "stage s2"])
+        self.assertIn("row total: 0.09", lines, "only the s2 chain")
+
+    def test_costs_are_the_decimal_text_as_parsed(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 0, total_cost_usd=0.1)
+        stages = with_result(stages, 1, total_cost_usd=0.3, delta=0.2)
+        filed = Filed(stages)
+        text = filed.read("usage.txt")
+        self.assertIn("cumulative 0.1,", text, "the text 0.1 is kept")
+        self.assertIn("cost 0.2,", text, "the delta is kept as text")
+        self.assertIn("row total: 0.34", text, "0.3 plus 0.04 added as decimals")
+
+
+class TraceTests(unittest.TestCase):
+    def test_the_short_trace_has_the_committed_shape(self) -> None:
+        import re
+
+        filed = default_filed()
+        text = filed.read("s2-preclear-trace.md")
+        lines = text.splitlines()
+        self.assertEqual(lines[0], "# row1-wrong-binding: s2-preclear")
+        bullets = [line for line in lines if line.startswith("- ")]
+        self.assertEqual(len(bullets), 5, "one bullet per tool call")
+        self.assertTrue(any(re.match(r"^Turns 5\. Write/Edit calls 2: \[.*\]\. Bash calls naming the configured "
+                                     r"executable: 2\. Results flagged .*: 1\.$", line) for line in lines),
+                        "the footer line")
+        self.assertIn("Usage: input 10, cache creation 20, cache read 30, output 5.", lines)
+        self.assertIn("## Final reply", lines)
+        self.assertIn("Checkpoint written.", text.split("## Final reply", 1)[1], "the reply text follows")
+
+    def test_the_full_trace_has_the_committed_header_and_one_block_per_call(self) -> None:
+        import re
+
+        filed = default_filed()
+        record = json.loads(read_text(filed.raw("s2.record.json")))
+        text = filed.read("s2-preclear-full-trace.md")
+        lines = text.splitlines()
+        self.assertEqual(lines[0], "# row1-wrong-binding: s2-preclear: complete sanitized tool calls and results")
+        self.assertIn(
+            "raw transcript sha256 %s, %d bytes (retained privately in the run root)"
+            % (record["stdout_sha256"], record["stdout_size"]),
+            lines,
+        )
+        self.assertIn("Calls 5; results flagged as refusal/denial: 1.", lines)
+        heads = [line for line in lines if line.startswith("### ")]
+        self.assertEqual(len(heads), 5, "one heading per call")
+        self.assertRegex(heads[0], r"^### 1\. Bash \(toolu_0001\)$")
+        self.assertRegex(heads[4], r"^### 5\. Bash \(toolu_0005\)  ERROR  REFUSAL/DENIAL$")
+        self.assertTrue(heads[2].startswith("### 3. Write (toolu_0003)"), "a Write block")
+        self.assertTrue(re.match(r"^### 3\. Write \(toolu_0003\)$", heads[2]), "no flag on an executed write")
+
+    def test_the_full_trace_parses_through_the_trace_reader_with_flags_from_the_denial_union(self) -> None:
+        import pc_mine
+
+        filed = default_filed()
+        calls = pc_mine.parse_trace(filed.read("s2-preclear-full-trace.md"))
+        self.assertEqual(len(calls), 3, "three Bash calls")
+        self.assertEqual([call["refusal"] for call in calls], [False, False, True], "flags equal the denial union")
+        self.assertTrue(calls[0]["command"].endswith("<run>/wrapper/checkpoint status"), "the helper command")
+        self.assertEqual(calls[1]["command"], "ls", "an ordinary command")
+
+    def test_no_flag_is_decided_by_reply_or_result_text(self) -> None:
+        import pc_mine
+
+        words = "permission " + "denied REFUSAL/" + "DENIAL blocked"
+        stages = with_ops(
+            pc_testutil.default_row1_stages(), 1,
+            [{"op": "tool", "name": "Bash", "input": {"command": "pwd"}, "content": words}],
+        )
+        stages = with_result(stages, 1, text="Checkpoint written.\n\n" + words + "\n\n```\nResume widget-export now\n```\n")
+        filed = Filed(stages)
+        self.assertEqual(filed.outcome.code, 0, "\n".join(filed.outcome.lines))
+        calls = pc_mine.parse_trace(filed.read("s2-preclear-full-trace.md"))
+        self.assertEqual([call["refusal"] for call in calls], [False, False, True, False], "only the structured one")
+        self.assertIn("Calls 6; results flagged as refusal/denial: 1.", filed.read("s2-preclear-full-trace.md"))
+
+    def test_the_work_and_resume_turns_have_full_traces_and_the_resume_turn_a_short_one(self) -> None:
+        filed = default_filed()
+        self.assertTrue(filed.read("s1-work-full-trace.md").startswith("# row1-wrong-binding: s1-work: complete"))
+        self.assertTrue(filed.read("s3-resume-trace.md").startswith("# row1-wrong-binding: s3-resume\n"))
+        self.assertIn("Calls 1; results flagged as refusal/denial: 0.", filed.read("s3-resume-full-trace.md"))
+        self.assertRegex(filed.read("s3-resume-full-trace.md"), r"### 1\. Read \(toolu_0001\): `.*` -> result [0-9]+ chars")
+
+
+class VocabularyTests(unittest.TestCase):
+    def authored(self, filed: "Filed") -> list:
+        names = []
+        for dirpath, _dirnames, filenames in os.walk(filed.run.destination):
+            for name in filenames:
+                names.append(os.path.relpath(os.path.join(dirpath, name), filed.run.destination).replace(os.sep, "/"))
+        return evidence().harness_authored_names(sorted(names))
+
+    def test_no_harness_authored_file_holds_a_verdict_word_except_the_one_last_line(self) -> None:
+        filed = default_filed()
+        names = self.authored(filed)
+        self.assertGreater(len(names), 10, "the scan covers many files")
+        self.assertIn("README.md", names, "the folder README is scanned")
+        self.assertIn(ROW1 + "/README.md", names, "the row README is scanned")
+        pattern = verdict_pattern()
+        for name in names:
+            text = read_text(os.path.join(filed.run.destination, name))
+            if name == ROW1 + "/README.md":
+                self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"), "the line closes the row README")
+                text = text[: -len(VERDICT_LINE) - 1]
+            self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+
+    def test_the_verdict_line_occurs_once_in_the_whole_folder_of_harness_files(self) -> None:
+        filed = default_filed()
+        count = 0
+        for name in self.authored(filed):
+            count += read_text(os.path.join(filed.run.destination, name)).count(VERDICT_LINE)
+        self.assertEqual(count, 1, "once")
+
+    def test_a_reply_with_verdict_words_is_outside_the_scan_and_fails_nothing(self) -> None:
+        reply = "The " + "pa" + "ss and the " + "ver" + "dict were " + "fa" + "iled and " + "acc" + "epted."
+        stages = with_result(pc_testutil.default_row1_stages(), 1, text=reply + "\n\n```\nResume widget-export\n```\n")
+        filed = Filed(stages)
+        self.assertEqual(filed.outcome.code, 0, "\n".join(filed.outcome.lines))
+        pattern = verdict_pattern()
+        self.assertIsNotNone(pattern.search(filed.read("s2-preclear-trace.md")), "the reply is filed as written")
+        for name in self.authored(filed):
+            text = read_text(os.path.join(filed.run.destination, name))
+            if name == ROW1 + "/README.md":
+                text = text[: -len(VERDICT_LINE) - 1]
+            self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+        self.assertNotIn("s2-preclear-trace.md", " ".join(self.authored(filed)), "a trace is outside the scan")
+
+
+class ChecklistTests(unittest.TestCase):
+    def test_the_row_readme_has_the_setup_the_stage_table_the_facts_and_the_checklist_last(self) -> None:
+        filed = default_filed()
+        text = filed.read("README.md")
+        lines = text.splitlines()
+        self.assertEqual(lines[-1], VERDICT_LINE, "the last line")
+        self.assertTrue(text.endswith(VERDICT_LINE + "\n") and not text.endswith("\n\n"), "one newline, nothing after")
+        self.assertTrue(any(line.startswith("Setup: ") for line in lines), "the Setup paragraph")
+        self.assertIn("| Stage | Session | Exit | Turns | Subtype |", lines, "the stage table")
+        self.assertTrue(any(line.startswith("| s2 | ") for line in lines), "a stage row")
+        checklist = [line for line in lines if line.startswith("- [ ] ")]
+        self.assertEqual(len(checklist), 7, "one line per fact")
+        self.assertTrue(lines[-2].startswith("- [ ] "), "the line before the verdict is a checklist line")
+        self.assertEqual(lines[-1 - len(checklist):-1], checklist, "the checklist is the last block, no gaps")
+        for line, prefix in zip(checklist, CHECKLIST_PREFIXES):
+            self.assertTrue(line.startswith("- [ ] " + prefix), "order: " + prefix)
+            self.assertRegex(line, r"\(source: [^)]+\)$", "a source in parentheses")
+        self.assertIn("compound refusals 0", checklist[0], "a zero is printed as 0")
+        self.assertIn("denied 1", checklist[0], "the denied call")
+        self.assertIn("attempted 2, executed 1", checklist[0], "attempted and executed")
+        self.assertRegex(checklist[3], r"git mutations: 0", "a zero git count")
+        self.assertRegex(checklist[2], r"writes outside approved roots: 0", "a zero write count")
+        self.assertIn("/4096", checklist[4], "bytes against the cap")
+        self.assertIn("0.06", checklist[6], "the s2 call cost")
+
+    def test_mechanical_checks_has_the_ten_sections_in_order_with_name_value_lines(self) -> None:
+        import re
+
+        filed = default_filed()
+        text = filed.read("mechanical-checks.md")
+        headings = [line[3:] for line in text.splitlines() if line.startswith("## ")]
+        self.assertEqual(headings, list(SECTION_NAMES), "the ten sections in order")
+        sections = parse_sections(text)
+        for name, block in sections.items():
+            self.assertGreater(len(block), 0, name + " is not empty")
+            for line in block:
+                self.assertRegex(line, r"^[^:]+: .+$", "name: value in " + name)
+        for stage in ("s1", "s2", "s3"):
+            found = []
+            for line in sections["Assertions"]:
+                match = re.match(r"^%s ([a-z0-9-]+): (yes|no) \(([a-z0-9-]+)\)$" % stage, line)
+                if match:
+                    found.append(match.group(1))
+            self.assertEqual(found, list(ASSERTION_IDS), "the twelve ids in declared order for " + stage)
+        self.assertIn("ledgers-unchanged: yes", sections["Ledgers"])
+        self.assertIn("s2 attempted: 2", sections["Helper calls"])
+        self.assertIn("s2 denied: 1", sections["Helper calls"])
+        self.assertIn("s2 compound-refusals: 0", sections["Helper calls"])
+        self.assertIn("mutations-total: 0", sections["Git"])
+        self.assertIn("default-memory-folder: absent", sections["Write boundary"])
+
+
+class FolderReadmeTests(unittest.TestCase):
+    def test_the_folder_readme_labels_the_run_and_states_the_differences(self) -> None:
+        import pc_flags
+
+        filed = default_filed()
+        text = read_text(os.path.join(filed.run.destination, "README.md"))
+        usage = filed.read("usage.txt")
+        row_total = [line for line in usage.splitlines() if line.startswith("row total: ")][0][len("row total: "):]
+        run_total = [line for line in usage.splitlines() if line.startswith("run total: ")][0][len("run total: "):]
+        self.assertIn("new baseline", text, "the baseline label")
+        self.assertIn("claude-sonnet-5-5", text, "the pinned model")
+        self.assertIn("2.1.310", text, "the build")
+        self.assertIn(row_total, text, "the row total quoted")
+        self.assertIn(run_total, text, "the run total quoted")
+        self.assertIn("not a replication", text, "not a replication")
+        self.assertIn("2026-10-20", text, "the earlier run is named")
+        self.assertIn("recorded no model", text, "the reason")
+        self.assertIn("Claude Code 2.1.310 against %s" % pc_flags.COMMITTED_EVIDENCE_VERSION, text, "build difference")
+        for phrase in ("the pinned flag set", "the stub in place of the real helper", "per-verb allowlist",
+                       "run roots outside the home folder", "strict isolation"):
+            self.assertIn(phrase, text, "difference: " + phrase)
+        self.assertIn("committed folder stays the reference", text, "reference statement")
+        self.assertIn("the reviewer", text, "says the reviewer")
+        self.assertNotIn("bokiko", text.lower(), "never the owner's login")
+        self.assertIsNone(verdict_pattern().search(text), "no verdict word")
+
+
 if __name__ == "__main__":
     unittest.main()
