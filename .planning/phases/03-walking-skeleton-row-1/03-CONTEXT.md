@@ -79,6 +79,24 @@ has seen that figure. Other rows, the row 7 reruns, the injector and the Codex r
   test spend nothing. — **Reversibility:** costly — the model id is in the evidence folder name and
   in `model-id.txt`; changing it means a new baseline folder.
 
+### Decisions after research (bokiko, 2026-10-28)
+- **D-13:** Row 1 runs on the **exact build the spikes tested, 2.1.310**, selected through a new
+  `--claude <path>` driver option (the build on `PATH` is 2.1.312 and the version gate refuses it).
+  No spike rerun. A stranger with another build hits the BLOCKED exit and the README tells them how
+  to seed a tested version.
+- **D-14:** The 2 USD row cap splits as **s1 0.30 USD / 15 turns, s2 1.30 USD / 60 turns,
+  s3 0.40 USD / 15 turns**, because the committed `/preclear` turn took 49 turns. One attempt per
+  stage; a retry needs bokiko's explicit word. `total_cost_usd` is cumulative across `--resume`, so
+  the ledger records per-stage deltas and the row total is s2's cumulative total plus s3's total.
+- **Claude's call, recorded here so nobody re-asks:** permission denials in the stream are
+  **counted mechanical facts**, not a FAIL; FAIL is reserved for an isolation or git breach or a
+  broken harness. The retry gate is a mechanical flag bokiko types (name at the planner's
+  discretion). The committed row 1 has no s3 and no committed s1 prompt, so the s1 prompt is
+  committed as a data file under `tests/harness/data/` and the comparer reports the s3 files as
+  present on the rerun side only. The runs root and its parent map to a `<scratch>` token in the
+  sanitizer so the gate does not read the shared folder as a home. The stub's `update` end-marker
+  bug (review WR-03) is fixed inside `tests/harness/` as part of this phase.
+
 ### Carried forward from Phase 2 (locked, do not re-ask)
 - Strict isolation: harness-owned `CLAUDE_CONFIG_DIR` outside the repository and outside the
   user's own Claude config, `--setting-sources project,local`; the `system/init` manifest is
