@@ -283,6 +283,86 @@ class RefusalCorpusTests(unittest.TestCase):
         self.assertEqual(before, sorted(os.listdir(os.path.join(ROOT, "tests", "evidence"))))
 
 
+class CorpusScopeTests(unittest.TestCase):
+    """The corpus is the committed publication evidence only, so a rerun baseline never changes it (finding C5)."""
+
+    PUBLICATION = "publication-2026-10-20"
+    RERUN = "rerun-2026-10-29-model-x"
+
+    @staticmethod
+    def trace_text(command):
+        return "### 1. Bash (toolu_0001)\n```\n%s\n```\nresult:\n```\nok\n```\n" % command
+
+    def make_repo(self):
+        repo = tempfile.mkdtemp(prefix="pc-scope-")
+        for folder, command in ((self.PUBLICATION, "pwd -P"), (self.RERUN, "git --no-optional-locks status")):
+            row = os.path.join(repo, "tests", "evidence", folder, "row-a")
+            os.makedirs(row)
+            with open(os.path.join(row, "tools.txt"), "w", encoding="utf-8") as handle:
+                handle.write("Read,Bash(pwd -P)\n")
+            with open(os.path.join(row, "s2-preclear-full-trace.md"), "w", encoding="utf-8") as handle:
+                handle.write(self.trace_text(command))
+        return repo
+
+    def test_the_corpus_folder_is_the_publication_folder(self):
+        self.assertEqual(pa.CORPUS_FOLDER, self.PUBLICATION)
+
+    def test_a_rerun_folder_next_to_the_publication_folder_is_not_loaded(self):
+        calls = pa.load_trace_calls(self.make_repo())
+        self.assertEqual(1, len(calls), "only the publication call is loaded")
+        self.assertEqual("pwd -P", calls[0]["command"])
+        self.assertTrue(calls[0]["folder"].startswith("tests/evidence/" + self.PUBLICATION + "/"))
+
+    def test_another_evidence_folder_name_reads_that_folder(self):
+        calls = pa.load_trace_calls(self.make_repo(), evidence_folder=self.RERUN)
+        self.assertEqual(1, len(calls))
+        self.assertEqual("git --no-optional-locks status", calls[0]["command"])
+
+    def test_a_missing_corpus_folder_gives_no_calls(self):
+        repo = tempfile.mkdtemp(prefix="pc-scope-empty-")
+        os.makedirs(os.path.join(repo, "tests", "evidence"))
+        self.assertEqual([], pa.load_trace_calls(repo))
+
+    def test_the_scoped_loader_equals_the_unscoped_walk_restricted_to_the_publication_folder(self):
+        evidence = os.path.join(ROOT, "tests", "evidence")
+        prefix = "tests/evidence/" + pa.CORPUS_FOLDER + "/"
+        everything = []
+        for current, dirs, files in os.walk(evidence):
+            dirs.sort(key=os.fsencode)
+            for name in files:
+                if name.endswith("full-trace.md"):
+                    everything.append(os.path.join(current, name))
+        scoped = pa.load_trace_calls(ROOT)
+        scoped_traces = sorted(set(call["trace"] for call in scoped))
+        walked = sorted(
+            os.path.relpath(path, ROOT).replace(os.sep, "/")
+            for path in everything
+            if os.path.isfile(os.path.join(os.path.dirname(path), "tools.txt"))
+        )
+        self.assertEqual(walked, scoped_traces, "every traced folder under the evidence is in the publication folder")
+        self.assertTrue(all(trace.startswith(prefix) for trace in scoped_traces))
+
+    def test_canonical_commands_are_unchanged_by_the_scope(self):
+        scoped = pa.canonical_commands(ROOT)
+        original = pa.load_trace_calls
+
+        def unscoped(repo_root, evidence_folder=None):
+            records = []
+            base = os.path.join(repo_root, "tests", "evidence")
+            for name in sorted(os.listdir(base), key=os.fsencode):
+                if os.path.isdir(os.path.join(base, name)):
+                    records.extend(original(repo_root, evidence_folder=name))
+            return records
+
+        pa.load_trace_calls = unscoped
+        try:
+            walked = pa.canonical_commands(ROOT)
+        finally:
+            pa.load_trace_calls = original
+        self.assertEqual(walked, scoped, "the canonical command list is the same with or without the scope")
+        self.assertTrue(scoped, "the list is not empty")
+
+
 class HistoricalAllowlistTests(unittest.TestCase):
     def test_the_committed_row_2_bare_prefix_allows_wrapper_bind_and_the_builder_never_does(self):
         wrapper = synthetic_wrapper()
