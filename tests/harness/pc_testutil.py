@@ -496,6 +496,46 @@ def seed_outside_write(stages: list, stage_index: int = 1) -> list:
     ])
 
 
+def seed_trace_write(stages: list, stage_index: int = 1) -> list:
+    """A stage list whose stage makes a Write tool call to a file in the outside folder and really writes it.
+
+    The outside folder is not under the run root, so the snapshot diff cannot see it: only the executed
+    tool path scan can (a trace-path breach)."""
+    return _with_ops(stages, stage_index, [
+        {"op": "write", "path": "$OUTSIDE/traced.txt", "text": "written outside the run root\n"},
+        {"op": "tool", "name": "Write", "input": {"file_path": "$OUTSIDE/traced.txt"}, "content": "written"},
+    ])
+
+
+def seed_git_commit(stages: list, stage_index: int = 1) -> list:
+    """A stage list whose stage makes a real commit in the project (a git-path breach; no stream event)."""
+    return _with_ops(stages, stage_index, [
+        {"op": "git", "args": ["commit", "--allow-empty", "--allow-empty-message", "-m", ""]},
+    ])
+
+
+def seed_git_branch(stages: list, stage_index: int = 1) -> list:
+    """A stage list whose stage runs an executed Bash `git branch newbranch` and really creates the branch."""
+    return _with_ops(stages, stage_index, [
+        {"op": "tool", "name": "Bash", "input": {"command": "git branch newbranch"}, "content": ""},
+        {"op": "git", "args": ["branch", "newbranch"]},
+    ])
+
+
+def seed_denied_git_add(stages: list, stage_index: int = 1) -> list:
+    """A stage list whose stage attempts `git add -A` and is denied (nothing runs)."""
+    return _with_ops(stages, stage_index, [
+        {"op": "tool", "name": "Bash", "input": {"command": "git add -A"}, "denied": True},
+    ])
+
+
+def seed_outside_mention(stages: list, stage_index: int = 1) -> list:
+    """A stage list whose stage runs an executed read-only `ls` of the outside folder (a mention, not a write)."""
+    return _with_ops(stages, stage_index, [
+        {"op": "tool", "name": "Bash", "input": {"command": "ls $OUTSIDE"}, "content": "nothing"},
+    ])
+
+
 _HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_HARNESS_DIR))
 _COPIED_FILES = (
