@@ -30,7 +30,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **HARN-06**: The allowlist is checked against the skill's exact commands by a self-test, and any unexpected `permission_denied` event or `result.permission_denials` entry fails the row; refusals are never detected by substring on the reply
 - [x] **HARN-07**: The `system/init` manifest (skills, permission mode, memory paths) is asserted every run, and the isolation mode in force (default or strict) is recorded per row after spike S1 decides which the matrix claims
 - [x] **HARN-08**: Snapshots and manifests are filename-safe (newline and non-Latin names survive) and are taken before and after every stage
-- [ ] **HARN-09**: Write-boundary and git-read-only assertions are mechanical: zero writes outside approved roots, no git mutation, derived from snapshots and traces rather than the model's claims
+- [x] **HARN-09**: Write-boundary and git-read-only assertions are mechanical: zero writes outside approved roots, no git mutation, derived from snapshots and traces rather than the model's claims
 - [ ] **HARN-10**: Row 10 keeps the documented quoted-porcelain fallback as its expected outcome; no policy exception is added for the NUL `-z` form
 - [ ] **HARN-11**: Row 11's injector triggers on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls, and wrapper log lines are correlated with `tool_use` ids
 - [ ] **HARN-12**: Row 7's preflight proves the `chmod` denial is effective or marks the row SKIPPED
@@ -115,7 +115,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-06 | Phase 2 | Complete |
 | HARN-07 | Phase 3 | Complete |
 | HARN-08 | Phase 2 | Complete |
-| HARN-09 | Phase 3 | Pending |
+| HARN-09 | Phase 3 | Complete |
 | HARN-10 | Phase 4 | Pending |
 | HARN-11 | Phase 4 | Pending |
 | HARN-12 | Phase 4 | Pending |
