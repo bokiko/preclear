@@ -269,7 +269,6 @@ class SelectionTests(unittest.TestCase):
             "row1-wrong-binding" + chr(10),
             "a" * 64 + "b",
             "a" * 65,
-            "-" + "a" * 8,
         )
         for value in odd:
             err = self.refused(["--row", value], "unknown row id")
@@ -299,6 +298,8 @@ class SelectionTests(unittest.TestCase):
         self.refused(["--dry-run"])
         self.refused(["--bogus-option"])
         self.refused(["--row"])
+        err = self.refused(["--row", "-" + "q" * 8])
+        self.assertNotIn("qqqqqqqq", err)
 
     def test_the_command_line_refuses_with_exit_two_and_writes_nothing_to_standard_output(self) -> None:
         code, out, err = run_cli(["--row", "row3"], self.env)

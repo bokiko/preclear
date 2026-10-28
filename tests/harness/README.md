@@ -212,6 +212,23 @@ header gives the exact command line), then run the call with `--run`; without `-
 prints its plan.
 
 
+## Running one row
+
+The driver is `pc_matrix.py`. Run it as `python3 -E -s -B tests/harness/pc_matrix.py` (never with
+`-I`, because the harness modules import each other), always in this order: the self-test, then
+a dry run, then one row.
+
+- `--list` prints every layout and row, layouts first and then the rows in the order of the
+  acceptance document, one fixed-column line each, with the number of stages, the number of
+  sessions and whether the entry is implemented.
+- `--dry-run` with `--row ID`, `--layout NAME` or `--all` prints the plan: stages, sessions, the
+  turn limit and cap of each stage, the worst case, the size of the allowlist, the model and the
+  evidence folder name. It starts no process of any kind, creates no folder and writes no ledger
+  line, and it needs no `claude`.
+- Only row 1 is implemented in this phase. The other rows and the three layouts are listed and
+  refused with exit 2, and so is any id that is not an exact, whole match of a listed one (a
+  prefix, another case, an empty value). The refusal text is fixed and never repeats the value.
+
 ## Replacement tokens
 
 Evidence that becomes public is sanitized with these tokens, always lower case in angle brackets:
@@ -239,10 +256,12 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_flags.py` - the pinned `claude -p` contract: flag table, argv builder, environment scrub, version gate
 - `pc_leakgate.py` - fail-closed leak gate for evidence about to become public
 - `pc_manifest.py` - byte-walk tree manifests and JSON-lines writers
+- `pc_matrix.py` - the matrix driver: list, plan and run rows; dry run starts nothing
 - `pc_measure.py` - heading-inclusive UTF-8 byte measurer
 - `pc_mine.py` - miner for the committed wrapper call logs
 - `pc_preflight.py` - zero-token check that claude is present, in the tested set and logged in
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
+- `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
 - `pc_seeds.py` - run-time assembly of leak-shaped test strings (test support)
@@ -260,6 +279,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_imports.py` - standard library only, 3.9 syntax, no shadowing, naming rule
 - `test_leakgate.py` - tests for the leak gate
 - `test_manifest.py` - tests for the manifest writers
+- `test_matrix_cli.py` - tests for the driver's list, selection and dry run
 - `test_measure.py` - tests for the byte measurer
 - `test_mine.py` - tests for the call-log miner
 - `test_preflight.py` - tests for the exit-code table and the preflight
