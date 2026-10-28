@@ -407,8 +407,28 @@ def write_scripted_config(directory: str, config: Optional[dict]) -> None:
         json.dump(settled, handle)
 
 
+_DASH = "\u2014"
+_CHECKPOINT_SECTIONS = (
+    "Identity and state",
+    "Boundaries and blockers",
+    "Next action",
+    "Resume reading",
+    "Evidence and working changes",
+    "Do not redo",
+)
+_RESUME_LINE = (
+    'Resume widget-export from "$PROJECT/.preclear/widget-export/checkpoint.md" '
+    + _DASH + " main @ abc1234 " + _DASH + " step 2 done untested; JSON-default diff pending"
+)
+
+
 def default_row1_stages() -> list:
-    """The stage scripts of a clean row 1 run (s1 work turn here; plan 03-02 Task 2 adds s2 and s3)."""
+    """The stage scripts of a clean row 1 run: s1 work turn, s2 resumed /preclear turn, s3 fresh resume.
+
+    s1 writes the exporter and loads the project CLAUDE.md. s2 runs the wrapper's status for real, writes the
+    checkpoint and a memory file, has one wrapper bind denied and ends with a fenced resume line. s3 is a new
+    session that loads the project CLAUDE.md again and reads the checkpoint.
+    """
     s1 = {
         "ops": [
             {"op": "hook", "payloads": [
@@ -420,7 +440,38 @@ def default_row1_stages() -> list:
         "result": {"text": "step 2 done\nfunctions are small and pure\nno tests were run",
                    "total_cost_usd": 0.03, "num_turns": 2},
     }
-    return [s1]
+    checkpoint = "".join("## %s\nA short body for this section.\n\n" % name for name in _CHECKPOINT_SECTIONS)
+    s2 = {
+        "ops": [
+            {"op": "tool", "name": "Bash", "input": {"command": "$WRAPPER status"}, "run": "wrapper",
+             "args": ["status"]},
+            {"op": "tool", "name": "Bash", "input": {"command": "ls"}, "content": "CLAUDE.md"},
+            {"op": "write", "path": "$PROJECT/.preclear/widget-export/checkpoint.md", "text": checkpoint},
+            {"op": "tool", "name": "Write",
+             "input": {"file_path": "$PROJECT/.preclear/widget-export/checkpoint.md"}, "content": "written"},
+            {"op": "write", "path": "$AUTOMEM/widget-export-json-default.md",
+             "text": "JSON is the default export format; CSV only on request.\n"},
+            {"op": "tool", "name": "Write",
+             "input": {"file_path": "$AUTOMEM/widget-export-json-default.md"}, "content": "written"},
+            {"op": "tool", "name": "Bash",
+             "input": {"command": "$WRAPPER bind --ledger x --session y"}, "denied": True},
+            {"op": "text", "text": "checkpoint written"},
+        ],
+        "result": {"text": "Checkpoint written.\n\n```\n" + _RESUME_LINE + "\n```\n",
+                   "total_cost_usd": 0.09, "delta": 0.06, "num_turns": 5},
+    }
+    s3 = {
+        "ops": [
+            {"op": "hook", "payloads": [
+                {"file_path": "$CWD/CLAUDE.md", "memory_type": "Project", "load_reason": "session_start"}]},
+            {"op": "init"},
+            {"op": "tool", "name": "Read",
+             "input": {"file_path": "$PROJECT/.preclear/widget-export/checkpoint.md"}, "content": "checkpoint body"},
+            {"op": "text", "text": "read the checkpoint"},
+        ],
+        "result": {"text": "Read the checkpoint; nothing was changed.", "total_cost_usd": 0.04, "num_turns": 2},
+    }
+    return [s1, s2, s3]
 
 
 def stages_with(stages: list, index: int, **changes: Any) -> list:

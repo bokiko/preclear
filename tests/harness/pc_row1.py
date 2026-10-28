@@ -12,6 +12,12 @@ What a row 1 run is, in order:
                       and a settlement after it, the raw bytes, a stage record and a snapshot
   * read_stage_prompts  the work-turn prompt from the data file and the /preclear prompt read in place from the
                       committed publication folder (never copied, so it is byte-identical by construction)
+  * run_row           the chain: every refusal that can come before money (destination, run root, sanitizer,
+                      ledger), then s1, s2 resumed on the same session and, when s2 printed a resume line, s3
+                      in a fresh session whose prompt is that line; the chain stops at the first stage that
+                      did not complete cleanly
+  * extract_resume_line, caller_map, finish   the resume-line rule, the sanitizer's caller map and the closing
+                      lines of a completed chain
 
 Every file and folder is created exclusively (pc_runroot); nothing here deletes, renames, moves or truncates, and
 nothing here starts the real claude by itself: the caller names the executable through the run context.
@@ -34,10 +40,13 @@ import uuid
 from decimal import Decimal
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+import pc_exitcodes
 import pc_flags
+import pc_leakgate
 import pc_manifest
 import pc_rows
 import pc_runroot
+import pc_sanitize
 import pc_spend
 import pc_spike
 import pc_stream
@@ -595,3 +604,199 @@ def run_stage(
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------------------------
+# The resume line and the sanitizer's caller map
+# ---------------------------------------------------------------------------------------------
+
+MAX_RESUME_LINE_BYTES = 2000
+MARKER_FOUND = "found"
+MARKER_NONE = "NO-RESUME-LINE"
+_RESUME_FENCE = re.compile(r"```[A-Za-z0-9_-]*\n(.*?)\n```", re.S)
+_RESUME_START = "Resume "
+
+
+def extract_resume_line(result_text: Any) -> str:
+    """Return the resume line of an s2 reply, or the empty string.
+
+    The line is the last fenced single line that starts with `Resume `. It must be at most 2000 bytes and hold
+    no NUL; a last candidate that breaks a bound gives the empty string and is not replaced by an earlier one.
+    A fenced block of several lines and a single line that starts with anything else are not candidates.
+    """
+    if not isinstance(result_text, str):
+        return ""
+    candidates = []
+    for block in _RESUME_FENCE.findall(result_text):
+        line = block.strip()
+        if "\n" not in line and line.startswith(_RESUME_START):
+            candidates.append(line)
+    if not candidates:
+        return ""
+    line = candidates[-1]
+    if "\x00" in line or len(line.encode("utf-8")) > MAX_RESUME_LINE_BYTES:
+        return ""
+    return line
+
+
+def _users_prefix(path: str) -> Optional[str]:
+    """The two-component prefix of a path under a users or home root (a folder the gate reads as a home)."""
+    parts = path.split(os.sep)
+    if len(parts) >= 3 and parts[0] == "" and parts[1] in ("Users", "home") and parts[2] != "":
+        return os.sep.join(parts[:3])
+    return None
+
+
+def caller_map(paths: Mapping[str, Optional[str]], runs_root: str) -> Dict[str, str]:
+    """Map absolute paths to the caller tokens the sanitizer accepts (finding C7).
+
+    The run root is the run token and the auto-memory folder its own token. The runs root, its parent and, when
+    the runs root sits under a users or home root, the two-component prefix are the scratch token, so the shared
+    parent of every run root cannot reach a committed file as a home-shaped path. The sanitizer matches the longest
+    text first, so the run root inside the runs root keeps the run token. The wrapper stays under the run token.
+    """
+    mapping: Dict[str, str] = {str(paths["run_root"]): "<run>"}
+    if paths.get("auto_memory"):
+        mapping[str(paths["auto_memory"])] = "<auto-memory-root>"
+    runs = os.path.realpath(runs_root)
+    scratch = [runs, os.path.dirname(runs)]
+    prefix = _users_prefix(runs)
+    if prefix is not None:
+        scratch.append(prefix)
+    for path in scratch:
+        if len(path.strip(os.sep)) > 0 and path not in mapping:
+            mapping[path] = "<scratch>"
+    return mapping
+
+
+# ---------------------------------------------------------------------------------------------
+# The chain
+# ---------------------------------------------------------------------------------------------
+
+MESSAGE_DESTINATION = "REFUSED: the evidence folder already exists; a folder is never reused"
+MESSAGE_SANITIZER = "FAIL: the sanitizer or the deny entries could not be built; nothing was spent"
+_STOP_TEXT = {
+    PROBLEM_TIMEOUT: "timed out",
+    PROBLEM_EXIT: "exited with a non-zero status",
+    PROBLEM_STREAM: "ended without a single result event",
+    PROBLEM_SUBTYPE: "ended with a result that is not a success",
+    PROBLEM_IS_ERROR: "reported an error in its result",
+    PROBLEM_TERMINAL: "did not end as completed",
+}
+
+
+def _stopped(stage_name: str, problem: str) -> pc_rows.RowOutcome:
+    code = pc_exitcodes.DENIAL_FOUND if problem == PROBLEM_STREAM else pc_exitcodes.PREFLIGHT_FAIL
+    line = "FAIL: stage %s %s; the chain stopped and nothing was filed" % (stage_name, _STOP_TEXT[problem])
+    return pc_rows.RowOutcome(code, (line,))
+
+
+def _result_text(result: StageResult) -> str:
+    if result.events is None:
+        return ""
+    text = pc_stream.require_single_result(result.events).get("result")
+    return text if isinstance(text, str) else ""
+
+
+def _write_chain(paths: Mapping[str, Optional[str]], line: str) -> None:
+    """Record whether s2 printed a resume line. The line is model text: it is stored in raw only, never printed."""
+    record = {
+        "marker": MARKER_FOUND if line else MARKER_NONE,
+        "resume_line": line if line else None,
+        "resume_line_bytes": len(line.encode("utf-8")) if line else 0,
+    }
+    pc_runroot.write_exclusive(
+        os.path.join(str(paths["raw"]), "chain.json"),
+        (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        0o600,
+    )
+
+
+def _chain_totals(results: Sequence[StageResult]) -> List[Optional[Decimal]]:
+    """The final cumulative total of each session chain, once (s1 sits inside the s2 chain)."""
+    last: Dict[str, Optional[Decimal]] = {}
+    for result in results:
+        last[result.session_id] = result.cumulative
+    return list(last.values())
+
+
+def finish(
+    ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]], results: Sequence[StageResult]
+) -> pc_rows.RowOutcome:
+    """Close a completed chain: one fixed line per stage and the row total (later plans extend this)."""
+    lines: List[str] = []
+    for result in results:
+        turns = result.summary["num_turns"] if result.summary is not None else None
+        lines.append(
+            "stage %s: %s, %s turn(s), delta %s, cumulative %s"
+            % (
+                result.name,
+                result.summary["subtype"] if result.summary is not None else "no-result",
+                turns if isinstance(turns, int) and not isinstance(turns, bool) else "unknown",
+                _cost_text(result.delta) or "unknown",
+                _cost_text(result.cumulative) or "unknown",
+            )
+        )
+    if len(results) == 2:
+        lines.append("stage s3: not run (%s)" % MARKER_NONE)
+    totals = _chain_totals(results)
+    if any(total is None for total in totals):
+        lines.append("row total: unknown (a result carried no cost)")
+    else:
+        lines.append("row total: %s USD" % format(pc_spend.row_total([t for t in totals if t is not None]), "f"))
+    return pc_rows.RowOutcome(pc_exitcodes.OK, tuple(lines))
+
+
+def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> pc_rows.RowOutcome:
+    """Run row 1: refusals first, then seed, snapshot 0 and the stage chain (D-01, D-02, D-12, D-14).
+
+    Order before any ledger line: an existing destination (17, nothing created), the run root (a taken name
+    raises RunRootCollision, the driver's 16), the sanitizer and the deny entries (15, review WR-12), the
+    readable ledger, the seed and the version control tool. Then s1 with a fresh session, s2 resumed on that
+    session and s3 in a second fresh session whose prompt is the resume line, only when s2 printed one. The
+    chain stops at the first stage that is not a clean success.
+    """
+    if os.path.lexists(ctx.destination):
+        return pc_rows.RowOutcome(pc_exitcodes.PROMOTE_REFUSED, (MESSAGE_DESTINATION,))
+    run_name = "%s-%s" % (ROW_ID, _utc_now().strftime("%Y%m%dT%H%M%SZ"))
+    pc_spike.ensure_runs_root(ctx.runs_root)
+    run_root = pc_runroot.allocate_run_root(ctx.runs_root, run_name)
+    provisional = {"run_root": run_root, "auto_memory": os.path.join(run_root, "auto-memory")}
+    try:
+        sanitizer = pc_sanitize.Sanitizer.from_machine(ctx.repo_root, caller_map(provisional, ctx.runs_root))
+        deny_entries = sanitizer.deny_entries()
+    except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
+    ctx = ctx._replace(run_root=run_root, sanitizer=sanitizer, deny_entries=deny_entries)
+    pc_spend.read_records(ctx.harness_home)
+    vcs = _git_executable(ctx.env)
+    session = str(uuid.uuid4())
+    paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
+    take_snapshot(paths, SNAPSHOT_SETUP, vcs)
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
+    if entry is None:
+        raise pc_spike.SpikeError("the row is not in the registry")
+    s1_prompt, s2_prompt = read_stage_prompts(ctx.repo_root, str(paths["ledger_a"]))
+
+    results: List[StageResult] = []
+    resume_line = ""
+    for stage in entry.stages:
+        timeout = timeout_override if timeout_override is not None else stage.timeout
+        if stage.kind == "work":
+            result = run_stage(ctx, paths, stage, session, s1_prompt, False, None, timeout)
+        elif stage.kind == "preclear":
+            result = run_stage(ctx, paths, stage, session, s2_prompt, True, results[-1].cumulative, timeout)
+        else:
+            if not resume_line:
+                break
+            second = str(uuid.uuid4())
+            while second == session:
+                second = str(uuid.uuid4())
+            result = run_stage(ctx, paths, stage, second, resume_line, False, None, timeout)
+        results.append(result)
+        if not result.ok:
+            return _stopped(stage.name, result.problem)
+        if stage.kind == "preclear":
+            resume_line = extract_resume_line(_result_text(result))
+            _write_chain(paths, resume_line)
+    return finish(ctx, paths, results)

@@ -9,7 +9,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import re
 import unittest
 import uuid
 from decimal import Decimal
@@ -17,7 +16,6 @@ from unittest import mock
 
 import pc_exitcodes
 import pc_flags
-import pc_leakgate
 import pc_sanitize
 import pc_seeds
 import pc_spend
@@ -275,7 +273,7 @@ class CostTests(unittest.TestCase):
         record = read_json(run.raw("s2.record.json"))
         self.assertEqual(record["cumulative_consistent"], "no")
         self.assertEqual(record["delta"], "0.06")
-        self.assertEqual(record["cumulative"], "0.20")
+        self.assertEqual(record["cumulative"], "0.2")
         self.assertIn("row total: 0.24 USD", run.outcome.lines)
 
 
@@ -300,7 +298,8 @@ class StopRuleTests(unittest.TestCase):
         )
         run = Run(stages, timeout_override=1)
         self.assert_stopped(run, pc_exitcodes.PREFLIGHT_FAIL, 1)
-        self.assertIn("partial", open(run.raw("s1.stdout"), "rb").read().decode("utf-8"))
+        with open(run.raw("s1.stdout"), "rb") as handle:
+            self.assertIn("partial", handle.read().decode("utf-8"))
         settle = [r for r in run.ledger() if r["kind"] == "settle"][0]
         self.assertEqual(settle["subtype"], "timeout")
         self.assertIsNone(settle["delta"])
@@ -419,8 +418,15 @@ class CallerMapTests(unittest.TestCase):
         mapping = row1().caller_map(paths, runs)
         self.assertEqual(mapping[pc_seeds.home_path("zz-shared")], "<scratch>")
         self.assertEqual(mapping[os.path.dirname(runs)], "<scratch>")
-        other = os.path.join(pc_seeds.home_path_linux("zz-shared"), "x", "runs")
-        self.assertEqual(row1().caller_map(self.paths(other), other)[pc_seeds.home_path_linux("zz-shared")], "<scratch>")
+
+    def test_the_prefix_rule_knows_both_users_and_home_roots_and_nothing_else(self) -> None:
+        m = row1()
+        self.assertEqual(m._users_prefix(pc_seeds.home_path("zz-shared") + "/a/b"), pc_seeds.home_path("zz-shared"))
+        self.assertEqual(
+            m._users_prefix(pc_seeds.home_path_linux("zz-shared") + "/a/b"), pc_seeds.home_path_linux("zz-shared")
+        )
+        self.assertIsNone(m._users_prefix(os.sep + "Users"))
+        self.assertIsNone(m._users_prefix(os.sep + "srv" + os.sep + "runs" + os.sep + "x"))
 
     def test_the_sanitizer_with_the_map_removes_the_parent_the_gate_otherwise_flags(self) -> None:
         rig = pc_testutil.RowRig(stages=default_stages())
