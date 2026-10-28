@@ -107,11 +107,11 @@ Plans:
   4. The row README ends with `Reviewer verdict: PENDING` and a checklist of mechanical facts, and no filed file from the harness contains an accepted, passed or failed verdict. (EVID-05)
   5. The read-only comparer prints per-row differences between the rerun and `tests/evidence/publication-2026-10-20/row1-wrong-binding`, and tree digests of both evidence trees are identical before and after it runs. `git diff` shows `SKILL.md`, `references/` and `tests/fixtures/` unchanged, `SKILL.md` is at or under 12,000 bytes, and all new code sits under `tests/harness/`. (EVID-06, HARN-13)
 
-**Plans:** 6 plans
+**Plans:** 1/6 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 03-01-PLAN.md — Tracer: `--list` and `--dry-run` print the registry and the session count with no process; the claude-free gate, SKIP, FAIL and BLOCKED codes, `--claude`, the budget gate and README fix lines; the file-locked matrix spend ledger with delta cost and the retry authorization flag (HARN-01, HARN-02)
+- [x] 03-01-PLAN.md — Tracer: `--list` and `--dry-run` print the registry and the session count with no process; the claude-free gate, SKIP, FAIL and BLOCKED codes, `--claude`, the budget gate and README fix lines; the file-locked matrix spend ledger with delta cost and the retry authorization flag (HARN-01, HARN-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 03-02-PLAN.md — Tracer: seed the row 1 run root and run s1 through a scripted claude; the three-stage chain (s2 resumed, s3 from the resume line) with delta cost, stop rules and the pre-spend order; the init manifest and instruction audit asserted after every stage, isolation mode recorded (HARN-05, HARN-07)
@@ -170,5 +170,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
-| 3. Walking Skeleton (Row 1) | 0/6 | Not started | - |
+| 3. Walking Skeleton (Row 1) | 1/6 | In Progress | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
