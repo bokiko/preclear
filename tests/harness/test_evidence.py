@@ -868,5 +868,264 @@ class FolderReadmeTests(unittest.TestCase):
         self.assertIsNone(verdict_pattern().search(text), "no verdict word")
 
 
+# ---------------------------------------------------------------------------------------------
+# Task 3: a SKIPPED row, the zero-token refile, the race and the README
+# ---------------------------------------------------------------------------------------------
+
+SKIP_ID = "row0-skip-case"
+FIXED_REASON = "the precondition of this test row is not met"
+USAGE_TEXT = "the run folder is not usable"
+
+
+def skip_registry(reason: str):
+    from decimal import Decimal
+
+    pc_rows = rows()
+    stages = (pc_rows.StageSpec("s1", "work turn", "work", 5, Decimal("0.10"), 60, "new:A"),)
+    row = pc_rows.RowSpec(SKIP_ID, "row", "injected test row", stages, True, lambda: reason, None, ())
+    return pc_rows.build_registry([row])
+
+
+def run_skip(reason: str, precreate: bool = False):
+    rig = pc_testutil.RowRig()
+    out = io.StringIO()
+    err = io.StringIO()
+    destination = os.path.join(rig.repo, "tests", "evidence", DEST_NAME)
+    if precreate:
+        os.makedirs(destination)
+    code = matrix().main(
+        ["--row", SKIP_ID, "--claude", rig.claude, "--budget", "2.00"],
+        env=dict(rig.env),
+        repo_root=rig.repo,
+        registry=skip_registry(reason),
+        clock=fixed_clock,
+        out=out,
+        err=err,
+    )
+    return rig, code, out.getvalue() + err.getvalue(), destination
+
+
+def rerun_folders(rig) -> list:
+    return [name for name in os.listdir(os.path.join(rig.repo, "tests", "evidence")) if name.startswith("rerun-")]
+
+
+class SkippedTests(unittest.TestCase):
+    def test_a_real_run_skip_files_a_label_folder_and_exits_10(self) -> None:
+        import pc_spend
+
+        rig, code, text, destination = run_skip(FIXED_REASON)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_SKIP, text)
+        self.assertEqual(rig.calls(), [], "no stage was launched")
+        self.assertEqual(rig.tripwire(), [], "no other claude call was made")
+        self.assertEqual(pc_spend.read_records(rig.context().harness_home), [], "no ledger line was written")
+        folder = os.path.join(destination, "SKIPPED-" + SKIP_ID)
+        self.assertEqual(os.listdir(destination), ["SKIPPED-" + SKIP_ID], "only the label folder")
+        self.assertEqual(os.listdir(folder), ["README.md"], "the label folder holds one README and no result files")
+        body = read_text(os.path.join(folder, "README.md"))
+        self.assertEqual(body.splitlines()[0], "# SKIPPED: " + SKIP_ID, "the heading")
+        self.assertIn("No session was run", body, "says no session was run")
+        self.assertIn(FIXED_REASON, body, "names the reason")
+        self.assertTrue(body.endswith("\n" + VERDICT_LINE + "\n"), "ends with the exact line")
+        self.assertIsNone(verdict_pattern().search(body[: -len(VERDICT_LINE) - 1]), "no verdict word")
+        self.assertIn("SKIPPED", text, "the driver printed the label")
+
+    def test_a_reason_shaped_like_a_home_path_is_refused_with_14_and_files_nothing(self) -> None:
+        import pc_seeds
+
+        reason = "the folder " + pc_seeds.home_path("pcsynthhome") + "/data is missing"
+        rig, code, text, destination = run_skip(reason)
+        self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, text)
+        self.assertEqual(rerun_folders(rig), [], "nothing was created")
+
+    def test_an_existing_destination_is_17_and_a_skip_never_exits_0(self) -> None:
+        rig, code, text, destination = run_skip(FIXED_REASON, precreate=True)
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, text)
+        self.assertEqual(os.listdir(destination), [], "the existing folder was not written into")
+        self.assertNotEqual(code, 0, "a skip is never a success")
+
+
+def refile(run: "Unfiled", extra=(), env=None, clock=fixed_clock, path=None):
+    out = io.StringIO()
+    err = io.StringIO()
+    code = matrix().main(
+        ["--refile", path if path is not None else run.run_root] + list(extra),
+        env=env if env is not None else dict(run.rig.env),
+        repo_root=run.rig.repo,
+        clock=clock,
+        out=out,
+        err=err,
+    )
+    return code, out.getvalue() + err.getvalue()
+
+
+class RefileTests(unittest.TestCase):
+    def test_a_refile_files_the_same_tree_with_zero_tokens(self) -> None:
+        import pc_spend
+        import tempfile
+
+        run = Unfiled()
+        calls = len(run.rig.calls())
+        ledger = pc_spend.read_records(run.ctx.harness_home)
+        wire = tempfile.mkdtemp(prefix="pc-wire-")
+        pc_testutil.make_tripwire(wire)
+        env = dict(run.rig.env)
+        env["PATH"] = os.pathsep.join([wire, env["PATH"]])
+        code, text = refile(run, env=env)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(run.rig.calls()), calls, "no stage process was started")
+        self.assertEqual(pc_testutil.read_tripwire(wire), [], "no claude was run")
+        self.assertEqual(pc_spend.read_records(run.ctx.harness_home), ledger, "no ledger line was written")
+        self.assertTrue(os.path.isdir(run.destination), "the destination was created")
+        fresh = os.path.join(os.path.dirname(run.destination), "rerun-2026-10-28-fresh")
+        outcome = evidence().file_row(run.file_context()._replace(destination=fresh), run.run_root)
+        self.assertEqual(outcome.code, 0, "\n".join(outcome.lines))
+        one = tree_bytes(run.destination)
+        two = tree_bytes(fresh)
+        self.assertEqual(sorted(one), sorted(two), "the same files as a fresh filing")
+        for relative in sorted(one):
+            if not relative.endswith("harness-version.txt"):
+                self.assertEqual(one[relative], two[relative], "same bytes: " + relative)
+
+    def test_a_refile_needs_no_claude_and_no_budget(self) -> None:
+        run = Unfiled()
+        env = dict(run.rig.env)
+        env["PATH"] = os.pathsep.join(pc_testutil.SYSTEM_DIRS)
+        code, text = refile(run, env=env)
+        self.assertEqual(code, 0, text)
+
+    def test_unusable_run_folders_are_exit_2_with_fixed_text_and_no_echo(self) -> None:
+        import tempfile
+
+        run = Unfiled()
+        outside = tempfile.mkdtemp(prefix="pc-outside-")
+        os.makedirs(os.path.join(outside, "raw"))
+        with open(os.path.join(outside, "raw", "run.json"), "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        empty = os.path.join(run.ctx.runs_root, "empty-run")
+        os.makedirs(empty)
+        cases = {
+            "relative": "relative-run-folder",
+            "missing": run.run_root + "-missing",
+            "a file": os.path.join(run.run_root, "raw", "run.json"),
+            "outside the runs root": outside,
+            "no run record": empty,
+        }
+        for label, value in cases.items():
+            code, text = refile(run, path=value)
+            self.assertEqual(code, pc_exitcodes.USAGE, label + ": " + text)
+            self.assertIn(USAGE_TEXT, text, label + ": the fixed text")
+            self.assertNotIn(os.path.basename(value), text, label + ": the value is not echoed")
+        self.assertEqual(rerun_folders(run.rig), [], "nothing was filed")
+
+    def test_an_existing_destination_is_17(self) -> None:
+        run = Unfiled()
+        self.assertEqual(run.file().code, 0, "the first filing")
+        before = tree_bytes(run.destination)
+        code, text = refile(run)
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, text)
+        self.assertEqual(tree_bytes(run.destination), before, "the folder is unchanged")
+
+    def test_a_run_with_a_breach_is_11_and_files_nothing(self) -> None:
+        rig = pc_testutil.RowRig(stages=pc_testutil.seed_outside_write(pc_testutil.default_row1_stages(), 1))
+        ctx = rig.context()
+        outcome = row1().run_row(ctx)
+        self.assertEqual(outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "the row stopped with the breach")
+        names = os.listdir(ctx.runs_root)
+        out = io.StringIO()
+        err = io.StringIO()
+        code = matrix().main(
+            ["--refile", os.path.join(ctx.runs_root, names[0])],
+            env=dict(rig.env), repo_root=rig.repo, clock=fixed_clock, out=out, err=err,
+        )
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, out.getvalue() + err.getvalue())
+        self.assertEqual(rerun_folders(rig), [], "nothing was filed")
+
+    def test_a_missing_stored_prompt_is_11_and_files_nothing(self) -> None:
+        run = Unfiled()
+        raw = os.path.join(run.run_root, "raw")
+        os.rename(os.path.join(raw, "s2.prompt"), os.path.join(raw, "s2.prompt.moved"))
+        code, text = refile(run)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, text)
+        self.assertEqual(rerun_folders(run.rig), [], "nothing was filed")
+
+    def test_the_destination_uses_the_date_recorded_in_the_run(self) -> None:
+        run = Unfiled()
+        later = lambda: datetime.datetime(2026, 11, 5, 9, 0, 0, tzinfo=datetime.timezone.utc)  # noqa: E731
+        code, text = refile(run, clock=later)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(rerun_folders(run.rig), [DEST_NAME], "the original date, not today's")
+
+    def test_refile_is_its_own_selection_mode(self) -> None:
+        run = Unfiled()
+        for extra in (["--row", ROW1], ["--dry-run"], ["--list"], ["--all"], ["--layout", "plain-memory"]):
+            code, text = refile(run, extra=extra)
+            self.assertEqual(code, pc_exitcodes.USAGE, " ".join(extra) + ": " + text)
+        self.assertEqual(rerun_folders(run.rig), [], "nothing was filed")
+
+    def test_a_fresh_run_and_a_refile_file_through_the_same_function(self) -> None:
+        ev = evidence()
+        with mock.patch.object(ev, "file_row", wraps=ev.file_row) as spy:
+            world = World()
+            self.assertEqual(world.code, 0, world.text)
+        self.assertEqual(spy.call_count, 1, "a fresh run calls file_row once")
+        run = Unfiled()
+        with mock.patch.object(ev, "file_row", wraps=ev.file_row) as spy:
+            code, text = refile(run)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(spy.call_count, 1, "a refile calls file_row once")
+
+
+class RaceTests(unittest.TestCase):
+    def test_two_filings_of_one_run_give_exactly_one_winner_and_one_17(self) -> None:
+        import threading
+
+        run = Unfiled()
+        contexts = [run.file_context(), run.file_context()]
+        barrier = threading.Barrier(2)
+        codes = []
+        lock = threading.Lock()
+
+        def work(ctx) -> None:
+            barrier.wait()
+            outcome = evidence().file_row(ctx, run.run_root)
+            with lock:
+                codes.append(outcome.code)
+
+        threads = [threading.Thread(target=work, args=(ctx,)) for ctx in contexts]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sorted(codes), [0, pc_exitcodes.PROMOTE_REFUSED], "one winner and one refusal")
+        self.assertTrue(os.path.isdir(os.path.join(run.run_root, "stage-1")), "stage-1 exists")
+        self.assertTrue(os.path.isdir(os.path.join(run.run_root, "stage-2")), "stage-2 exists")
+        filed = tree_bytes(run.destination)
+        self.assertEqual(filed, tree_bytes(os.path.join(run.run_root, "stage-1")), "one complete tree")
+        self.assertEqual(filed, tree_bytes(os.path.join(run.run_root, "stage-2")), "from either stage")
+
+
+class ReadmeTests(unittest.TestCase):
+    def readme(self) -> str:
+        here = os.path.dirname(os.path.abspath(__file__))
+        return read_text(os.path.join(here, "README.md"))
+
+    def test_the_readme_describes_what_a_run_files(self) -> None:
+        text = self.readme()
+        self.assertIn("### What a run files", text, "the subsection")
+        section = text.split("### What a run files", 1)[1].split("\n## ", 1)[0].split("\n### ", 1)[0]
+        for phrase in ("rerun-", "SKIPPED-", "--refile", "zero tokens", VERDICT_LINE, "raw", "never filed"):
+            self.assertIn(phrase, section, "the subsection says: " + phrase)
+
+    def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
+        text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("<scratch>", text, "the scratch token is listed")
+
+    def test_the_two_new_files_are_named_once_each_in_the_layout(self) -> None:
+        text = self.readme()
+        layout = text.split("\n## Layout\n", 1)[1].split("\n## ", 1)[0]
+        self.assertEqual(layout.count("- `pc_evidence.py` - "), 1, "pc_evidence.py once")
+        self.assertEqual(layout.count("- `test_evidence.py` - "), 1, "test_evidence.py once")
+
+
 if __name__ == "__main__":
     unittest.main()
