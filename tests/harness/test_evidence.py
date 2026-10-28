@@ -997,6 +997,7 @@ class RefileTests(unittest.TestCase):
         import tempfile
 
         run = Unfiled()
+        run_root = run.run_root
         outside = tempfile.mkdtemp(prefix="pc-outside-")
         os.makedirs(os.path.join(outside, "raw"))
         with open(os.path.join(outside, "raw", "run.json"), "w", encoding="utf-8") as handle:
@@ -1005,8 +1006,8 @@ class RefileTests(unittest.TestCase):
         os.makedirs(empty)
         cases = {
             "relative": "relative-run-folder",
-            "missing": run.run_root + "-missing",
-            "a file": os.path.join(run.run_root, "raw", "run.json"),
+            "missing": run_root + "-missing",
+            "a file": os.path.join(run_root, "raw", "run.json"),
             "outside the runs root": outside,
             "no run record": empty,
         }

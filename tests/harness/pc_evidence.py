@@ -79,7 +79,6 @@ MESSAGE_NO_PROMPT = "FAIL: a stage prompt was not stored in the run root; nothin
 MESSAGE_NO_STREAM = "FAIL: a stage stream cannot be read; nothing is filed"
 MESSAGE_SANITIZER = "SCANNER_ERROR: the sanitizer could not process a staged file; nothing is filed"
 MESSAGE_STAGING = "FAIL: the stage folder could not be written; nothing is filed"
-MESSAGE_SKIP_REASON = "FAIL: the skip reason could not be filed; nothing is filed"
 
 _STAGE_DIR_MODE = 0o700
 _FILE_MODE = 0o644
@@ -1194,3 +1193,68 @@ def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str
         stage, ctx.destination, ctx.repo_root, config_dir=ctx.config_dir, deny_entries=ctx.deny_entries
     )
     return _outcome(result, ctx.destination, count)
+
+
+# ---------------------------------------------------------------------------------------------
+# A SKIPPED row (D-10)
+# ---------------------------------------------------------------------------------------------
+
+MESSAGE_SKIP_ROW = "FAIL: the skipped row could not be filed; nothing is filed"
+MESSAGE_SKIP_COLLISION = "RUNROOT_COLLISION: a run folder already exists; nothing is filed"
+SKIPPED_PREFIX = "SKIPPED-"
+
+
+def render_skipped_readme(row_id: str, reason: str) -> bytes:
+    """The README of a SKIPPED folder: no session was run, the reason, and the one verdict line last."""
+    text = " ".join(str(reason).split()).rstrip(".") or "no reason was given"
+    return _lines(
+        [
+            "# SKIPPED: %s" % row_id,
+            "",
+            "This row was skipped on this machine: %s. No session was run and no usage was recorded. "
+            "This folder is a label for the skip, not a result." % text,
+            "",
+            VERDICT_LINE,
+        ]
+    )
+
+
+def file_skipped(
+    repo_root: str,
+    destination: str,
+    row_id: str,
+    reason: str,
+    sanitizer: Any,
+    deny_entries: Any,
+    config_dir: str,
+    runs_root: str,
+    clock: Callable[[], Any],
+) -> pc_rows.RowOutcome:
+    """File <destination>/SKIPPED-<row id>/README.md for a row whose precondition was not met.
+
+    The run is never counted as a success: the exit code is 10 (PREFLIGHT_SKIP) when the label is filed, and 14,
+    15, 17 or 11 when the sanitizer, the gate, promote or the staging refuse. The reason passes through the same
+    sanitizer, gate and promote as any other file, so a reason shaped like a home path is refused with 14.
+    """
+    if not pc_rows.is_valid_id(row_id):
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_SKIP_ROW,))
+    stamp = clock().strftime("%Y%m%dT%H%M%SZ")
+    try:
+        pc_spike.ensure_runs_root(runs_root)
+        run_root = pc_runroot.allocate_run_root(runs_root, "%s-skipped-%s" % (row_id, stamp))
+        stage = new_stage_dir(run_root)
+        stage_tree(stage, {"README.md": render_skipped_readme(row_id, reason)}, sanitizer)
+    except pc_sanitize.SanitizerError:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
+    except pc_runroot.RunRootCollision:
+        return pc_rows.RowOutcome(pc_exitcodes.RUNROOT_COLLISION, (MESSAGE_SKIP_COLLISION,))
+    except (pc_runroot.RunRootError, pc_spike.SpikeError, OSError):
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_SKIP_ROW,))
+    target = os.path.join(destination, SKIPPED_PREFIX + row_id)
+    result = pc_promote.promote(stage, target, repo_root, config_dir=config_dir, deny_entries=deny_entries)
+    if int(result.code) != pc_exitcodes.OK:
+        return _outcome(result, target, 0)
+    return pc_rows.RowOutcome(
+        pc_exitcodes.PREFLIGHT_SKIP,
+        ("filed: %s/%s%s, 1 file(s); no session was run" % (os.path.basename(destination), SKIPPED_PREFIX, row_id),),
+    )

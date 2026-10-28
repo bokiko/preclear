@@ -240,6 +240,8 @@ a dry run, then one row.
   to the spend ledger, for a stage that was attempted. It prints counts only, starts no process and
   refuses an unknown or never-attempted stage with exit 2. It exists so that a retry has a hook that
   a person types; no task of this phase runs it.
+- `--refile RUNROOT` repeats the checks and the filing for a finished run folder, for zero tokens (see
+  "What a run files"). It cannot be combined with another selection or with `--dry-run`.
 
 The spend gate, in words. A stage is attempted once. A launch reserves the stage's cap in the ledger
 before any process starts, under a file lock, so two launches cannot both pass the same check. The
@@ -257,8 +259,8 @@ with `--version` once, and runs the strict preflight, in that order, before the 
 
 The three states, each with its own code and its own label:
 
-- SKIP (exit 10): a row's precondition is not met. The row is labelled SKIPPED with the reason
-  and is never counted as a pass.
+- SKIP (exit 10): a row's precondition is not met. The row is labelled SKIPPED with the reason, filed
+  as a label folder (see "What a run files") and never counted as a pass.
 - FAIL (exit 11): the harness or a fixture is broken, for example a file the row reads is missing
   or `claude` answered with something unusable. Nothing is filed.
 - BLOCKED (exit 12): there is no `claude`, no login, an unusable runs root or an unreachable stub.
@@ -344,11 +346,51 @@ Denials are counted facts. Only a concrete write outside the approved roots or a
 run with exit code 11 and files nothing; the raw bytes and the snapshots stay in the run root. Everything else
 is a fact for the reviewer.
 
+### What a run files
+
+When the three stages end and the mechanical checks find no breach, the driver files the row. Filing is the
+last step. The run root is read as it is on disk, one staged tree is rendered, every file passes the
+sanitizer that was built before any spend, the whole tree is scanned by the leak gate with the sanitizer's
+deny entries, and promote creates the new folder `tests/evidence/rerun-<date>-<model>` exclusively and once.
+A folder that already exists is refused with exit 17 and is never reused; a refusal by the sanitizer (exit 15)
+or by the gate (exit 14) files nothing. Nothing under `tests/evidence` is ever overwritten or removed.
+
+The folder holds a README and one folder per row. The README labels the run a new baseline on the pinned model
+and build, quotes the row total and the run total from the usage file, says the run is not a replication of
+the 2026-10-20 run (that run recorded no model), lists what differs and says the committed folder stays the
+reference. A row folder holds the same files as the committed row 1 folder (configuration, allowlist, digests,
+the prompts, the short and full traces, the measurements, the wrapper log and one snapshot folder per stage),
+plus the files of this harness: the provenance files (Claude Code version, model id, isolation mode, harness
+version, settings), the usage per stage with each call's own cost and the row total, the mechanical checks, the
+work turn's prompt and full trace, the resume line with the third stage's files, and in each snapshot a
+manifest next to its digest list.
+
+Every file the harness writes itself holds facts, counts and ids, as `name: value` lines with yes and no for
+booleans. A value that could not be measured is written UNCONFIRMED and never left blank. None of these files
+uses the words of a verdict. The row README ends with a checklist of the mechanical facts for the reviewer, one
+line each with a blank box, the value and the file that backs it, and directly under it the single line
+`Reviewer verdict: PENDING`. The harness never decides a row.
+
+The raw captures stay in the run root and are never filed: the streams, the NUL form of the version control
+status, the hook log, the stage records and the run record. Each stage prompt is stored beside them, so a later
+filing needs nothing from memory.
+
+A row whose precondition is not met is filed as a folder named `SKIPPED-` followed by the row id. It says that
+no session was run and why, never reads as a result, passes through the same sanitizer and gate, and the run
+exits 10, never 0.
+
+`--refile RUNROOT` repeats the checks and the filing for a finished run folder, for zero tokens, after a
+refusal that came late (a taken name, the gate, a sanitizer error). It starts no claude, needs no budget,
+writes no ledger line, takes the evidence date and the model recorded in the run (not today's date) and calls
+the same filing function as a fresh run. A folder that is not a finished run folder under the runs root is
+refused with exit 2, and a destination that already exists with exit 17.
+
 ## Replacement tokens
 
 Evidence that becomes public is sanitized with these tokens, always lower case in angle brackets:
-`<home>`, `<user>`, `<host>`, `<tmp>`, `<repo>` for the machine's own values; `<run>`, `<helper>` and
-`<auto-memory-root>` for paths a caller maps; `<redacted>` for entries from a local deny file.
+`<home>`, `<user>`, `<host>`, `<tmp>`, `<repo>` for the machine's own values; `<run>`, `<helper>`,
+`<auto-memory-root>` and `<scratch>` for paths a caller maps (`<scratch>` is the runs folder and the folders
+above it); `<redacted>` for entries from a local deny file.
 
 ## Platforms
 
@@ -368,6 +410,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `checkpoint_stub.py` - the single-file STUB-BACKED checkpoint helper
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
+- `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED labels
 - `pc_exitcodes.py` - the named exit codes
 - `pc_flags.py` - the pinned `claude -p` contract: flag table, argv builder, environment scrub, version gate
 - `pc_leakgate.py` - fail-closed leak gate for evidence about to become public
@@ -392,6 +435,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_bash_shims.py` - bash 3.2 lint of the shims and a run under the system bash
 - `test_branch_table.py` - tests for the branch table
 - `test_checks.py` - tests for the mechanical checks, with seeded failing runs and a clean control
+- `test_evidence.py` - tests for filing: the deny entries, the file set, provenance, usage, vocabulary, the checklist, SKIPPED, refile and a race
 - `test_exitcode_agreement.py` - exit literals outside `pc_exitcodes.py` agree with its constants
 - `test_flags.py` - tests for the pinned contract
 - `test_frozen_reference.py` - the frozen reference is what the evidence ran on
