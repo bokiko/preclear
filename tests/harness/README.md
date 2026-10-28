@@ -274,6 +274,38 @@ The three states, each with its own code and its own label:
 The `<config>` token in the login line is replaced by the real harness config folder only when
 the line is printed on your own terminal; this guide never holds a real path.
 
+### What a row run does
+
+A real run of row 1 builds its setup in a fresh run root under the runs folder: a scratch project with
+a configuration file, a three-step plan and a git repository on `main`, the frozen skill copied in as
+untracked files, two ledgers of which only the second is bound to the work session, the wrapper that
+logs every helper call, the stub's state, and the audit hook that logs which instruction files were
+loaded. The stub's status and lint output from before the first stage are kept.
+
+Then three stages run, each as its own `claude -p` process, each behind a reservation in the spend
+ledger and each followed by a snapshot of the run root:
+
+- the work turn starts a session and implements one step of the plan;
+- the `/preclear` turn resumes that same session;
+- the fresh resume starts a second, new session whose whole prompt is the resume line the `/preclear`
+  turn printed (the last fenced single line starting with the word Resume). If no such line was
+  printed, the run records that fact, starts no third process and still ends cleanly.
+
+The work-turn prompt is a data file in `data/`; the `/preclear` prompt is the committed one, read in
+place from the publication folder and never copied, so it is byte-identical by construction.
+
+After every stage the init manifest and the instruction audit are asserted against the isolation
+baseline: permission mode, model, skills, servers, plugins, user names, the memory path as set, the
+working folder, the session id as requested, and which instruction files were loaded from where. The
+isolation mode is recorded as strict in the run's own record. A stage that does not complete (a
+timeout, a failed exit, a result that is not a plain success, a result with an error flag or a
+reason other than completed, a stream without exactly one result) or fails an assertion stops the
+chain and files nothing. A resumed stage that logs no new instruction entry is recorded as not
+asserted on resume, which is a fact and not a failure.
+
+Permission denials are counted as facts and are not a verdict. Containment is detected after the fact
+from the snapshots and the stream; the allowlist does not enforce it.
+
 ## Replacement tokens
 
 Evidence that becomes public is sanitized with these tokens, always lower case in angle brackets:
@@ -307,6 +339,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_preflight.py` - zero-token check that claude is present, in the tested set and logged in
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
+- `pc_row1.py` - row 1: the seed, the snapshots, the three-stage chain and the init and instruction-audit assertions
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
@@ -332,12 +365,15 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_preflight.py` - tests for the exit-code table and the preflight
 - `test_promote.py` - tests for promote
 - `test_readme.py` - keeps this guide equal to the code
+- `test_row1_assertions.py` - tests for the init manifest and instruction-audit assertions of a row run
+- `test_row1_seed.py` - tests for the row 1 seed, the snapshots and the first stage
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
 - `test_selftest_shim.py` - tests for the `selftest` shim with a tripwire claude
 - `test_spend.py` - tests for the spend ledger, the retry authorization and the delta cost
 - `test_spike.py` - tests for the spike driver and hook logger
 - `test_spike_fixture.py` - zero-token checks of the committed spike captures
+- `test_stages.py` - tests for the three-stage chain, the resume line, cost, stop rules and the pre-spend order
 - `test_stream.py` - tests for the stream parser
 - `test_stub_cli.py` - command-line tests for the stub
 - `test_stub_concurrency.py` - races, a contended lock and the timeout switch
@@ -349,6 +385,8 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `data/s2-stream.jsonl` - the sanitized real stream from spike S2
 - `data/s2b-stream.jsonl` - the sanitized resume stream from spike S2
 - `data/s2-probe-labels.json` - the policy-probe labels for spike S2
+- `data/row1-s1-prompt.md` - the row 1 work-turn prompt, with a ledger placeholder
+- `data/row1-plan.md` - the row 1 plan text, whose digest equals the committed setup digest
 
 ## Limits
 

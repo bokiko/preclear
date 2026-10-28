@@ -133,6 +133,8 @@ _ROW1_SOURCES: Tuple[Tuple[str, str], ...] = (
     (_PUBLICATION + "/snap-0-setup/CONTINUITY_CLAUDE-other-task.md", "file"),
     (_PUBLICATION + "/snap-0-setup/CONTINUITY_CLAUDE-widget-export.md", "file"),
     ("tests/fixtures/bound-ledger/project", "dir"),
+    ("tests/harness/data/row1-s1-prompt.md", "file"),
+    ("tests/harness/data/row1-plan.md", "file"),
 )
 
 
