@@ -276,5 +276,112 @@ class PreflightCliTests(_FakeClaudeCase):
         self.assertEqual(done.returncode, 2)
 
 
+class ExplicitClaudePathTests(_FakeClaudeCase):
+    """run_preflight(claude_path=...) names the executable and never consults the search path."""
+
+    def make_second_dir(self) -> str:
+        other = os.path.join(self.parent, "other-bin")
+        os.makedirs(other)
+        return other
+
+    def run_explicit(self, claude_path, search=None, **extra):
+        return pc_preflight.run_preflight(
+            search_path=[self.bin_dir] if search is None else search,
+            config_dir=self.config_dir,
+            tested_versions=TESTED,
+            base_env=self.base_env,
+            claude_path=claude_path,
+            **extra
+        )
+
+    def test_an_absolute_path_to_a_tested_build_is_ok_and_carries_the_banner(self) -> None:
+        path = pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, True)
+        result = self.run_explicit(path, search=[])
+        self.assertEqual((result.state, result.exit_code), ("OK", 0))
+        self.assertEqual(result.banner, GOOD_BANNER)
+        self.assertIsNone(result.cause)
+        self.assertEqual(result.claude, path)
+        self.assertEqual(pc_testutil.read_tripwire(self.bin_dir), [])
+
+    def test_the_explicit_path_wins_over_a_different_claude_on_the_search_path(self) -> None:
+        other = self.make_second_dir()
+        pc_testutil.make_fake_claude(other, "2.1.999 (Claude Code)", True)
+        tested = pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, True)
+        self.assertEqual(self.run_explicit(tested, search=[other]).exit_code, 0)
+        untested = os.path.join(other, "claude")
+        self.assertEqual(self.run_explicit(untested, search=[self.bin_dir]).exit_code, 13)
+
+    def test_an_untested_explicit_build_is_13_with_the_untested_cause(self) -> None:
+        path = pc_testutil.make_fake_claude(self.bin_dir, "2.1.311 (Claude Code)", True)
+        result = self.run_explicit(path)
+        self.assertEqual((result.state, result.exit_code, result.cause), ("UNTESTED", 13, "untested-version"))
+
+    def test_a_relative_missing_folder_or_non_executable_path_is_blocked(self) -> None:
+        pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, True)
+        plain = os.path.join(self.parent, "plain-file")
+        with open(plain, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+        os.chmod(plain, 0o644)
+        for candidate in (
+            "claude",
+            os.path.join("bin", "claude"),
+            "",
+            os.path.join(self.parent, "does-not-exist"),
+            self.bin_dir,
+            plain,
+        ):
+            result = self.run_explicit(candidate)
+            self.assertEqual((result.state, result.exit_code, result.cause), ("BLOCKED", 12, "no-claude"))
+            self.assertNotIn(self.parent, result.line())
+        self.assertEqual(pc_testutil.read_env_log(self.bin_dir), [])
+
+    def test_every_non_ok_result_carries_a_cause_and_ok_carries_none(self) -> None:
+        cases = []
+        empty = os.path.join(self.parent, "empty-bin")
+        os.makedirs(empty)
+        cases.append(("no-claude", pc_preflight.run_preflight(search_path=[empty])))
+        pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, False)
+        cases.append(("logged-out", self.run_pre()))
+        cases.append(("no-config", self.run_pre(config_dir=None)))
+        cases.append(("no-config", self.run_pre(config_dir=os.path.join(self.parent, "missing-config"))))
+        cases.append(("unusable", self.run_pre(config_dir=os.path.join(os.path.dirname(HARNESS_DIR), "scratch-cfg"))))
+        pc_testutil.make_fake_claude(self.bin_dir, "2.1.311 (Claude Code)", True)
+        cases.append(("untested-version", self.run_pre()))
+        pc_testutil.make_fake_claude(self.bin_dir, "garbage", True)
+        cases.append(("malformed", self.run_pre()))
+        pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, True, auth_raw="not json")
+        cases.append(("malformed", self.run_pre()))
+        pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, True)
+        cases.append(("precondition", self.run_pre(row_check=lambda: "a reason")))
+        for expected, result in cases:
+            self.assertEqual(result.cause, expected, "a non-OK result carries the wrong cause")
+            self.assertNotEqual(result.exit_code, 0)
+        ok = self.run_pre()
+        self.assertEqual((ok.exit_code, ok.cause, ok.banner), (0, None, GOOD_BANNER))
+
+
+class ExplicitClaudeCliTests(_FakeClaudeCase):
+    def test_the_claude_option_prints_one_line_and_exits_with_the_state_code(self) -> None:
+        path = pc_testutil.make_fake_claude(self.bin_dir, GOOD_BANNER, True)
+        argv = [sys.executable, "-E", "-s", "-B", PREFLIGHT_SCRIPT, "--search-path", os.path.join(self.parent, "none")]
+        argv += ["--config-dir", self.config_dir, "--tested-version", "2.1.310", "--claude", path]
+        done = subprocess.run(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60, env=self.base_env
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(len(done.stdout.splitlines()), 1)
+        self.assertTrue(done.stdout.startswith("OK: "))
+
+    def test_an_untested_explicit_build_exits_13(self) -> None:
+        path = pc_testutil.make_fake_claude(self.bin_dir, "2.1.311 (Claude Code)", True)
+        argv = [sys.executable, "-E", "-s", "-B", PREFLIGHT_SCRIPT, "--config-dir", self.config_dir]
+        argv += ["--tested-version", "2.1.310", "--claude", path]
+        done = subprocess.run(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60, env=self.base_env
+        )
+        self.assertEqual(done.returncode, 13)
+        self.assertTrue(done.stdout.startswith("UNTESTED: "))
+
+
 if __name__ == "__main__":
     unittest.main()
