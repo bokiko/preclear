@@ -236,6 +236,18 @@ a dry run, then one row.
   case the dry run prints, written with at most two decimals and at most five in total; a real run
   without one, or with a smaller or malformed one, is refused with exit 18 before any process
   starts.
+- `--authorize-retry STAGE` takes a stage key such as `row1-s2` and appends one authorization line
+  to the spend ledger, for a stage that was attempted. It prints counts only, starts no process and
+  refuses an unknown or never-attempted stage with exit 2. It exists so that a retry has a hook that
+  a person types; no task of this phase runs it.
+
+The spend gate, in words. A stage is attempted once. A launch reserves the stage's cap in the ledger
+before any process starts, under a file lock, so two launches cannot both pass the same check. The
+ledger sits in the harness home and never in the repository. A second attempt of a stage is refused
+until an authorization line exists; one authorization permits exactly one more attempt of that
+stage and raises the row's limit by that stage's cap and no more. The cost of one call is a delta,
+because the cost the stream reports is cumulative across a resumed session; the cost of a row adds
+each session chain's final total once.
 
 The claude-free gate runs inside the dry run, with no process and no `claude`: the runs root is
 outside every home folder and the repository, every file the row reads exists, the evidence folder
@@ -296,6 +308,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
+- `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
 - `pc_seeds.py` - run-time assembly of leak-shaped test strings (test support)
 - `pc_spike.py` - the spike driver: harness home, runs root, spend guard, S1 assertions, S2 probe
@@ -322,6 +335,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
 - `test_selftest_shim.py` - tests for the `selftest` shim with a tripwire claude
+- `test_spend.py` - tests for the spend ledger, the retry authorization and the delta cost
 - `test_spike.py` - tests for the spike driver and hook logger
 - `test_spike_fixture.py` - zero-token checks of the committed spike captures
 - `test_stream.py` - tests for the stream parser

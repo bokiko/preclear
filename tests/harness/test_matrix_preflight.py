@@ -28,6 +28,7 @@ import pc_leakgate
 import pc_runroot
 import pc_sanitize
 import pc_seeds
+import pc_spend
 import pc_stream
 import pc_testutil
 
@@ -532,6 +533,8 @@ class ExecuteMappingTests(unittest.TestCase):
             (spike().HomeRefused, 12),
             (spike().SpikeError, 11),
             (pc_stream.StreamError, 19),
+            (pc_spend.SpendRefused, 18),
+            (pc_spend.SpendError, 11),
             (ImportError, 11),
         ]
         for exception, expected in cases:

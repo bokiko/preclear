@@ -14,8 +14,11 @@ Run it as python3 -E -s -B pc_matrix.py, never with -I, because the pc_ modules 
                             preflight, the argument vector and the binary scan from one path
     --budget AMOUNT         the most the caller allows a real run to cost; it must be at least the
                             worst case the plan prints, or the run is refused with exit 18
+    --authorize-retry STAGE append one retry authorization line for a stage that was attempted (a
+                            stage key such as row1-s2); a second attempt of a stage never starts
+                            without it. Starts no process. A person types it; no task runs it.
 
-Exactly one of --list, --row, --layout and --all is given. An id is matched whole and exactly
+Exactly one of --list, --row, --layout, --all and --authorize-retry is given. An id is matched whole and exactly
 against the registry before it is used for anything; an unknown or unimplemented id exits 2 with
 fixed text that never repeats the value.
 
@@ -46,12 +49,14 @@ import pc_preflight
 import pc_rows
 import pc_runroot
 import pc_sanitize
+import pc_spend
 import pc_spike
 import pc_stream
 
 PROG = "pc_matrix.py"
 USAGE_LINE = (
-    "usage: pc_matrix.py (--list | --row ID | --layout NAME | --all) [--dry-run] [--claude PATH] [--budget AMOUNT]"
+    "usage: pc_matrix.py (--list | --row ID | --layout NAME | --all | --authorize-retry STAGE) "
+    "[--dry-run] [--claude PATH] [--budget AMOUNT]"
 )
 ALLOWLIST_ROLE_WRAPPER = "/role/wrapper/checkpoint"
 STUB_TIMEOUT_SECONDS = 20
@@ -67,6 +72,8 @@ MESSAGE_NEEDS_BUDGET = "a real run needs --budget at least the worst case printe
 MESSAGE_BAD_BUDGET = "the budget is not an amount like 2.00 within the allowed range"
 MESSAGE_SHORT_BUDGET = "the budget is below the worst case printed above"
 MESSAGE_NOTHING_TO_RUN = "no implemented row was selected, so nothing was run"
+MESSAGE_UNKNOWN_STAGE = "unknown stage key"
+MESSAGE_NOT_ATTEMPTED = "that stage has not been attempted"
 
 # One line per BLOCKED cause. Each equals a README bullet of the form "- `cause`: line" byte for
 # byte (test_matrix_preflight compares them). The angle token is replaced by the harness config
@@ -156,6 +163,7 @@ def build_parser(out: TextIO, err: TextIO) -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", dest="dry_run")
     parser.add_argument("--claude", default=None)
     parser.add_argument("--budget", default=None)
+    parser.add_argument("--authorize-retry", default=None, dest="authorize_retry")
     return parser
 
 
@@ -404,6 +412,8 @@ def _check_budget(text: str, needed: Decimal, err: TextIO) -> Tuple[Optional[Dec
 
 _EXCEPTION_LINES: Tuple[Tuple[Any, int, str], ...] = (
     (pc_spike.BudgetRefused, pc_exitcodes.BUDGET_REFUSED, "BUDGET_REFUSED: the spend gate stopped this run"),
+    (pc_spend.SpendRefused, pc_exitcodes.BUDGET_REFUSED, "BUDGET_REFUSED: the spend gate stopped this run"),
+    (pc_spend.SpendError, pc_exitcodes.PREFLIGHT_FAIL, "FAIL: the spend ledger is unusable"),
     (pc_spike.HomeRefused, pc_exitcodes.PREFLIGHT_BLOCKED, "BLOCKED: the harness home or the runs root is unusable"),
     (pc_spike.LeakRefused, pc_exitcodes.LEAK_REFUSED, "LEAK_REFUSED: the leak gate refused"),
     (pc_spike.SpikeError, pc_exitcodes.PREFLIGHT_FAIL, "FAIL: the harness could not complete the row"),
@@ -515,6 +525,47 @@ def _run_preflight(
     return result, harness_home, config_dir, pc_exitcodes.OK
 
 
+def _stage_catalog(registry: Sequence[pc_rows.RowSpec]) -> Dict[str, Tuple[pc_rows.RowSpec, pc_rows.StageSpec]]:
+    """Map every stage key of every implemented row (row1-s2) to its row and stage."""
+    catalog: Dict[str, Tuple[pc_rows.RowSpec, pc_rows.StageSpec]] = {}
+    for entry in registry:
+        if entry.implemented:
+            for stage in entry.stages:
+                catalog[pc_rows.stage_key(entry.row_id, stage.name)] = (entry, stage)
+    return catalog
+
+
+def _authorize_retry(
+    text: str,
+    registry: Sequence[pc_rows.RowSpec],
+    env: Mapping[str, str],
+    repo_root: str,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Append one retry authorization line for an attempted stage. Starts no process."""
+    catalog = _stage_catalog(registry)
+    found = catalog.get(text) if pc_rows.is_valid_id(text) else None
+    if found is None:
+        return _refuse(err, MESSAGE_UNKNOWN_STAGE)
+    entry, stage = found
+    try:
+        home = pc_spike.harness_home(env, env.get("HOME") or None, repo_root)
+    except pc_spike.HomeRefused:
+        _print_result(_blocked("harness-home"), out)
+        return pc_exitcodes.PREFLIGHT_BLOCKED
+    try:
+        pc_spend.authorize_retry(home, entry.row_id, text, stage.cap, tuple(catalog))
+    except pc_spend.StageNotAttempted:
+        return _refuse(err, MESSAGE_NOT_ATTEMPTED)
+    except pc_spend.SpendRefused:
+        return _refuse(err, "the spend gate refused that authorization", pc_exitcodes.BUDGET_REFUSED)
+    except pc_spend.SpendError:
+        return _refuse(err, "the spend ledger is unusable", pc_exitcodes.PREFLIGHT_FAIL)
+    _write(out, "authorized one more attempt of %s\n" % text)
+    return pc_exitcodes.OK
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     env: Optional[Mapping[str, str]] = None,
@@ -538,10 +589,11 @@ def main(
         args.row is not None,
         args.layout is not None,
         args.all_rows,
+        args.authorize_retry is not None,
     ]
     if sum(1 for chosen_flag in selections if chosen_flag) != 1:
         return _usage(err)
-    if args.dry_run and args.list_all:
+    if args.dry_run and (args.list_all or args.authorize_retry is not None):
         return _usage(err)
 
     source: Mapping[str, str] = dict(os.environ) if env is None else env
@@ -552,6 +604,8 @@ def main(
         for line in list_lines(entries):
             _write(out, line + "\n")
         return pc_exitcodes.OK
+    if args.authorize_retry is not None:
+        return _authorize_retry(args.authorize_retry, entries, source, root, out, err)
 
     chosen, refused = _select_entries(args, entries, err)
     if chosen is None:
