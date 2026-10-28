@@ -53,6 +53,9 @@ _LABEL_PREFIXES = (
 
 GIT_STATUS_GLOBAL = "git --no-optional-locks status"
 _EVIDENCE = ("tests", "evidence")
+# The corpus is the committed publication evidence only. A new baseline is judged by its own run and a rerun folder
+# next to it is never loaded here, so filing one cannot change the measured corpus counts (finding C5).
+CORPUS_FOLDER = "publication-2026-10-20"
 _REPLAY_CASES = ("tests", "harness", "replay-cases.json")
 
 _ASCII_WS = " \t\r\n\f\v"
@@ -314,14 +317,15 @@ def _label(first_line: str) -> Optional[str]:
     return None
 
 
-def load_trace_calls(repo_root: str) -> List[Dict[str, object]]:
-    """Every Bash call of every full trace under tests/evidence, with its row's rules.
+def load_trace_calls(repo_root: str, evidence_folder: str = CORPUS_FOLDER) -> List[Dict[str, object]]:
+    """Every Bash call of every full trace under tests/evidence/<evidence_folder>, with its row's rules.
 
-    Traces sort by path bytes; a trace whose folder holds no tools.txt is skipped. Each
+    The default folder is the committed publication evidence (CORPUS_FOLDER); a rerun baseline filed next to it is
+    not part of the corpus. Traces sort by path bytes; a trace whose folder holds no tools.txt is skipped. Each
     record has folder, trace, number, command, refusal (the trace's own flag), first_line
     (the first line of the recorded reply), label (a rule-class label or None) and rules.
     """
-    evidence = os.path.join(repo_root, *_EVIDENCE)
+    evidence = os.path.join(repo_root, *_EVIDENCE, evidence_folder)
     paths: List[str] = []
     for current, dirs, files in os.walk(evidence):
         dirs.sort(key=os.fsencode)

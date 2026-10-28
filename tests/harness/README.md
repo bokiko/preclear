@@ -28,6 +28,9 @@ does the same without the PATH check.
 - The harness folder needs only the standard library, no module shadows one, and both shell
   entry points avoid anything bash 3.2 lacks.
 - The tables in this guide equal the code: a test compares each one at every run.
+- The skill, its references, the fixtures and the committed publication evidence are pinned by digest, and
+  `SKILL.md` is at or under its size cap: a test fails if any of them changes without the pinned value
+  changing in the same commit.
 
 ## What it does not prove
 
@@ -385,6 +388,32 @@ writes no ledger line, takes the evidence date and the model recorded in the run
 the same filing function as a fresh run. A folder that is not a finished run folder under the runs root is
 refused with exit 2, and a destination that already exists with exit 17.
 
+### Comparing a rerun with the committed row
+
+`python3 -E -s -B tests/harness/pc_compare.py --old tests/evidence/publication-2026-10-20 --new tests/evidence/<the new folder>`
+lines the new row 1 folder up against the committed one. `--row ID` names another row folder; the default is row 1.
+Both values name a folder that holds the row folder, and neither may be a symlink.
+
+It prints facts under neutral headings and decides nothing. For the one row folder in each tree it lists: the
+files and folders present on one side only, in both directions; the row README headings that differ; the helper
+calls (the total, the count per verb and the exit codes) from the wrapper log; the tool calls per tool name from
+the full traces, with the header count and the two flag counts, a trace that exists on one side only being
+reported on that side; and the byte measurements, read from the old and the new shape of the measurement file,
+with every total or section above its cap named (a size equal to the cap is within it, one byte more is above).
+Under the heading `listed, not judged` it lists the snapshot digests that differ and the paths on one side
+only (a leading helper-state or ledgers folder is read as `ckpt`), the allowlist rule difference with both
+counts, the digest lines, the Claude Code version and the usage file. Content digests that differ are expected
+and are only listed. The committed token `<repo>/<run>` and the newer token `<run>` are read as equal before any
+count that depends on text. A file that is missing or cannot be parsed is reported as such for that side and the
+run goes on.
+
+It opens everything for reading only and writes nothing but its report. To show that, it prints a digest of each
+whole tree before the comparison and again after it, and says for each side whether the two are equal. The digest
+covers names, bytes, empty folders and symlink targets; file modes and timestamps are not part of it. It exits 0
+whenever both trees were readable, whatever they differ in, and 2 when a folder is missing, is a file or a
+symlink, lacks the row folder, or the command line is wrong; its error text is fixed and never repeats a path. It
+never says that a row is accepted or rejected: that is the reviewer's decision.
+
 ## Replacement tokens
 
 Evidence that becomes public is sanitized with these tokens, always lower case in angle brackets:
@@ -410,6 +439,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `checkpoint_stub.py` - the single-file STUB-BACKED checkpoint helper
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
+- `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after
 - `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED labels
 - `pc_exitcodes.py` - the named exit codes
 - `pc_flags.py` - the pinned `claude -p` contract: flag table, argv builder, environment scrub, version gate
@@ -435,10 +465,12 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_bash_shims.py` - bash 3.2 lint of the shims and a run under the system bash
 - `test_branch_table.py` - tests for the branch table
 - `test_checks.py` - tests for the mechanical checks, with seeded failing runs and a clean control
+- `test_compare.py` - tests for the comparer: the tracer against the committed row, the read-only proofs, digests, exits and vocabulary
 - `test_evidence.py` - tests for filing: the deny entries, the file set, provenance, usage, vocabulary, the checklist, SKIPPED, refile and a race
 - `test_exitcode_agreement.py` - exit literals outside `pc_exitcodes.py` agree with its constants
 - `test_flags.py` - tests for the pinned contract
 - `test_frozen_reference.py` - the frozen reference is what the evidence ran on
+- `test_frozen_tree.py` - SKILL.md size cap and pinned digests of the skill, references, fixtures and committed evidence
 - `test_imports.py` - standard library only, 3.9 syntax, no shadowing, naming rule
 - `test_leakgate.py` - tests for the leak gate
 - `test_manifest.py` - tests for the manifest writers

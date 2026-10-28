@@ -34,7 +34,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **HARN-10**: Row 10 keeps the documented quoted-porcelain fallback as its expected outcome; no policy exception is added for the NUL `-z` form
 - [ ] **HARN-11**: Row 11's injector triggers on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls, and wrapper log lines are correlated with `tool_use` ids
 - [ ] **HARN-12**: Row 7's preflight proves the `chmod` denial is effective or marks the row SKIPPED
-- [ ] **HARN-13**: Everything new lives under `tests/harness/`; `SKILL.md`, `references/` and `tests/fixtures/` are unchanged unless a rerun exposes a defect, and `SKILL.md` stays at or under 12,000 bytes
+- [x] **HARN-13**: Everything new lives under `tests/harness/`; `SKILL.md`, `references/` and `tests/fixtures/` are unchanged unless a rerun exposes a defect, and `SKILL.md` stays at or under 12,000 bytes
 - [x] **HARN-14**: The harness needs no install beyond Claude Code, git and Python 3 (standard library only); shell is limited to bash 3.2-compatible entry shims and the model-facing wrapper
 
 ### Stub helper
@@ -54,7 +54,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **EVID-03**: A fail-closed leak gate scans every file before it is filed; a `promote` step refuses to copy anything into `tests/evidence/` on a scan failure
 - [x] **EVID-04**: Filed rows follow the committed per-row file set (README, tools, digests, short and full traces, snapshots, measurements) plus `mechanical-checks.md`, `usage.txt`, `model-id.txt`, `isolation-mode.txt`, `harness-version.txt`, and are written with exclusive creation into a new dated folder
 - [x] **EVID-05**: The harness never prints a verdict; each row ends with `Reviewer verdict: PENDING` and a reviewer checklist of mechanical facts
-- [ ] **EVID-06**: A read-only structural comparer reports per-row differences between a rerun and `tests/evidence/publication-2026-10-20/` without editing either
+- [x] **EVID-06**: A read-only structural comparer reports per-row differences between a rerun and `tests/evidence/publication-2026-10-20/` without editing either
 - [x] **EVID-07**: A model-free `unittest` self-test suite (stub conformance, sanitizer, leak scan, collision refusal, NUL manifest, preflight paths, allowlist check, measurer) passes with zero tokens and is the first thing a stranger runs
 
 ### Rerun
@@ -119,7 +119,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-10 | Phase 4 | Pending |
 | HARN-11 | Phase 4 | Pending |
 | HARN-12 | Phase 4 | Pending |
-| HARN-13 | Phase 3 | Pending |
+| HARN-13 | Phase 3 | Complete |
 | HARN-14 | Phase 2 | Complete |
 | STUB-01 | Phase 2 | Complete |
 | STUB-02 | Phase 2 | Complete |
@@ -133,7 +133,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVID-03 | Phase 2 | Complete |
 | EVID-04 | Phase 3 | Complete |
 | EVID-05 | Phase 3 | Complete |
-| EVID-06 | Phase 3 | Pending |
+| EVID-06 | Phase 3 | Complete |
 | EVID-07 | Phase 2 | Complete |
 | RERUN-01 | Phase 4 | Pending |
 | RERUN-02 | Phase 4 | Pending |
