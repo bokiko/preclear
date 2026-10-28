@@ -107,12 +107,28 @@ Plans:
   4. The row README ends with `Reviewer verdict: PENDING` and a checklist of mechanical facts, and no filed file from the harness contains an accepted, passed or failed verdict. (EVID-05)
   5. The read-only comparer prints per-row differences between the rerun and `tests/evidence/publication-2026-10-20/row1-wrong-binding`, and tree digests of both evidence trees are identical before and after it runs. `git diff` shows `SKILL.md`, `references/` and `tests/fixtures/` unchanged, `SKILL.md` is at or under 12,000 bytes, and all new code sits under `tests/harness/`. (EVID-06, HARN-13)
 
-**Plans:** 3 plans
+**Plans:** 6 plans
 
 Plans:
-- [ ] 03-01: Driver CLI (`--list`, `--row`, `--layout`, `--all`, `--dry-run`), preflight states and exit codes, provenance record, proven first against a fake `claude` (HARN-01, HARN-02, HARN-05, HARN-13)
-- [ ] 03-02: Row 1 with the real binary: fixture, stages, snapshots, `init` manifest assertion, isolation mode, write-boundary and git-read-only checks, measured usage and cost (HARN-05, HARN-07, HARN-09)
-- [ ] 03-03: Evidence filing (per-row file set, `Reviewer verdict: PENDING` checklist, leak-gated `promote`) and the thin read-only comparer for row 1 (EVID-04, EVID-05, EVID-06)
+**Wave 1**
+- [ ] 03-01-PLAN.md — Tracer: `--list` and `--dry-run` print the registry and the session count with no process; the claude-free gate, SKIP, FAIL and BLOCKED codes, `--claude`, the budget gate and README fix lines; the file-locked matrix spend ledger with delta cost and the retry authorization flag (HARN-01, HARN-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03-02-PLAN.md — Tracer: seed the row 1 run root and run s1 through a scripted claude; the three-stage chain (s2 resumed, s3 from the resume line) with delta cost, stop rules and the pre-spend order; the init manifest and instruction audit asserted after every stage, isolation mode recorded (HARN-05, HARN-07)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03-03-PLAN.md — Tracer: write boundary from snapshots with seeded failing fixtures and exit 11; trace paths, git state, memory probe, ledger digests, helper-call counts; the stub end-marker fix (review WR-03) (HARN-09)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 03-04-PLAN.md — Tracer: file a finished run through the sanitizer, the leak gate and promote with the deny entries (WR-14); the full per-row file set with provenance, usage, mechanical checks and the reviewer checklist ending in `Reviewer verdict: PENDING`; SKIPPED filing and the zero-token `--refile` (HARN-05, EVID-04, EVID-05)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 03-05-PLAN.md — Tracer: the read-only comparer with tree digests before and after; structural comparison, measurement shapes and read-only proofs; pinned frozen trees, the SKILL.md size cap, the allowlist corpus scope and the zero-token phase gate (EVID-06, HARN-13)
+
+**Wave 6** *(blocked on Wave 5 completion; autonomous: false)*
+- [ ] 03-06-PLAN.md — Tracer: zero-token rehearsal against the real 2.1.310 build; blocking-human checkpoint for the build, the cap and the green gate; the one paid row 1 run, filed, compared and costed (HARN-05, HARN-07, HARN-09, EVID-04, EVID-05, EVID-06, HARN-13)
+
+*Plan count note: the earlier three-plan outline (03-01 driver, 03-02 row 1 with the real binary, 03-03 filing and comparer) could not fit the 50 percent context target, the 3-task limit and the rule that a human-gated paid run never shares a plan with implementation, so each outline plan was split by concern: the driver and spend ledger, the row seed and stage chain, the mechanical checks, the evidence filing, the comparer and frozen guards, and the single paid run. The README is one file that every plan extends, so the plans run in serial waves. No requirement or decision moved.*
 
 **Exit output:** This phase reports the measured cost of one row, which gives the first real cost figure. Phase 4's spend is confirmed from that figure.
 
@@ -154,5 +170,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
-| 3. Walking Skeleton (Row 1) | 0/3 | Not started | - |
+| 3. Walking Skeleton (Row 1) | 0/6 | Not started | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
