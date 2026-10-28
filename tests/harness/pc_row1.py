@@ -18,6 +18,8 @@ What a row 1 run is, in order:
                       did not complete cleanly
   * extract_resume_line, caller_map, finish   the resume-line rule, the sanitizer's caller map and the closing
                       lines of a completed chain
+  * breach_outcome    the mechanical checks of pc_checks over the run root after every stage and in finish: a
+                      write outside the approved roots or a git mutation is exit 11, counts only, nothing filed
 
 Every file and folder is created exclusively (pc_runroot); nothing here deletes, renames, moves or truncates, and
 nothing here starts the real claude by itself: the caller names the executable through the run context.
@@ -761,7 +763,9 @@ def run_stage(
 
     problem = _classify(call, events, summary)
     snapshot = SNAPSHOT_NAMES[spec.name]
-    skipped = take_snapshot(paths, snapshot, _git_executable(ctx.env))
+    vcs = _git_executable(ctx.env)
+    skipped = take_snapshot(paths, snapshot, vcs)
+    pc_checks.capture_boundary_state(paths, spec.name, vcs)
     usage = _usage_of(result_event) if result_event is not None else None
     stdout_sha = _sha256(call.stdout)
     evaluation: Optional[Evaluation] = None
@@ -1057,6 +1061,7 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
     session = str(uuid.uuid4())
     paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
     take_snapshot(paths, SNAPSHOT_SETUP, vcs)
+    pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs)
     entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
     if entry is None:
         raise pc_spike.SpikeError("the row is not in the registry")

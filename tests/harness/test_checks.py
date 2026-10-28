@@ -554,6 +554,7 @@ class SeededBreachTests(unittest.TestCase):
         self.assertEqual(facts["write_boundary"]["count"], 0, "snapshot path")
         self.assertEqual(facts["trace_writes"]["count"], 0, "trace path")
         self.assertEqual(facts["memory_probe"], "absent", "memory probe")
+        self.assertEqual(facts["bash_mentions"]["outside_path_tokens"], 0, "the helper path is not a mention")
         self.assertEqual(facts["git"]["mutations"]["total"], 0, "git path")
         self.assertEqual(checks().breaches(facts), [], "no breach")
 
