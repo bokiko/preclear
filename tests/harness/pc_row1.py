@@ -403,6 +403,7 @@ def take_snapshot(
     git: str,
     refuse_under: Sequence[str] = (),
     setup: bool = False,
+    pin: Optional[str] = None,
 ) -> List[str]:
     """Write snaps/<name> and return the names of model-written trees whose copy was skipped.
 
@@ -412,14 +413,16 @@ def take_snapshot(
     (as preclear) and the auto-memory folder (as auto-memory). A symlink or special file inside one of those
     two trees skips that one copy only; the manifest still lists the entry. A taken name is FileExistsError.
 
-    git status is gated by the gitdir digest recorded at setup (pc_checks.pinned_gitdir): once the project's
+    git status is gated by the gitdir digest taken at setup and held in memory (pin; pc_checks.pinned_gitdir
+    compares the pin file with it before the snapshot folder exists or any git process starts): once the project's
     .git folder differs from it, git is not started (a command planted in the repository's own configuration
     would run), status.raw is empty and status.txt holds the one fixed line STATUS_NOT_RUN. A project that holds
     a nested repository gets the fixed line STATUS_NOT_RUN_NESTED instead, for the same reason. The pin is
-    required after setup: only the setup snapshot (setup true) is unpinned, any other snapshot without
-    raw/setup.git.json is a CheckError (second-pass WR-03).
+    required after setup: only the setup snapshot (setup true) is unpinned; any other snapshot without the
+    in-memory pin, without raw/setup.git.json or with a file that differs from the pin is a CheckError (second-pass
+    WR-03, third-pass WR-02).
     """
-    pin = pc_checks.pinned_gitdir(str(paths["raw"]), setup)
+    pin = pc_checks.pinned_gitdir(str(paths["raw"]), setup, pin)
     run_root = str(paths["run_root"])
     entries = [e for e in pc_manifest.tree_manifest(run_root, tuple(refuse_under)) if not _excluded(e["path"])]
     dest = os.path.join(str(paths["snaps"]), name)
@@ -830,8 +833,8 @@ def run_stage(
     problem = _classify(call, events, summary)
     snapshot = SNAPSHOT_NAMES[spec.name]
     vcs = _git_executable(ctx.env)
-    skipped = take_snapshot(paths, snapshot, vcs)
-    pc_checks.capture_boundary_state(paths, spec.name, vcs)
+    skipped = take_snapshot(paths, snapshot, vcs, pin=ctx.setup_pin)
+    pc_checks.capture_boundary_state(paths, spec.name, vcs, ctx.setup_pin)
     usage = _usage_of(result_event) if result_event is not None else None
     stdout_sha = _sha256(call.stdout)
     evaluation: Optional[Evaluation] = None
@@ -1140,7 +1143,7 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
     session = str(uuid.uuid4())
     paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
     take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
-    pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs)
+    ctx = ctx._replace(setup_pin=pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs, None))
     pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
     entry =pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
     if entry is None:

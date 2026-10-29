@@ -107,13 +107,17 @@ class Seeded(object):
             self.ctx.model,
         )
 
+    pin = None
+
     def guard_setup(self) -> None:
         """Write the setup guard and the setup git state the way run_row does, so that run_stage has a previous
-        boundary to compare and the pin that every later harness git call needs (second-pass WR-03)."""
+        boundary to compare and the pin that every later harness git call needs (second-pass WR-03). The digest
+        the setup call returns is kept in memory, here and in the context, as run_row keeps it (third-pass WR-02)."""
         import pc_checks
 
         git = shutil.which("git", path=os.pathsep.join(pc_testutil.SYSTEM_DIRS))
-        pc_checks.capture_boundary_state(self.paths, pc_checks.SETUP_STATE, git)
+        self.pin = pc_checks.capture_boundary_state(self.paths, pc_checks.SETUP_STATE, git, None)
+        self.ctx = self.ctx._replace(setup_pin=self.pin)
         pc_checks.capture_guard(self.paths, "setup")
 
 
@@ -273,6 +277,7 @@ class SeedTests(unittest.TestCase):
 class SnapshotTests(unittest.TestCase):
     def snapshot(self, seeded, name, **kwargs):
         git = shutil.which("git", path=os.pathsep.join(pc_testutil.SYSTEM_DIRS))
+        kwargs.setdefault("pin", seeded.pin)
         return row1().take_snapshot(seeded.paths, name, git, **kwargs)
 
     def test_a_snapshot_holds_the_filtered_manifest_status_listings_and_copies(self) -> None:
@@ -350,6 +355,7 @@ class TracerTests(unittest.TestCase):
         spec = rows().find_entry(rows().build_registry(), "row", ROW1).stages[0]
         prompt = m.read_stage_prompts(seeded.rig.repo, p["ledger_a"])[0]
         seeded.guard_setup()
+        ctx = seeded.ctx
         result = m.run_stage(ctx, p, spec, session, prompt, False, None, 120)
         self.assertTrue(result.ok, result.problem)
         calls = seeded.rig.calls()
@@ -410,6 +416,7 @@ class TracerTests(unittest.TestCase):
         ctx, p = seeded.ctx, seeded.paths
         spec = rows().find_entry(rows().build_registry(), "row", ROW1).stages[0]
         seeded.guard_setup()
+        ctx = seeded.ctx
         m.run_stage(ctx, p, spec, seeded.session, "prompt", False, None, 120)
         with self.assertRaises(pc_spend.SpendRefused):
             m.run_stage(ctx, p, spec, seeded.session, "prompt", False, None, 120)

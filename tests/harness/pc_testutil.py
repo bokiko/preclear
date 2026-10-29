@@ -192,6 +192,7 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   git    args: run git in the cwd with a hygiene environment
 #   touch  path: set the modification time of an existing file to now (os.utime)
 #   remove path: remove one file (os.remove). It may only aim at a file of the test's own run root.
+#   rename path, to: rename one entry (os.rename). It may only aim at an entry of the test's own run root.
 #   sleep  seconds
 #   raw    line: print one line verbatim
 # Result keys: subtype, is_error, terminal_reason, text, total_cost_usd, delta (adds
@@ -345,6 +346,10 @@ def do_remove(op):
     os.remove(subst(op["path"]))
 
 
+def do_rename(op):
+    os.rename(subst(op["path"]), subst(op["to"]))
+
+
 def do_git(op):
     env = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
@@ -375,6 +380,8 @@ for op in stage.get("ops", []):
         do_touch(op)
     elif kind == "remove":
         do_remove(op)
+    elif kind == "rename":
+        do_rename(op)
     elif kind == "sleep":
         time.sleep(float(op.get("seconds", 0)))
     elif kind == "raw":
@@ -627,7 +634,18 @@ def seed_pin_removed(stages: list, stage_index: int = 0) -> list:
 NESTED_FOLDER = "nested-repo"
 
 
-def seed_nested_repo_plant(stages: list, stage_index: int = 0) -> list:
+def seed_pin_rewritten(stages: list, stage_index: int = 0) -> list:
+    """A stage list whose stage rewrites the run root's pin file raw/setup.git.json with a well-formed state (WR-02).
+
+    One write op through the $RUN token, aimed at a file of the test's own run root. The state holds the five
+    documented fields and a 64-character hexadecimal digest built here at run time that is not the real one.
+    """
+    state = {"head": "h", "branch": "b", "refs_digest": "ab" * 32, "gitdir_digest": "cd" * 32, "staged": 0}
+    text = json.dumps(state, indent=2, sort_keys=True) + "\n"
+    return _with_ops(stages, stage_index, [{"op": "write", "path": "$RUN/raw/setup.git.json", "text": text}])
+
+
+def seed_nested_repo_plant(stages: list, stage_index: int = 0, git_name: str = ".git") -> list:
     """A stage list whose stage creates a nested repository with a planted clean filter (second-pass WR-03).
 
     In this order: git init of a subfolder repository, a tracked file written in it, that file staged inside it,
@@ -636,20 +654,26 @@ def seed_nested_repo_plant(stages: list, stage_index: int = 0) -> list:
     marker named planted-nested in the outside folder followed by a comment sign, an attributes file selecting
     the driver for every file and a touch of the tracked file. Staging comes before the configuration is
     planted, so the scripted claude's own git calls never run the driver. The top-level .git folder is not
-    changed, so the pin alone cannot see it.
+    changed, so the pin alone cannot see it. When git_name differs from .git, the nested git folder is renamed
+    to it after its configuration is planted (WR-01: on a case-insensitive file system git still opens it).
     """
     nested = "$PROJECT/" + NESTED_FOLDER
     object_name = "1" * 40
     config = _PLANT_CORE + '[filter "planted"]\n\tclean = touch $OUTSIDE/planted-nested #\n'
-    return _with_ops(stages, stage_index, [
+    ops: list = [
         {"op": "git", "args": ["init", "-q", nested]},
         {"op": "write", "path": nested + "/tracked.txt", "text": "one\n"},
         {"op": "git", "args": ["-C", nested, "add", "tracked.txt"]},
         {"op": "git", "args": ["update-index", "--add", "--cacheinfo", "160000,%s,%s" % (object_name, NESTED_FOLDER)]},
         {"op": "write", "path": nested + "/.git/config", "text": config},
+    ]
+    if git_name != ".git":
+        ops.append({"op": "rename", "path": nested + "/.git", "to": nested + "/" + git_name})
+    ops.extend([
         {"op": "write", "path": nested + "/.gitattributes", "text": "* filter=planted\n"},
         {"op": "touch", "path": nested + "/tracked.txt"},
     ])
+    return _with_ops(stages, stage_index, ops)
 
 
 _HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))

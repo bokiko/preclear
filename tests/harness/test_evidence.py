@@ -1493,6 +1493,18 @@ class Harn09ReproofTests(unittest.TestCase):
             ),
             ("rewritten hook log", pc_testutil.seed_run_record_tamper(base, "hooklog"), None),
             ("nested repository with a planted clean filter", pc_testutil.seed_nested_repo_plant(base, 0), "planted-nested"),
+            (
+                "attached-option write",
+                pc_testutil.seed_bash_outside_write(base, 1, command="env sort -o$OUTSIDE/x f", write_file=False),
+                None,
+            ),
+            (
+                "command-running git configuration",
+                pc_testutil.seed_bash_outside_write(
+                    base, 1, command="env git -c core.fsmonitor='touch x' status", write_file=False
+                ),
+                None,
+            ),
         ]
 
     def test_the_clean_control_files_through_the_driver_and_exits_0(self) -> None:
@@ -1511,7 +1523,7 @@ class Harn09ReproofTests(unittest.TestCase):
 
     def test_each_seeded_failure_ends_with_11_files_nothing_and_leaves_no_marker(self) -> None:
         cases = self.seeded()
-        self.assertEqual(len(cases), 10, "ten seeded failures")
+        self.assertEqual(len(cases), 12, "twelve seeded failures")
         for label, stages, marker in cases:
             world = World(stages=stages)
             self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
@@ -1527,6 +1539,16 @@ class Harn09ReproofTests(unittest.TestCase):
 
     def test_a_removed_pin_file_ends_with_11_files_nothing_and_starts_no_git_command(self) -> None:
         world = World(stages=pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0))
+        self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
+        created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
+        self.assertEqual(created, [], "nothing was created under tests/evidence")
+        self.assertNotIn(world.rig.base, world.text, "no folder of the rig is printed")
+        self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
+        self.assertEqual(len(world.rig.calls()), 1, "the second stage was never launched")
+
+
+    def test_a_rewritten_pin_file_ends_with_11_files_nothing_and_launches_no_second_stage(self) -> None:
+        world = World(stages=pc_testutil.seed_pin_rewritten(pc_testutil.default_row1_stages(), 0))
         self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
         created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
         self.assertEqual(created, [], "nothing was created under tests/evidence")
@@ -1589,6 +1611,22 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn(phrase, text, "the guide says: " + phrase)
         self.assertIn("body of an unquoted heredoc is scanned", text, "an unquoted body is scanned")
         self.assertIn("quoted heredoc is data", text, "a quoted body is data")
+
+    def test_the_readme_describes_the_dot_dot_resolution_the_attached_options_and_the_test_group(self) -> None:
+        text = self.readme()
+        for phrase in ("starts in the project folder", "attached to a short option", "is one part"):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        self.assertNotIn("the home variable, a dot-dot segment and an absolute path", text, "the old blanket rule is gone")
+
+    def test_the_readme_describes_the_readers_the_git_rule_the_nested_compare_and_the_pin(self) -> None:
+        text = self.readme()
+        for phrase in (
+            "sed script", "awk statement", "command-running", "whatever the key and value", "case-insensitively",
+            "held in memory", "write escape",
+        ):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        for option in ("-c", "--exec-path", "--config-env"):
+            self.assertIn(option, text, "the guide names " + option)
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
         text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
