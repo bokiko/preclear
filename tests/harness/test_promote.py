@@ -388,5 +388,64 @@ class PartialFailureTests(HarnessTestCase):
         self.ok("planted" not in result.message, "no detail text")
 
 
+class DenyEntriesRequiredTests(HarnessTestCase):
+    """WR-03: promote needs the deny entries from its caller unless the caller opts into the default ones."""
+
+    def test_promote_without_entries_and_without_the_opt_out_raises_and_creates_nothing(self):
+        repo = make_repo()
+        stage = make_stage({"a.txt": b"fine\n"})
+        dest = os.path.join(evidence_of(repo), "dst")
+        try:
+            pc_promote.promote(stage, dest, repo, None, None)
+        except ValueError as exc:
+            message = str(exc)
+        else:
+            self.fail("promote accepted a missing deny list")
+        self.ok("allow_default_deny" in message, "the message names the keyword")
+        self.ok(repo not in message and stage not in message, "the message holds no folder")
+        self.ok(os.listdir(evidence_of(repo)) == [], "nothing was created")
+
+    def test_the_opt_out_builds_the_default_entries_and_an_empty_list_is_accepted(self):
+        repo = make_repo()
+        stage = make_stage({"a.txt": b"fine\n"})
+        result = pc_promote.promote(stage, os.path.join(evidence_of(repo), "one"), repo, None, None, allow_default_deny=True)
+        self.ok(result.code == 0, "the opt-out promotes a clean stage")
+        result = pc_promote.promote(stage, os.path.join(evidence_of(repo), "two"), repo, None, [])
+        self.ok(result.code == 0, "an explicit empty list is accepted")
+
+    def test_the_command_line_still_promotes_a_clean_stage_and_refuses_a_leak(self):
+        repo = make_repo()
+        stage = make_stage({"a.txt": b"fine\n"})
+        done = run_cli("--repo-root", repo, stage, os.path.join(evidence_of(repo), "cli-ok"))
+        self.ok(done.returncode == 0, "a clean stage exits 0")
+        leak = pc_seeds.home_path(SYNTHETIC_USER)
+        bad = make_stage({"a.txt": ("x " + leak + "\n").encode("utf-8")})
+        refused = run_cli("--repo-root", repo, bad, os.path.join(evidence_of(repo), "cli-leak"))
+        self.ok(refused.returncode == pc_exitcodes.LEAK_REFUSED, "a leak exits 14")
+        self.ok(not os.path.exists(os.path.join(evidence_of(repo), "cli-leak")), "nothing was created")
+
+    def test_every_production_call_of_promote_passes_the_deny_entries(self):
+        import ast
+
+        found = 0
+        for name in sorted(os.listdir(HARNESS_DIR)):
+            if not (name.startswith("pc_") and name.endswith(".py")) or name == "pc_promote.py":
+                continue
+            with open(os.path.join(HARNESS_DIR, name), "r", encoding="utf-8") as handle:
+                tree = ast.parse(handle.read())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                called = (isinstance(func, ast.Attribute) and func.attr == "promote") or (
+                    isinstance(func, ast.Name) and func.id == "promote"
+                )
+                if not called:
+                    continue
+                found += 1
+                self.ok("deny_entries" in [keyword.arg for keyword in node.keywords], "a call of promote names deny_entries")
+        self.ok(found >= 2, "the scan saw the production calls")
+
+
 if __name__ == "__main__":
     unittest.main()

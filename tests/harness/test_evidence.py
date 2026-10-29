@@ -1076,6 +1076,128 @@ class RefileTests(unittest.TestCase):
         self.assertEqual(spy.call_count, 1, "a refile calls file_row once")
 
 
+def tripwire_env(run: "Unfiled") -> tuple:
+    """The rig's environment with a tripwire claude first on PATH, and the folder that holds its log."""
+    import tempfile
+
+    wire = tempfile.mkdtemp(prefix="pc-wire-")
+    pc_testutil.make_tripwire(wire)
+    env = dict(run.rig.env)
+    env["PATH"] = os.pathsep.join([wire, env["PATH"]])
+    return wire, env
+
+
+NOT_CLEAN_TEXT = "did not finish cleanly"
+
+
+class RefileCleanRunTests(unittest.TestCase):
+    """CR-01: a run the live path refused cannot be refiled; the rule is the live path's own."""
+
+    def assert_refused_for_nothing_filed(self, run: "Unfiled", label: str) -> None:
+        import pc_spend
+
+        wire, env = tripwire_env(run)
+        ledger = pc_spend.read_records(run.ctx.harness_home)
+        calls = len(run.rig.calls())
+        before = sorted(os.listdir(run.run_root))
+        code, text = refile(run, env=env)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + text)
+        self.assertIn(NOT_CLEAN_TEXT, text, label + ": the fixed line")
+        self.assertNotIn(run.rig.base, text, label + ": no folder in the text")
+        self.assertEqual(rerun_folders(run.rig), [], label + ": no evidence folder")
+        self.assertEqual(sorted(os.listdir(run.run_root)), before, label + ": no stage folder in the run root")
+        self.assertEqual(len(run.rig.calls()), calls, label + ": no stage process was started")
+        self.assertEqual(pc_testutil.read_tripwire(wire), [], label + ": no claude was run")
+        self.assertEqual(pc_spend.read_records(run.ctx.harness_home), ledger, label + ": no ledger line was written")
+
+    def test_a_chain_stopped_at_s2_by_an_error_subtype_cannot_be_refiled(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, subtype="error_during_execution")
+        run = Unfiled(stages)
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "the live path refused the run")
+        self.assert_refused_for_nothing_filed(run, "error_during_execution")
+
+    def test_every_unclean_stage_shape_is_refused(self) -> None:
+        base = pc_testutil.default_row1_stages()
+        cases = {
+            "max turns subtype": with_result(base, 1, subtype="error_max_turns"),
+            "error flag": with_result(base, 1, is_error=True),
+            "terminal reason": with_result(base, 1, terminal_reason="max_turns"),
+            "process exit": pc_testutil.stages_with(base, 1, exit=1),
+            "failed isolation assertion": pc_testutil.stages_with(base, 0, init={"model": "some-other-model"}),
+        }
+        for label, stages in sorted(cases.items()):
+            run = Unfiled(stages)
+            self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": the live path refused")
+            self.assert_refused_for_nothing_filed(run, label)
+
+    def test_a_record_without_its_problem_or_evaluation_key_or_with_a_stop_is_refused(self) -> None:
+        def drop(key):
+            def change(record):
+                del record[key]
+
+            return change
+
+        def stop(record):
+            record["evaluation"] = "stop"
+
+        cases = {"no problem key": drop("problem"), "no evaluation key": drop("evaluation"), "stop": stop}
+        for label, change in sorted(cases.items()):
+            run = Unfiled()
+            path = os.path.join(run.run_root, "raw", "s2.record.json")
+            record = json.loads(read_text(path))
+            change(record)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+            self.assert_refused_for_nothing_filed(run, label)
+
+    def test_the_clean_default_run_and_a_run_with_no_s3_still_refile(self) -> None:
+        run = Unfiled()
+        code, text = refile(run)
+        self.assertEqual(code, 0, "the clean default run: " + text)
+        stages = with_result(pc_testutil.default_row1_stages(), 1, text="Checkpoint written. Nothing to resume.")
+        run = Unfiled(stages)
+        code, text = refile(run)
+        self.assertEqual(code, 0, "a run with no s3: " + text)
+
+
+class DenyEntriesContractTests(unittest.TestCase):
+    """WR-03: filing needs the sanitizer's deny entries, so the login check is not left to the caller."""
+
+    def test_file_row_without_deny_entries_is_15_and_does_nothing(self) -> None:
+        run = Unfiled()
+        ctx = run.file_context()._replace(deny_entries=None)
+        before = sorted(os.listdir(run.run_root))
+        with mock.patch.object(pc_promote, "promote") as spy, mock.patch.object(
+            evidence(), "load_stage_data"
+        ) as reader:
+            outcome = evidence().file_row(ctx, run.run_root)
+        self.assertEqual(outcome.code, pc_exitcodes.SCANNER_ERROR, "\n".join(outcome.lines))
+        self.assertEqual(spy.call_count, 0, "promote was not called")
+        self.assertEqual(reader.call_count, 0, "the run root was not read")
+        self.assertEqual(sorted(os.listdir(run.run_root)), before, "no stage folder was made")
+        self.assertFalse(os.path.lexists(run.destination), "the destination was not created")
+        self.assertIn("deny entries", "\n".join(outcome.lines), "the fixed line")
+        self.assertNotIn(run.rig.base, "\n".join(outcome.lines), "no folder in the text")
+
+    def test_file_skipped_without_deny_entries_is_15_and_creates_nothing(self) -> None:
+        import pc_sanitize
+
+        rig = pc_testutil.RowRig()
+        ctx = rig.context()
+        sanitizer = pc_sanitize.Sanitizer.from_machine(rig.repo)
+        runs_before = sorted(os.listdir(ctx.runs_root))
+        evidence_before = sorted(os.listdir(os.path.dirname(ctx.destination)))
+        with mock.patch.object(pc_promote, "promote") as spy:
+            outcome = evidence().file_skipped(
+                rig.repo, ctx.destination, ROW1, FIXED_REASON, sanitizer, None, ctx.config_dir, ctx.runs_root,
+                fixed_clock,
+            )
+        self.assertEqual(outcome.code, pc_exitcodes.SCANNER_ERROR, "\n".join(outcome.lines))
+        self.assertEqual(spy.call_count, 0, "promote was not called")
+        self.assertEqual(sorted(os.listdir(ctx.runs_root)), runs_before, "nothing in the runs root")
+        self.assertEqual(sorted(os.listdir(os.path.dirname(ctx.destination))), evidence_before, "nothing filed")
+
+
 class RaceTests(unittest.TestCase):
     def test_two_filings_of_one_run_give_exactly_one_winner_and_one_17(self) -> None:
         import threading
