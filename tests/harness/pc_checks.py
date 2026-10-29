@@ -11,7 +11,9 @@ What is a breach (decided by breaches(), nothing else):
   * writes-outside-approved-roots   a concrete write outside the approved roots (project, ckpt, auto-memory):
                                     a path that changed between boundary snapshots, an executed Write, Edit or
                                     NotebookEdit tool path, an executed write-capable Bash part that names a
-                                    place outside the roots (a write escape, plan 03-07), or the default
+                                    place outside the roots (a write escape, plans 03-07 and 03-10: every part
+                                    is write-capable unless its program is on READ_ONLY_PROGRAMS and passes its
+                                    gate, so any program, wrapper or command string counts), or the default
                                     auto-memory folder being present
   * git-mutations                   a change of HEAD, branch, refs or the git folder (the index excluded), a
                                     staged entry, or an executed mutating git command
@@ -80,7 +82,6 @@ _CALL_LINE = re.compile(r"^\S+ CALL(?: |$)")
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _BARE_REDIRECT = re.compile(r"[0-9]*[<>]+\Z")
 _ATTACHED_REDIRECT = re.compile(r"(?:[0-9]*[<>]+&?\S*|&>\S*)\Z")
-_SED_WRITE = re.compile(r"(?:^|[;{}/\s])[0-9$,]*w\s+\S")
 
 
 class CheckError(Exception):
@@ -258,22 +259,42 @@ def trace_write_paths(
 _ENV_UNSET_OPTIONS = ("-u", "--unset")
 _ENV_CHDIR_OPTIONS = ("-C", "--chdir")
 _ENV_SPLIT_OPTIONS = ("-S", "--split-string")
+_ENV_FLAGS = ("-", "-i", "-0", "-v", "--ignore-environment", "--null", "--debug")
 _DEV_PATHS = ("/dev/null", "/dev/stdout", "/dev/stderr")
-_WRAPPER_NAMES = ("timeout", "time", "nice", "nohup", "stdbuf", "command", "builtin", "noglob")
 _QUOTED = re.compile(r"'([^'\n]*)'|\"([^\"\n]*)\"")
-_SED_WRITE_OPERAND = re.compile(r"(?:^|[;{}/\s])[0-9$,]*[wW]\s+(\S+)")
-_REDIRECT_BARE = re.compile(r"(?:[0-9]*|&)>{1,2}\|?\Z")
-_REDIRECT_ATTACHED = re.compile(r"(?:[0-9]*|&)>{1,2}\|?(.+)\Z")
-_REDIRECT_INPUT = re.compile(r"[0-9]*<{1,3}\Z")
-_REDIRECT_INPUT_ATTACHED = re.compile(r"[0-9]*<{1,3}.+\Z")
+_SED_WRITE_OPERAND = re.compile(r"(?:^|[;{}/\s$0-9])[wW]\s*(\S+)")
+_LITERAL_CUT = re.compile(r"""[\s'"()\[\]{},;=<>|&`]+""")
+_AWK_UNSAFE = re.compile(r"\b(?:system|close|getline)\b")
+_AWK_PRINT_REDIRECT = re.compile(r"\bprintf?\b[^;}\n]*[>|]")
+_SED_FILE_FLAG = re.compile(r"-[nEerzsu]*f")
+_LETTERS = re.compile(r"-[A-Za-z]+\Z")
+_PLAIN_LABEL = re.compile(r"[A-Za-z0-9._+-]{1,24}\Z")
 _FD_TARGET = re.compile(r"(?:[0-9]+|-)\Z")
 
+# The programs an executed Bash part may run and still be read-only (the open-world rule, plan 03-10): the
+# short list the rule trusts, each with the gate its use has to pass. Every other program is write-capable.
+READ_ONLY_PROGRAMS: Tuple[str, ...] = (
+    "ls", "cat", "head", "tail", "wc", "shasum", "realpath", "pwd", "date", "printf", "echo", "test", "[", "[[",
+    "find", "sed", "awk", "gawk", "mawk", "grep", "sort", "git", "diff", "cut", "tr", "set",
+)
+GIT_READ_VERBS: Tuple[str, ...] = (
+    "status", "rev-parse", "branch", "log", "show", "diff", "symbolic-ref", "ls-files", "for-each-ref", "rev-list",
+    "cat-file", "show-ref", "ls-tree", "describe", "worktree",
+)
+_SYSTEM_DIRS = ("/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/sbin", "/usr/sbin")
+_FIND_OUTPUT_FLAGS = ("-fprint", "-fprint0", "-fprintf", "-fls", "-delete")
+_FIND_EXEC_FLAGS = ("-exec", "-execdir", "-ok", "-okdir")
+_AWK_NAMES = ("awk", "gawk", "mawk")
+_UNPARSED = "unparsed"
 
-def _strip_prefix(words: List[str]) -> Tuple[List[str], List[str]]:
-    """Drop leading NAME=value words and env words (with their options); return (words, env directory changes).
+
+def _strip_prefix(words: List[str]) -> Tuple[List[str], List[str], bool]:
+    """Drop leading NAME=value words and env words (with their options); return (words, directory changes, ok).
 
     The values of env's -u and -C options belong to the option and never hide the program. The value of -C or
-    --chdir is returned as a directory change. A -S string is split and read as the command it holds.
+    --chdir is returned as a directory change. A -S string is split and read as the command it holds. The rule
+    fails closed: an env option outside the recognised set (-i, -0, -v, -u, -C, -S, their long forms and the
+    double dash) makes ok false, so the whole part is unparsed instead of a wrong word being read as the program.
     """
     words = list(words)
     chdirs: List[str] = []
@@ -287,36 +308,64 @@ def _strip_prefix(words: List[str]) -> Tuple[List[str], List[str]]:
         spliced = None
         while index < len(words):
             word = words[index]
-            if word in _ENV_CHDIR_OPTIONS and index + 1 < len(words):
-                chdirs.append(words[index + 1])
-                index += 2
+            if word == "--":
+                index += 1
+                break
+            if word in _ENV_FLAGS:
+                index += 1
+            elif word in _ENV_CHDIR_OPTIONS or word in _ENV_UNSET_OPTIONS or word in _ENV_SPLIT_OPTIONS:
+                if index + 1 >= len(words):
+                    return words, chdirs, False
+                value = words[index + 1]
+                if word in _ENV_CHDIR_OPTIONS:
+                    chdirs.append(value)
+                    index += 2
+                elif word in _ENV_UNSET_OPTIONS:
+                    index += 2
+                else:
+                    try:
+                        spliced = shlex.split(value) + words[index + 2:]
+                    except ValueError:
+                        return words, chdirs, False
+                    break
             elif word.startswith("--chdir="):
                 chdirs.append(word[len("--chdir="):])
                 index += 1
+            elif word.startswith("--unset="):
+                index += 1
+            elif word.startswith("--split-string="):
+                try:
+                    spliced = shlex.split(word[len("--split-string="):]) + words[index + 1:]
+                except ValueError:
+                    return words, chdirs, False
+                break
             elif word.startswith("-C") and len(word) > 2 and not word.startswith("--"):
                 chdirs.append(word[2:])
                 index += 1
-            elif word in _ENV_UNSET_OPTIONS and index + 1 < len(words):
-                index += 2
-            elif word in _ENV_SPLIT_OPTIONS and index + 1 < len(words):
+            elif word.startswith("-u") and len(word) > 2 and not word.startswith("--"):
+                index += 1
+            elif word.startswith("-S") and len(word) > 2 and not word.startswith("--"):
                 try:
-                    spliced = shlex.split(words[index + 1]) + words[index + 2:]
+                    spliced = shlex.split(word[2:]) + words[index + 1:]
                 except ValueError:
-                    spliced = words[index + 2:]
+                    return words, chdirs, False
                 break
-            elif word.startswith("-") or _ASSIGNMENT.match(word):
+            elif word.startswith("-"):
+                return words, chdirs, False
+            elif _ASSIGNMENT.match(word):
                 index += 1
             else:
                 break
         words = spliced if spliced is not None else words[index:]
-    return words, chdirs
+    return words, chdirs, True
 
 
 def _split_part(part: str) -> Optional[Tuple[List[str], List[str]]]:
     """Split one command part into (words, env directory changes) after wrappers, assignments and env are removed.
 
-    Returns None when the part does not split. A part holding only assignments gives an empty word list. A
-    leading parenthesis or brace of a subshell group is not part of the program name.
+    Returns None when the part does not split or holds an env option the rule does not know. A part holding
+    only assignments gives an empty word list. A leading parenthesis or brace of a subshell group is not part
+    of the program name.
     """
     try:
         words = shlex.split(pc_allowlist.strip_wrappers(part))
@@ -324,7 +373,9 @@ def _split_part(part: str) -> Optional[Tuple[List[str], List[str]]]:
         return None
     chdirs: List[str] = []
     for _round in range(8):
-        words, found = _strip_prefix(words)
+        words, found, ok = _strip_prefix(words)
+        if not ok:
+            return None
         chdirs.extend(found)
         if not words:
             break
@@ -349,36 +400,6 @@ def _tokens(part: str) -> Optional[List[str]]:
     """
     split = _split_part(part)
     return None if split is None else split[0]
-
-
-def _write_program(words: Sequence[str]) -> Optional[str]:
-    """The name of the write-capable use of a program in these words, or None."""
-    if not words:
-        return None
-    program = os.path.basename(words[0])
-    rest = list(words[1:])
-    if program in ("python", "python3") and "-c" in rest:
-        return "python3-c"
-    if program in ("awk", "gawk", "mawk"):
-        return "awk"
-    if program == "sed":
-        flags = [word for word in rest if word.startswith("-")]
-        scripts = [word for word in rest if not word.startswith("-")]
-        if any(flag == "-i" or flag.startswith("-i") or flag == "--in-place" for flag in flags) or (
-            "-n" in flags and any(_SED_WRITE.search(script) for script in scripts)
-        ):
-            return "sed-write"
-        return None
-    if program == "find":
-        for word in rest:
-            if word in ("-fprint", "-fprint0", "-fprintf", "-fls", "-exec", "-execdir", "-ok", "-okdir", "-delete"):
-                return "find-output"
-        return None
-    if program == "git" and any(word.startswith("--output") for word in rest):
-        return "git-diff-output"
-    if program in ("mkdir", "tee", "cp", "mv", "dd", "touch", "install"):
-        return program
-    return None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -419,24 +440,48 @@ def _path_like(text: str) -> bool:
     return "/" in text and ".." in text.split("/")
 
 
+def _cut(text: str) -> List[str]:
+    """The pieces of a text cut on whitespace, quotes, brackets, commas, semicolons, equals and shell operators."""
+    return [piece for piece in _LITERAL_CUT.split(text) if piece]
+
+
+def _literal_candidates(text: str) -> List[str]:
+    """The path-like strings inside the quoted literals of a script text: each literal whole and each piece of it."""
+    found: List[str] = []
+    for match in _QUOTED.finditer(text):
+        literal = match.group(1) if match.group(1) is not None else match.group(2)
+        found.extend([literal] + _cut(literal))
+    return [item for item in found if _path_like(item)]
+
+
+def _word_candidates(word: str) -> List[str]:
+    """The path-like strings inside one word that holds whitespace or a quote (a command string, interpreter code).
+
+    Each whitespace-separated token, each piece of a token, and the quoted literals of the word (see
+    _literal_candidates) are offered; a plain word without whitespace or quotes offers nothing here.
+    """
+    found: List[str] = []
+    if any(ch.isspace() for ch in word):
+        for token in word.split():
+            found.append(token)
+            found.extend(_cut(token))
+    if "'" in word or '"' in word:
+        found.extend(_literal_candidates(word))
+    return [item for item in found if _path_like(item)]
+
+
+def _sed_write_operands(text: str) -> List[str]:
+    """The file operands of the w and W commands of a sed script text (zero or more spaces after the command)."""
+    return [operand for operand in _SED_WRITE_OPERAND.findall(text) if len(operand) > 2]
+
+
 def _script_positions(program: str, rest: Sequence[str]) -> Tuple[set, set]:
-    """Positions in rest of program text (never judged as a path) and of awk field separators (never judged)."""
+    """Positions in rest of awk or sed program text (judged by literal only), and of awk field separators (never judged)."""
     scripts: set = set()
     ignored: set = set()
     index = 0
     have = False
-    if program in ("python", "python3"):
-        if "-c" in rest:
-            position = list(rest).index("-c") + 1
-            if position < len(rest):
-                scripts.add(position)
-        return scripts, ignored
-    if program in ("perl", "ruby", "node", "php"):
-        for number, word in enumerate(rest):
-            if word in ("-e", "-E", "-r") and number + 1 < len(rest):
-                scripts.add(number + 1)
-        return scripts, ignored
-    if program in ("awk", "gawk", "mawk"):
+    if program in _AWK_NAMES:
         while index < len(rest):
             word = rest[index]
             if word in ("-F", "--field-separator"):
@@ -487,134 +532,708 @@ def _script_positions(program: str, rest: Sequence[str]) -> Tuple[set, set]:
     return scripts, ignored
 
 
-def _script_literals(label: str, rest: Sequence[str], scripts: set) -> List[str]:
-    """The path-like quoted literals of a python3 -c, awk or sed script, and the file operand of a sed w command."""
-    if label not in ("python3-c", "awk", "sed-write"):
-        return []
-    found: List[str] = []
-    for position in sorted(scripts):
-        if position >= len(rest):
-            continue
-        text = rest[position]
-        for match in _QUOTED.finditer(text):
-            literal = match.group(1) if match.group(1) is not None else match.group(2)
-            if _path_like(literal):
-                found.append(literal)
-        if label == "sed-write":
-            for operand in _SED_WRITE_OPERAND.findall(text):
-                if _path_like(operand):
-                    found.append(operand)
-    return found
-
-
-def _redirections(rest: Sequence[str]) -> Tuple[List[str], set]:
-    """The output redirection targets in these words, and the positions of every redirection operator and target.
-
-    A target starting with an ampersand and a descriptor number (2>&1, >&2) is a duplication and is no target.
-    Input redirections and here-documents only contribute their positions.
-    """
-    targets: List[str] = []
-    used: set = set()
+def _script_file_option(program: str, rest: Sequence[str]) -> bool:
+    """True for an awk or sed option that takes the program from a file (or loads code): the body is not on the line."""
+    if program not in _AWK_NAMES and program != "sed":
+        return False
     index = 0
     while index < len(rest):
         word = rest[index]
-        if _REDIRECT_BARE.match(word) and index + 1 < len(rest):
-            targets.append(rest[index + 1])
-            used.update((index, index + 1))
-            index += 2
-            continue
-        if _REDIRECT_INPUT.match(word):
-            used.update((index, index + 1))
-            index += 2
-            continue
-        attached = _REDIRECT_ATTACHED.match(word)
-        if attached is not None:
-            targets.append(attached.group(1))
-            used.add(index)
-        elif _REDIRECT_INPUT_ATTACHED.match(word):
-            used.add(index)
-        index += 1
-    kept: List[str] = []
-    for target in targets:
-        if target.startswith("&"):
-            if _FD_TARGET.match(target[1:]) or target[1:] == "":
+        if program == "sed":
+            if word in ("-e", "--expression", "-l", "--line-length"):
+                index += 2
                 continue
-            target = target[1:]
-        kept.append(target)
-    return kept, used
+            if word in ("-f", "--file") or word.startswith("--file=") or (
+                not word.startswith("--") and _SED_FILE_FLAG.match(word) is not None
+            ):
+                return True
+        else:
+            if word in ("-F", "--field-separator", "-v", "--assign", "-e", "--source"):
+                index += 2
+                continue
+            if word.startswith(("--file", "--include", "--load")) or (
+                not word.startswith("--") and word[:2] in ("-f", "-i", "-l")
+            ):
+                return True
+        if not word.startswith("-") or word == "-":
+            break
+        index += 1
+    return False
+
+
+def _cluster_has(rest: Sequence[str], letter: str) -> bool:
+    """True when a short-option cluster such as -ne holds the letter."""
+    return any(_LETTERS.match(word) is not None and letter in word[1:] for word in rest)
+
+
+def _find_execs(rest: Sequence[str]) -> Optional[List[List[str]]]:
+    """The commands a find part runs (-exec and its kin up to the semicolon or plus), or None when one is unterminated."""
+    found: List[List[str]] = []
+    index = 0
+    while index < len(rest):
+        if rest[index] in _FIND_EXEC_FLAGS:
+            end = index + 1
+            while end < len(rest) and rest[end] not in (";", "+"):
+                end += 1
+            if end >= len(rest):
+                return None
+            found.append(list(rest[index + 1:end]))
+            index = end
+        index += 1
+    return found
+
+
+def _find_ok(rest: Sequence[str], ignore: Sequence[str]) -> bool:
+    if any(word in _FIND_OUTPUT_FLAGS for word in rest):
+        return False
+    commands = _find_execs(rest)
+    if commands is None:
+        return False
+    for command in commands:
+        words, _chdirs, ok = _strip_prefix(command)
+        if not ok or (words and not _read_only_program(words, ignore)):
+            return False
+    return True
+
+
+def _sed_ok(rest: Sequence[str]) -> bool:
+    if not (any(word in ("-n", "--quiet", "--silent") for word in rest) or _cluster_has(rest, "n")):
+        return False
+    if any(word == "--in-place" or word.startswith("--in-place=") for word in rest) or _cluster_has(rest, "i"):
+        return False
+    if any(word.startswith("-i") and not word.startswith("--") for word in rest):
+        return False
+    scripts, _ignored = _script_positions("sed", rest)
+    return not any(_sed_write_operands(rest[position]) for position in scripts if position < len(rest))
+
+
+def _awk_ok(rest: Sequence[str]) -> bool:
+    scripts, _ignored = _script_positions("awk", rest)
+    for position in scripts:
+        if position < len(rest) and (_AWK_UNSAFE.search(rest[position]) or _AWK_PRINT_REDIRECT.search(rest[position])):
+            return False
+    return True
+
+
+def _sort_ok(rest: Sequence[str]) -> bool:
+    if any(word == "-o" or word.startswith("-o") or word.startswith("--output") for word in rest if word.startswith("-")):
+        return False
+    return not _cluster_has(rest, "o")
+
+
+def _git_ok(rest: Sequence[str]) -> bool:
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if word in _GIT_VALUE_OPTIONS:
+            index += 2
+        elif word.startswith("-"):
+            index += 1
+        else:
+            break
+    if index >= len(rest):
+        return True
+    verb, args = rest[index], list(rest[index + 1:])
+    if verb not in GIT_READ_VERBS or any(word.startswith("--output") for word in rest):
+        return False
+    positional = [word for word in args if not word.startswith("-")]
+    if verb == "branch":
+        return not positional and not any(flag in _BRANCH_MUTATING_FLAGS for flag in args)
+    if verb == "symbolic-ref":
+        return len(positional) <= 1 and "-d" not in args and "--delete" not in args
+    if verb == "worktree":
+        return len(positional) >= 1 and positional[0] == "list"
+    return True
+
+
+def _trusted(program_word: str) -> bool:
+    """A program word without a slash, or one in a system folder, is the program its basename says."""
+    return "/" not in program_word or os.path.dirname(program_word) in _SYSTEM_DIRS
+
+
+def _read_only_program(words: Sequence[str], ignore: Sequence[str]) -> bool:
+    """True when this command (no redirection considered) is provably read-only: listed and through its gate."""
+    if words[0] in ignore:
+        return True
+    program = os.path.basename(words[0])
+    if program not in READ_ONLY_PROGRAMS or not _trusted(words[0]):
+        return False
+    rest = list(words[1:])
+    if program == "find":
+        return _find_ok(rest, ignore)
+    if program == "sed":
+        return not _script_file_option(program, rest) and _sed_ok(rest)
+    if program in _AWK_NAMES:
+        return not _script_file_option(program, rest) and _awk_ok(rest)
+    if program == "sort":
+        return _sort_ok(rest)
+    if program == "git":
+        return _git_ok(rest)
+    return True
+
+
+def _label(program: str, rest: Sequence[str]) -> str:
+    """The label of a write-capable part: the older labels where they existed, else the program name or other."""
+    if program in ("python", "python3") and "-c" in rest:
+        return "python3-c"
+    if program in _AWK_NAMES:
+        return "awk"
+    if program == "sed":
+        return "sed-write"
+    if program == "find":
+        return "find-output"
+    if program == "git" and any(word.startswith("--output") for word in rest):
+        return "git-diff-output"
+    return program if _PLAIN_LABEL.match(program) else "other"
+
+
+def _mktemp_unsafe(rest: Sequence[str], real_roots: Sequence[str], ignore: Sequence[str]) -> bool:
+    """True when a mktemp part does not name a template, -p DIR or --tmpdir=DIR inside the roots, or has -t."""
+    directory = None
+    template = None
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if word == "-p":
+            if index + 1 >= len(rest):
+                return True
+            directory = rest[index + 1]
+            index += 2
+            continue
+        if word.startswith("--tmpdir="):
+            directory = word[len("--tmpdir="):]
+        elif word == "--tmpdir":
+            return True
+        elif word.startswith("-p") and not word.startswith("--"):
+            directory = word[2:]
+        elif word == "-t" or (_LETTERS.match(word) is not None and "t" in word[1:]):
+            return True
+        elif not word.startswith("-") and template is None:
+            template = word
+        index += 1
+    if directory is None and template is None:
+        return True
+    return any(_escapes(item, real_roots, ignore) for item in (directory, template) if item is not None)
+
+
+class _Tally(object):
+    """What bash_mentions counts while it reads the executed commands."""
+
+    def __init__(self, approved_abs: Sequence[str], ignore: Sequence[str]) -> None:
+        self.roots = [os.path.normpath(root) for root in approved_abs]
+        self.real_roots = [os.path.realpath(root) for root in approved_abs]
+        self.ignore = list(ignore)
+        self.outside = 0
+        self.unparsed = 0
+        self.programs: Dict[str, int] = {}
+        self.escape_programs: Dict[str, int] = {}
+        self.escape_count = 0
+
+    def listed(self, label: str) -> None:
+        self.programs[label] = self.programs.get(label, 0) + 1
+
+    def escaped(self, label: str) -> None:
+        self.escape_programs[label] = self.escape_programs.get(label, 0) + 1
+        self.escape_count += 1
+
+    def escapes(self, word: str) -> bool:
+        return _escapes(word, self.real_roots, self.ignore)
+
+    def raw_escapes(self, text: str) -> bool:
+        """An unparsed text: any piece that reads as a path and escapes."""
+        return any(_path_like(piece) and self.escapes(piece) for piece in text.split() + _cut(text))
+
+
+# ---------------------------------------------------------------------------------------------
+# Shell grammar: comments, heredocs, substitutions, raw-level redirections, reserved words
+# ---------------------------------------------------------------------------------------------
+
+_MAX_DEPTH = 4
+_NEUTRAL = "subst"
+_WORD_START = " \t\n;|&("
+_HEREDOC_END = " \t\n;|&()<>"
+_RESERVED_LEAD = re.compile(r"(?:if|then|elif|else|while|until|do|!|\{)(?=\s|\Z)\s*")
+_RESERVED_STANDALONE = ("fi", "done", "esac", "in", "}", "]]")
+_RESERVED_HEADERS = ("for", "select", "case")
+
+
+class _Unparsed(Exception):
+    """A command the pre-pass cannot read: an unbalanced substitution, an unterminated heredoc, a nesting too deep."""
+
+
+def _read_backquote(text: str, start: int) -> Tuple[str, int]:
+    """The body of a backquote pair that starts at start (after the opening mark) and the index after the closing mark."""
+    buf: List[str] = []
+    index = start
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\" and index + 1 < len(text) and text[index + 1] in "`\\$":
+            buf.append(text[index + 1])
+            index += 2
+            continue
+        if ch == "`":
+            return "".join(buf), index + 1
+        buf.append(ch)
+        index += 1
+    raise _Unparsed()
+
+
+def _skip_double(text: str, start: int) -> int:
+    """The index after the double quote that closes the string starting at start (after the opening quote)."""
+    index = start
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\":
+            index += 2
+        elif ch == '"':
+            return index + 1
+        elif text.startswith("$(", index):
+            _body, index = _read_paren(text, index + 2)
+        elif ch == "`":
+            _body, index = _read_backquote(text, index + 1)
+        else:
+            index += 1
+    raise _Unparsed()
+
+
+def _read_paren(text: str, start: int) -> Tuple[str, int]:
+    """The body of a parenthesis group that starts at start (after the opening mark) and the index after the closing one."""
+    depth = 1
+    index = start
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\":
+            index += 2
+            continue
+        if ch == "'":
+            end = text.find("'", index + 1)
+            if end < 0:
+                raise _Unparsed()
+            index = end + 1
+            continue
+        if ch == '"':
+            index = _skip_double(text, index + 1)
+            continue
+        if ch == "`":
+            _body, index = _read_backquote(text, index + 1)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start:index], index + 1
+        index += 1
+    raise _Unparsed()
+
+
+def _queue_body(body: str, queue: List[str]) -> None:
+    """Queue the body of a substitution as a command of its own; an arithmetic expansion only offers what it holds."""
+    if body.startswith("(") and body.endswith(")"):
+        _scan_expansions(body, queue)
+    else:
+        queue.append(body)
+
+
+def _scan_expansions(text: str, queue: List[str]) -> None:
+    """Queue the command substitutions and backquote pairs of a text the shell expands (an unquoted heredoc body)."""
+    index = 0
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\":
+            index += 2
+        elif text.startswith("$(", index):
+            body, index = _read_paren(text, index + 2)
+            _queue_body(body, queue)
+        elif ch == "`":
+            body, index = _read_backquote(text, index + 1)
+            queue.append(body)
+        else:
+            index += 1
+
+
+def _heredoc_header(command: str, start: int) -> Tuple[str, bool, bool, int]:
+    """Read the operator at start (the two less-than marks): (delimiter, quoted, tab-stripping, index after it)."""
+    index = start + 2
+    dash = command.startswith("-", index)
+    if dash:
+        index += 1
+    while index < len(command) and command[index] in " \t":
+        index += 1
+    delimiter: List[str] = []
+    quoted = False
+    while index < len(command) and command[index] not in _HEREDOC_END:
+        ch = command[index]
+        if ch in "'\"":
+            end = command.find(ch, index + 1)
+            if end < 0:
+                raise _Unparsed()
+            delimiter.append(command[index + 1:end])
+            quoted = True
+            index = end + 1
+        elif ch == "\\":
+            if index + 1 < len(command):
+                delimiter.append(command[index + 1])
+            quoted = True
+            index += 2
+        else:
+            delimiter.append(ch)
+            index += 1
+    if not delimiter:
+        raise _Unparsed()
+    return "".join(delimiter), quoted, dash, index
+
+
+def _heredoc_bodies(command: str, start: int, pending: Sequence[Tuple[str, bool, bool]], queue: List[str]) -> int:
+    """Cut the bodies of the pending heredocs that begin at start; return the index after the last closing line."""
+    index = start
+    for delimiter, quoted, dash in pending:
+        body: List[str] = []
+        found = False
+        while index < len(command):
+            end = command.find("\n", index)
+            line = command[index:] if end < 0 else command[index:end]
+            index = len(command) if end < 0 else end + 1
+            if (line.lstrip("\t") if dash else line) == delimiter:
+                found = True
+                break
+            body.append(line)
+        if not found:
+            raise _Unparsed()
+        if not quoted:
+            _scan_expansions("\n".join(body), queue)
+    return index
+
+
+def _prepass(command: str) -> Tuple[str, List[str]]:
+    """Scan one command once with quote state: the text to split, and the bodies to analyse as commands of their own.
+
+    Comments are dropped (an unquoted hash that starts a word, to the end of the line, the newline kept). The
+    bodies of heredocs are cut out: a body whose delimiter has any quoting is data, a bare delimiter's body is
+    scanned for command substitutions and backquote pairs. Each command substitution, backquote pair and
+    process substitution outside single quotes (inside double quotes too) becomes a neutral word and its body is
+    queued. An unquoted parenthesis becomes a separator, and the force form of a redirection loses its bar.
+    Raises _Unparsed for an unbalanced group or an unterminated heredoc.
+    """
+    out: List[str] = []
+    queue: List[str] = []
+    pending: List[Tuple[str, bool, bool]] = []
+    quote = ""
+    index = 0
+    size = len(command)
+    while index < size:
+        ch = command[index]
+        if quote == "'":
+            out.append(ch)
+            if ch == "'":
+                quote = ""
+            index += 1
+        elif quote == '"':
+            if ch == "\\" and index + 1 < size:
+                out.append(command[index:index + 2])
+                index += 2
+            elif command.startswith("$(", index):
+                body, index = _read_paren(command, index + 2)
+                _queue_body(body, queue)
+                out.append(_NEUTRAL)
+            elif ch == "`":
+                body, index = _read_backquote(command, index + 1)
+                queue.append(body)
+                out.append(_NEUTRAL)
+            else:
+                out.append(ch)
+                if ch == '"':
+                    quote = ""
+                index += 1
+        elif ch == "\\" and index + 1 < size:
+            out.append(command[index:index + 2])
+            index += 2
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+            index += 1
+        elif ch == "#" and (not out or out[-1][-1] in _WORD_START):
+            while index < size and command[index] != "\n":
+                index += 1
+        elif command.startswith("$(", index):
+            body, index = _read_paren(command, index + 2)
+            _queue_body(body, queue)
+            out.append(_NEUTRAL)
+        elif ch == "`":
+            body, index = _read_backquote(command, index + 1)
+            queue.append(body)
+            out.append(_NEUTRAL)
+        elif ch in "<>" and command.startswith("(", index + 1):
+            body, index = _read_paren(command, index + 2)
+            queue.append(body)
+            out.append(_NEUTRAL)
+        elif command.startswith("<<", index) and not command.startswith("<<<", index):
+            delimiter, quoted, dash, index = _heredoc_header(command, index)
+            pending.append((delimiter, quoted, dash))
+            out.append(" ")
+        elif command.startswith(">|", index):
+            out.append(">")
+            index += 2
+        elif ch in "()":
+            out.append(";")
+            index += 1
+        elif ch == "\n":
+            out.append(ch)
+            index += 1
+            if pending:
+                index = _heredoc_bodies(command, index, pending, queue)
+                pending = []
+        else:
+            out.append(ch)
+            index += 1
+    if pending:
+        raise _Unparsed()
+    return "".join(out), queue
+
+
+def _units(command: str, depth: int = 0) -> List[str]:
+    """The texts to judge for one command: the command itself, then every substitution body, each its own command."""
+    if depth > _MAX_DEPTH:
+        raise _Unparsed()
+    text, queue = _prepass(command)
+    found = [text]
+    for body in queue:
+        found.extend(_units(body, depth + 1))
+    return found
+
+
+def _read_redirections(part: str) -> Optional[Tuple[List[str], str]]:
+    """Read the output redirections of one part from its raw text: (targets, the text with every redirection blanked).
+
+    An operator is the greater-than family with an optional leading descriptor number or an ampersand (the
+    append, force and ampersand forms), read only outside quotes, so a quoted greater-than is an ordinary word. The
+    target may be attached or follow whitespace. A duplication (2>&1, >&2) and an input redirection or
+    here-string have no output target. Returns None when a target does not split.
+    """
+    out: List[str] = []
+    targets: List[str] = []
+    quote = ""
+    index = 0
+    size = len(part)
+    while index < size:
+        ch = part[index]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and quote == '"' and index + 1 < size:
+                out.append(part[index + 1])
+                index += 1
+            elif ch == quote:
+                quote = ""
+            index += 1
+            continue
+        if ch == "\\" and index + 1 < size:
+            out.append(part[index:index + 2])
+            index += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            index += 1
+            continue
+        operator = index
+        if ch.isdigit() and (index == 0 or part[index - 1].isspace()):
+            while operator < size and part[operator].isdigit():
+                operator += 1
+        elif ch == "&" and part.startswith("&>", index):
+            operator = index + 1
+        if operator >= size or part[operator] not in "<>":
+            out.append(ch)
+            index += 1
+            continue
+        kind = part[operator]
+        cursor = operator + 1
+        duplication = False
+        if kind == ">" and part.startswith(">", cursor):
+            cursor += 1
+        elif kind == "<" and part.startswith("<<", cursor):
+            cursor += 2
+        elif kind == "<" and part.startswith(">", cursor):
+            kind = ">"
+            cursor += 1
+        elif part.startswith("&", cursor):
+            duplication = True
+            cursor += 1
+        while cursor < size and part[cursor] in " \t":
+            cursor += 1
+        end = cursor
+        word_quote = ""
+        while end < size:
+            cur = part[end]
+            if word_quote:
+                if cur == "\\" and word_quote == '"' and end + 1 < size:
+                    end += 1
+                elif cur == word_quote:
+                    word_quote = ""
+            elif cur == "\\" and end + 1 < size:
+                end += 1
+            elif cur in "'\"":
+                word_quote = cur
+            elif cur.isspace() or cur in "<>":
+                break
+            end += 1
+        try:
+            pieces = shlex.split(part[cursor:end])
+        except ValueError:
+            return None
+        if not pieces:
+            return None
+        target = pieces[0]
+        if kind == ">" and not (duplication and _FD_TARGET.match(target)):
+            targets.append(target)
+        out.append(" ")
+        index = end
+    return targets, "".join(out)
+
+
+def _lead_words(text: str) -> str:
+    """The text without the reserved words that only introduce a command (if, then, while, do, the bang, the brace)."""
+    text = text.lstrip()
+    while True:
+        match = _RESERVED_LEAD.match(text)
+        if match is None:
+            return text
+        text = text[match.end():]
+
+
+def _judge(
+    words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str], cwd_escaped: bool, tally: _Tally,
+) -> bool:
+    """Classify one parsed part, list it when it is write-capable, count it when it escapes; return the cd flag."""
+    program = os.path.basename(words[0])
+    rest = list(words[1:])
+    if program == "cd":
+        targets = [word.rstrip(")") for word in rest if not (word.startswith("-") and word != "-")]
+        return cwd_escaped or not targets or targets[0] == "-" or tally.escapes(targets[0])
+    writes = [target for target in redirects if target not in _DEV_PATHS]
+    if _script_file_option(program, rest):
+        tally.listed(_UNPARSED)
+        tally.escaped(_UNPARSED)
+        return cwd_escaped
+    if _read_only_program(words, tally.ignore):
+        if not writes:
+            return cwd_escaped
+        label = "redirect"
+    else:
+        label = _label(program, rest)
+    tally.listed(label)
+    scripts, separators = _script_positions(program, rest)
+    escaping = (
+        cwd_escaped
+        or any(tally.escapes(directory) for directory in chdirs)
+        or any(tally.escapes(target) for target in redirects)
+        or (program == "mktemp" and _mktemp_unsafe(rest, tally.real_roots, tally.ignore))
+    )
+    for number, word in enumerate(rest):
+        if escaping:
+            break
+        if number in separators:
+            continue
+        if number in scripts:
+            candidates = _literal_candidates(word)
+            if program == "sed":
+                candidates += [operand for operand in _sed_write_operands(word) if _path_like(operand)]
+        else:
+            if tally.escapes(word):
+                escaping = True
+                break
+            candidates = _word_candidates(word)
+        escaping = any(tally.escapes(candidate) for candidate in candidates)
+    if escaping:
+        tally.escaped(label)
+    return cwd_escaped
+
+
+def _read_unit(text: str, tally: _Tally) -> None:
+    """Judge the parts of one command text (the command itself or one substitution body) with its own cd flag."""
+    cwd_escaped = False
+    for part in pc_allowlist.split_compound(text):
+        read = _read_redirections(part)
+        blanked = None if read is None else _lead_words(read[1])
+        head = blanked.split(None, 1)[0] if blanked is not None and blanked.split() else ""
+        if head in _RESERVED_STANDALONE or head in _RESERVED_HEADERS:
+            continue
+        split = None if blanked is None else _split_part(blanked)
+        if read is None or split is None:
+            tally.unparsed += 1
+            if tally.raw_escapes(part):
+                tally.escaped(_UNPARSED)
+            continue
+        redirects = read[0]
+        words, chdirs = split
+        for word in list(words) + redirects:
+            if word.startswith("/") and word not in tally.ignore and not any(
+                _inside(os.path.normpath(word), root) for root in tally.roots
+            ):
+                tally.outside += 1
+        if not words:
+            if any(tally.escapes(target) for target in redirects if target not in _DEV_PATHS):
+                tally.listed("redirect")
+                tally.escaped("redirect")
+            continue
+        cwd_escaped = _judge(words, chdirs, redirects, cwd_escaped, tally)
 
 
 def bash_mentions(
     events: Sequence[Dict[str, Any]], approved_abs: Sequence[str], ignore: Sequence[str] = ()
 ) -> Dict[str, Any]:
-    """List what executed Bash commands mention and count the write escapes among them.
+    """List what executed Bash commands mention and count the write escapes among them (open-world rule, 03-10).
 
-    Listed for the reviewer: absolute path words outside the roots (outside_path_tokens) and the write-capable
-    programs by name (write_programs). Decided here: write_escapes, an executed part that is write-capable (a
-    program _write_program labels, or an output redirection) and names a place the roots cannot be shown to
-    contain: a tilde word, a word holding $HOME, a dot-dot segment, an absolute path outside the roots, a quoted
-    path literal in a python3 -c, awk or sed script, or a cd earlier in the same command (or an env -C directory)
-    that escaped. A script body is never judged as a path, only its path-like quoted literals and the file
-    operand of a sed w command. Read-only commands may name any path and stay mentions. Code that computes its
-    target at run time is not resolved; the pinned allowlist and the snapshot diff are the other nets.
+    Listed for the reviewer: absolute path words outside the roots (outside_path_tokens) and every write-capable
+    part by label (write_programs). Decided here: write_escapes. A part is read-only only when its program is
+    on READ_ONLY_PROGRAMS (or is the helper in ignore), passes that program's gate and carries no output
+    redirection; every other part is write-capable, whatever the program, including a program started through
+    env, a command string or an interpreter. A write-capable part is a write escape when a plain word, a
+    whitespace token of a command string, a path-like token inside a quoted script literal, the operand of a
+    sed w command, a redirection target, an env or find directory change or an earlier cd that escaped names a
+    place the approved roots cannot contain: a tilde word, a word holding $HOME, a dot-dot segment, or an
+    absolute path outside the roots. Read-only parts may name any path and stay mentions.
 
-    The paths in ignore (the helper itself) are not counted as mentions or as escapes. Counts and program names
-    only, never a path.
+    The rule fails closed: an env option it does not know makes the part unparsed, an unparsed part with an
+    escaping word counts as an escape labelled unparsed, a mktemp part without an inside destination and an
+    awk or sed part with a program file option are escapes. Interpreters are never provably read-only, so an
+    interpreter that only reads an outside path, or code holding a regular expression that reads as an absolute
+    path, is counted. Nothing is decided for code that builds its target at run time, for expansions other than
+    HOME, for another program's implicit destination, for a file operand read from standard input, for sed's e
+    command, or for a script file the model wrote earlier and runs later: the pinned allowlist and the snapshot
+    diff are the other nets.
+
+    The shell grammar is read first (plan 03-10, WR-02), by a pre-pass over each command: comments are dropped
+    without disturbing the quote state; the body of a quoted-delimiter heredoc is data and the body of a bare
+    delimiter's heredoc is scanned for command substitutions and backquote pairs; each command substitution,
+    backquote pair and process substitution is parsed as a command of its own (to a depth of four, deeper or
+    unbalanced makes the command unparsed); redirections are read from the raw text of each part before it is
+    split into words, so a quoted greater-than is a word; the reserved words if, then, elif, else, while, until,
+    do, the bang and the opening brace are transparent, and a for, select or case header is data. The heredoc,
+    comment, reserved-word and substitution handling sits only here: git_mutations, helper_calls and
+    first_status_text read the command as before. A script a heredoc wrote to a file and a later part runs is
+    judged by its command line only.
+
+    The paths in ignore (the helper itself) are not counted as mentions or as escapes. Counts and labels only,
+    never a path; a label that is not a short plain word is other.
     """
-    roots = [os.path.normpath(root) for root in approved_abs]
-    real_roots = [os.path.realpath(root) for root in approved_abs]
-    outside = 0
-    unparsed = 0
-    programs: Dict[str, int] = {}
-    escape_programs: Dict[str, int] = {}
-    escape_count = 0
+    tally = _Tally(approved_abs, ignore)
     commands = executed_bash_commands(events)
     for command in commands:
-        cwd_escaped = False
-        for part in pc_allowlist.split_compound(command):
-            split = _split_part(part)
-            if split is None:
-                unparsed += 1
-                continue
-            words, chdirs = split
-            for word in words:
-                if word.startswith("/") and word not in ignore and not any(_inside(os.path.normpath(word), root) for root in roots):
-                    outside += 1
-            label = _write_program(words)
-            if label is not None:
-                programs[label] = programs.get(label, 0) + 1
-            if not words:
-                continue
-            program = os.path.basename(words[0])
-            rest = list(words[1:])
-            if program == "cd":
-                targets = [word.rstrip(")") for word in rest if not (word.startswith("-") and word != "-")]
-                if not targets or targets[0] == "-" or _escapes(targets[0], real_roots, ignore):
-                    cwd_escaped = True
-                continue
-            redirects, redirect_positions = _redirections(rest)
-            if label is None and not redirects:
-                continue
-            scripts, separators = _script_positions(program, rest)
-            skipped = scripts | separators | redirect_positions
-            plain = [word for number, word in enumerate(rest) if number not in skipped]
-            escaping = (
-                cwd_escaped
-                or any(_escapes(directory, real_roots, ignore) for directory in chdirs)
-                or any(_escapes(word, real_roots, ignore) for word in plain)
-                or any(_escapes(target, real_roots, ignore) for target in redirects)
-                or any(_escapes(literal, real_roots, ignore) for literal in _script_literals(label or "", rest, scripts))
-            )
-            if escaping:
-                name = label if label is not None else "redirect"
-                escape_programs[name] = escape_programs.get(name, 0) + 1
-                escape_count += 1
+        try:
+            units = _units(command)
+        except _Unparsed:
+            tally.unparsed += 1
+            if tally.raw_escapes(command):
+                tally.escaped(_UNPARSED)
+            continue
+        for unit in units:
+            _read_unit(unit, tally)
     return {
         "commands": len(commands),
-        "outside_path_tokens": outside,
-        "unparsed_parts": unparsed,
-        "write_programs": programs,
-        "write_escapes": {"count": escape_count, "programs": escape_programs},
+        "outside_path_tokens": tally.outside,
+        "unparsed_parts": tally.unparsed,
+        "write_programs": tally.programs,
+        "write_escapes": {"count": tally.escape_count, "programs": tally.escape_programs},
     }
 
 
