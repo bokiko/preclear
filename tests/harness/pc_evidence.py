@@ -79,6 +79,8 @@ MESSAGE_NO_PROMPT = "FAIL: a stage prompt was not stored in the run root; nothin
 MESSAGE_NO_STREAM = "FAIL: a stage stream cannot be read; nothing is filed"
 MESSAGE_SANITIZER = "SCANNER_ERROR: the sanitizer could not process a staged file; nothing is filed"
 MESSAGE_STAGING = "FAIL: the stage folder could not be written; nothing is filed"
+MESSAGE_STAGE_NOT_CLEAN = "FAIL: a stage did not finish cleanly; nothing is filed"
+MESSAGE_NO_DENY_ENTRIES = "SCANNER_ERROR: the deny entries were not built; nothing is filed"
 
 _STAGE_DIR_MODE = 0o700
 _FILE_MODE = 0o644
@@ -1022,6 +1024,11 @@ def _unfileable(data: RunData) -> Optional[str]:
             return MESSAGE_NO_PROMPT
         if stage.events is None:
             return MESSAGE_NO_STREAM
+        # The live path goes on only when the call is ok (an empty problem) and the isolation evaluation is
+        # pass; a record that lacks either key is not clean (fail closed), so a refile cannot file a run the
+        # live path refused (CR-01).
+        if stage.record.get("problem") != "" or stage.record.get("evaluation") != _row1().STATUS_PASS:
+            return MESSAGE_STAGE_NOT_CLEAN
     return None
 
 
@@ -1160,9 +1167,13 @@ def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str
     """Stage, sanitize, gate and promote the finished run in run_root into ctx.destination.
 
     The sanitizer and the deny entries are the ones the row built before spend (ctx.sanitizer, ctx.deny_entries);
-    promote is always called with both the deny entries and the config folder (review WR-14). A breach found by
-    the checks files nothing (exit 11); a sanitizer error is 15, a gate refusal 14, a taken destination 17.
+    promote is always called with both the deny entries and the config folder (review WR-14), and a context
+    without the deny entries is refused with 15 before anything is read or made (WR-03). A breach found by the
+    checks, or a stage that did not finish cleanly (a problem or a failed isolation assertion in its record),
+    files nothing (exit 11); a sanitizer error is 15, a gate refusal 14, a taken destination 17.
     """
+    if ctx.deny_entries is None:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))
     try:
         data = load_stage_data(run_root)
         found = dict(facts) if facts is not None else pc_checks.compute_facts(run_root, ctx.config_dir)
@@ -1235,7 +1246,10 @@ def file_skipped(
     The run is never counted as a success: the exit code is 10 (PREFLIGHT_SKIP) when the label is filed, and 14,
     15, 17 or 11 when the sanitizer, the gate, promote or the staging refuse. The reason passes through the same
     sanitizer, gate and promote as any other file, so a reason shaped like a home path is refused with 14.
+    Deny entries of None are refused with 15 before anything is made (WR-03).
     """
+    if deny_entries is None:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))
     if not pc_rows.is_valid_id(row_id):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_SKIP_ROW,))
     stamp = clock().strftime("%Y%m%dT%H%M%SZ")

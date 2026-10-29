@@ -299,7 +299,9 @@ class Wr14Tests(unittest.TestCase):
             "the staged file still holds the login",
         )
         control = os.path.join(run.rig.repo, "tests", "evidence", "negative-control")
-        result = pc_promote.promote(staged, control, run.rig.repo, config_dir=run.ctx.config_dir, deny_entries=None)
+        result = pc_promote.promote(
+            staged, control, run.rig.repo, config_dir=run.ctx.config_dir, deny_entries=None, allow_default_deny=True
+        )
         self.assertEqual(result.code, 0, "the same bytes without the entries are accepted: " + result.message)
 
 

@@ -328,7 +328,9 @@ class GateRefusalTests(HarnessTestCase):
         repo = make_repo()
         stage = make_stage({"a.txt": b"fine\n"})
         with mock.patch.object(pc_leakgate, "build_deny_entries", side_effect=pc_leakgate.ScannerError("could not read the local deny list")):
-            result = pc_promote.promote(stage, os.path.join(evidence_of(repo), "dst"), repo, None, None)
+            result = pc_promote.promote(
+                stage, os.path.join(evidence_of(repo), "dst"), repo, None, None, allow_default_deny=True
+            )
         self.ok(result.code == pc_exitcodes.SCANNER_ERROR, "exit 15")
         self.ok(os.listdir(evidence_of(repo)) == [], "nothing was created")
 
