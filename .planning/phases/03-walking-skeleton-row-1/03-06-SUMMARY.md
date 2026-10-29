@@ -12,7 +12,7 @@ provides:
   - "The measured cost of one row: 0.2723 USD by the harness row total (see the cumulative question below for a possible 0.3210)"
 affects: [phase-04]
 
-status: gaps
+status: complete
 actuals:
   tokens: 18600
   tasks: 3
@@ -32,7 +32,7 @@ key-files:
 
 key-decisions:
   - "The paid command ran once on the 2.1.310 build with --budget 2.00 after bokiko's own go; no retry, no --authorize-retry"
-  - "The six selftest failures were not fixed here: the plan forbids edits under tests/harness, so they go back to the orchestrator as a plan revision"
+  - "The six selftest failures were not fixed by the executor (the plan forbids edits under tests/harness); the orchestrator fixed the two test expectations in the follow-up commit f57ca76 and the suite is green on both interpreters with the folder present"
 
 metrics:
   duration: "about 30 minutes, 20 minutes of it the selftest and the paid run"
@@ -91,6 +91,9 @@ metrics:
 
 ### Open issue
 
+**Resolved after the executor returned:** commit f57ca76 restricts the corpus-scope test's walk to the publication prefix and pins the dry-run tests' clock to a date with no folder; the full suite then passes on both interpreters with the rerun folder present. The two test expectations were wrong, not the harness or the filed evidence.
+
+
 **1. [Gate not green] The selftest fails with the new folder present (exit 1, 1117 tests, 6 failures, 3 skipped)**
 - **Found during:** Task 3 step 6.
 - **Cause 1, one test:** `test_allowlist.CorpusScopeTests.test_the_scoped_loader_equals_the_unscoped_walk_restricted_to_the_publication_folder` walks every `*full-trace.md` under tests/evidence and expects them all to sit in the publication folder. The new folder holds three (s1, s2, s3 full traces) that the scoped loader correctly ignores, so the unscoped walk is longer. The scoping itself works; the test's expectation does not allow a rerun folder.
@@ -118,4 +121,4 @@ None. The only new files are the harness-written evidence folder, which passed t
 
 - 663766964d58c6680e33d79051bf690f73c8b737: test(03-06): file the row 1 baseline evidence
 
-## Self-Check: PASSED (evidence and commit exist); the plan's selftest gate is FAILED as described above
+## Self-Check: PASSED (evidence and commit exist); the selftest gate failed in the executor's run and passes after the follow-up commit f57ca76 (1117 tests, OK, both interpreters)
