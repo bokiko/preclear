@@ -31,10 +31,10 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 - ✓ The repository is public on GitHub after the owner's three audit decisions and his explicit go-word, with identity, leak and attribution hooks, a full-history scan, a committed disclosure of row 7 and a recorded live inventory — Phase 1 (PUB-01 to PUB-07; flip 2026-10-24, secret scanning and push protection enabled)
 - ✓ A test-only stub helper in `tests/harness/checkpoint_stub.py` implements the `checkpoint-v1` interface closely enough that all 15 committed calls replay with the recorded exit codes; `handoff`, `note`, exit 5 and exit 6 stay UNCONFIRMED in the branch table — Phase 2 (STUB-01 to STUB-07)
 - ✓ The harness refuses to reuse a run root (exit 16), carries no deletion primitive outside its test utilities, sanitizes and leak-gates every capture before it lands under the repository, and the spikes decided the pinned flags (Claude Code 2.1.310, claude-sonnet-5-5) and the isolation mode with run roots outside every home folder — Phase 2 (HARN-03, HARN-04, HARN-06, HARN-08, HARN-14, EVID-01 to EVID-03, EVID-07; 753 zero-token tests; 0.26 USD of the 5 USD spike cap)
+- ✓ Row 1 runs end to end through the real `claude -p` against the stub from one command on the pinned build and model, is filed as sanitized mechanical evidence with a reviewer checklist and no verdict in a new dated folder, compares read-only with the committed row, and the cost of one row is measured at 0.2723 USD; the runner passes the deny entries to `promote` and `promote` refuses without them; Bash writes outside the approved roots, planted git configuration and refiling an unclean or incomplete run are breaches or refusals — Phase 3 (HARN-01, 02, 05, 07, 09, 13, EVID-04 to 06; 1305 zero-token tests; 0.27 USD of the 2 USD row cap; five review passes)
 
 ### Active
 
-- [ ] The Phase 3 runner passes `sanitizer.deny_entries()` to `promote` after sanitising a run, and a test fails when a sanitised run is promoted without them (review WR-14)
 - [ ] A stranger with Claude Code can clone the repo and rerun the full acceptance matrix (three layouts plus twelve publication rows) from the committed harness, without the owner's private checkpoint helper
 - [ ] Row 7 has a clean rerun whose printed checkpoint carries no unsupported Do-not-redo entry
 - [ ] A rerun produces evidence in the committed evidence format (sanitized traces, full traces, snapshots, measurements) so results can be compared row for row with the existing evidence
@@ -90,6 +90,10 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 | Two S1 assertions refined (2026-10-26) | Three plugins ship inside the binary with source `@builtin`, and one user skill name is also defined by the binary; `no-non-builtin-plugins` and a binary-defined name counted as a collision keep the claim honest without a by-construction label | Decided 2026-10-26 |
 | `.gitleaks.toml` home-path and hostname rules tightened to match the Python gate (2026-10-26) | Review CR-02 and WR-01: a home path before a JSON escape or delimiter and an upper-case host suffix were missed; parity test keeps both strings byte-identical; hook suite still 29 of 29 | Done 2026-10-26 |
 | Spike spend 0.26 USD of the 5 USD cap; 21 review warnings and info items deferred to Phase 3 hardening (2026-10-26) | Both critical findings were closed by gap plan 02-09; the rest do not touch the zero-token suite or the decided spikes | Decided 2026-10-26 |
+| Phase 3 spends only on bokiko's own `go` (2026-10-29) | The executor refused a relayed go and a detached worktree; a fresh executor was dispatched with the word quoted; the run cost 0.2723 USD against a 2.00 cap | Decided 2026-10-29 |
+| `total_cost_usd` on a resumed call is cumulative (2026-10-29) | The committed fixtures and the real s2 per-model token counts both show s1 plus s2; the harness subtracts the previous total and the row figure of 0.2723 USD stands | Decided 2026-10-29 |
+| The Bash write-escape rule is open-world and conservative (2026-10-29) | Every executed part whose program is not on a short read-only list is write-capable; a corpus test replays all 348 committed Bash calls with zero escapes; a false positive costs a run, a false negative files bad evidence, so the rule errs to exit 11; residual shapes are Phase 4 items, the backstop is the snapshot and realpath boundary | Decided 2026-10-29 |
+| The filed 2026-10-29 baseline is frozen as filed (2026-10-29) | Later rule changes (status line, consistency line) are not back-filled; a fresh run files the new answers; evidence is never repaired | Decided 2026-10-29 |
 
 ## Evolution
 
@@ -109,4 +113,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-26 after Phase 2*
+*Last updated: 2026-10-29 after Phase 3*

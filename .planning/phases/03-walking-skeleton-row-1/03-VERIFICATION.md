@@ -1,8 +1,8 @@
 ---
 phase: 03-walking-skeleton-row-1
-verified: 2026-10-29T09:20:00Z
-status: gaps_found
-score: 4/6 must-haves verified
+verified: 2026-10-29T21:45:00Z
+status: passed
+score: 6/6 must-haves verified
 covered_files:
   - ".planning/phases/03-walking-skeleton-row-1/03-01-PLAN.md"
   - ".planning/phases/03-walking-skeleton-row-1/03-01-SUMMARY.md"
@@ -16,6 +16,18 @@ covered_files:
   - ".planning/phases/03-walking-skeleton-row-1/03-05-SUMMARY.md"
   - ".planning/phases/03-walking-skeleton-row-1/03-06-PLAN.md"
   - ".planning/phases/03-walking-skeleton-row-1/03-06-SUMMARY.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-07-PLAN.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-07-SUMMARY.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-08-PLAN.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-08-SUMMARY.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-09-PLAN.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-09-SUMMARY.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-10-PLAN.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-10-SUMMARY.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-11-PLAN.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-11-SUMMARY.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-12-PLAN.md"
+  - ".planning/phases/03-walking-skeleton-row-1/03-12-SUMMARY.md"
   - "SKILL.md"
   - "references/checkpoint-v1.md"
   - "references/configuration.md"
@@ -35,105 +47,96 @@ covered_files:
   - "tests/harness/pc_manifest.py"
   - "tests/harness/pc_matrix.py"
   - "tests/harness/pc_preflight.py"
+  - "tests/harness/pc_promote.py"
   - "tests/harness/pc_row1.py"
   - "tests/harness/pc_rows.py"
   - "tests/harness/pc_spend.py"
+  - "tests/harness/pc_testutil.py"
   - "tests/harness/test_checks.py"
   - "tests/harness/test_evidence.py"
-covered_digest: "v3:sha256:789acdc78d6aa3510911ab24972e13af90c6274d451ef6cb7f013de3daa56cd6"
+  - "tests/harness/test_row1_assertions.py"
+  - "tests/harness/test_stages.py"
+covered_digest: "v3:sha256:a8c538a6f9fb70761de6d91024a9b7d7c9a5d6d9830b766cbcd1437c2c15fb2b"
 behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "Write-boundary and git-read-only checks are mechanical and sound: a write outside the approved roots, by any tool the model can reach, ends the row with exit 11 (roadmap criterion 3, HARN-09)"
-    status: failed
-    reason: "Two holes reproduced by the code review (CR-02 and CR-03, both still open in the review disposition) and confirmed by me in the code, not re-run. A write-capable Bash command (mkdir, tee, cp, mv, touch, dd, install) aimed at a path outside the run root is only listed as a fact and never counted as a breach, and the snapshot cannot see outside the run root, so such a row files with exit 0. Separately, the harness runs git status inside the model's project after each stage without disabling core.fsmonitor, so a command the model planted in the project's .git/config executes as the harness user, before the breach check runs. The seeded fixtures required by the criterion pass (snapshot path, Write-tool path, commit), and the real run is clean, so the criterion's literal text holds; the mechanism behind HARN-09 does not."
-    artifacts:
-      - path: "tests/harness/pc_checks.py"
-        issue: "bash_mentions() lists outside-path words and write programs but breaches() never reads them; words that are not absolute (tilde, dollar-HOME, dot-dot) are not even counted"
-      - path: "tests/harness/test_checks.py"
-        issue: "test_an_outside_path_mention_is_listed_and_the_run_still_returns_zero pins the current behaviour"
-      - path: "tests/harness/pc_manifest.py"
-        issue: "_run_git_status builds the command without -c core.fsmonitor=false; pc_checks._git_output has the same shape"
-    missing:
-      - "Count an executed write-capable program that names a path outside the approved roots, or a tilde, dollar or dot-dot expansion, as a write breach (exit 11); keep read-only mentions as facts"
-      - "Pass -c core.fsmonitor=false (and the untracked-cache off setting) on every harness git call against a model-writable repository, with a test that plants a config command and asserts its marker is never created"
-      - "Revisit the plan 03-03 decision that Bash mentions never decide a breach; it was implemented as planned and is the root of CR-02"
-  - truth: "A run the live path refused cannot be filed as a baseline by the zero-token refile (derived from the phase goal: filed evidence is the record of a clean run)"
-    status: failed
-    reason: "Code review CR-01, still open. file_row only calls _unfileable, which checks that each stage has a prompt and a parseable stream. It never reads the stage record's problem or evaluation fields, so --refile of a run that ended on error_max_turns or a failed isolation assertion files a full folder and exits 0. I confirmed the cause in the code; I did not re-run the reviewer's reproduction."
-    artifacts:
-      - path: "tests/harness/pc_evidence.py"
-        issue: "_unfileable (line 1017) never reads the stage evaluation or problem fields"
-    missing:
-      - "Refuse in file_row any run whose stage records are not clean, using the rule the live path uses, with a test that stops a chain at s2 and asserts --refile exits 11 and creates nothing"
-  - truth: "Filed mechanical facts are accurate and complete enough for the reviewer to read without being misled (EVID-04, HARN-05)"
-    status: partial
-    reason: "Three review findings routed to gap closure. status-begins-with-session is no in the filed baseline because the real tool result starts with the stub's brand line, and the scripted claude hides this by returning stdout only (WR-02). usage.txt does not show the cumulative-consistency flag the harness computes, so the 0.2723 USD row cost rests on fixtures and the review rather than on the filed file (IN-01). file_row does not require deny entries, so the sanitizer deny-list contract is held by convention in every caller rather than by the API (WR-03)."
-    artifacts:
-      - path: "tests/harness/pc_checks.py"
-        issue: "line 725: lstrip().startswith(\"session\") can never be yes on a real run"
-      - path: "tests/harness/pc_evidence.py"
-        issue: "usage rendering omits cumulative_consistent; file_row does not refuse deny_entries None"
-    missing:
-      - "Look for a line starting with session in the first few lines, and make the scripted claude return stdout then stderr as the real tool does"
-      - "Write the cumulative-consistency flag to usage.txt and warn when it is no; make file_row refuse deny_entries None"
-      - "Fix the leftover sentence in the 03-06 summary (unobserved question 2) that still calls the cumulative question unsettled"
+re_verification:
+  previous_status: gaps_found
+  previous_score: 4/6
+  gaps_closed:
+    - "Write-boundary and git-read-only checks are mechanical and sound (HARN-09)"
+    - "A run the live path refused cannot be filed by the zero-token refile"
+    - "Filed mechanical facts are accurate and complete enough to read without being misled (code closed; the frozen folder keeps its earlier answers)"
+  gaps_remaining: []
+  regressions: []
 ---
 
 # Phase 3: Walking Skeleton (Row 1) Verification Report
 
 **Phase Goal:** One row, row 1 (wrong binding), runs end to end through the real `claude -p` against the stub from a single command, is filed as sanitized evidence in a new dated folder with mechanical facts only, and lines up structurally with the committed row 1 evidence.
-**Verified:** 2026-10-29T09:20:00Z
-**Status:** gaps_found
-**Re-verification:** No, initial verification
+**Verified:** 2026-10-29T21:45:00Z
+**Status:** passed
+**Re-verification:** Yes, after gap closure (plans 03-07 to 03-12). Previous status gaps_found, 4/6.
 
 ## Verdict
 
-The walking skeleton works and the evidence is real. One paid row 1 run on Claude Code 2.1.310 and claude-sonnet-5-5 was filed as a leak-gated folder, the comparer lines it up with the committed row without touching either tree, and the zero-token suite is green. Four of six truths verify.
+The phase goal is achieved. All three earlier gaps are closed in the code, and I reproduced each fix myself instead of reading the summaries. Six of six truths verify.
 
-The phase does not close yet. Three critical code review findings are open and I reproduced their cause in the code. Two of them (CR-02, CR-03) mean the HARN-09 write-boundary and git-read-only checks can report clean when they are not. The third (CR-01) lets the zero-token refile record a refused run as a baseline. All three are already routed to a gap-closure plan in the review disposition. The real run itself shows no breach, so the filed baseline's own facts are not in doubt.
+**HARN-09 is now met.** The write-boundary check counts a write-capable Bash command that names a place outside the approved roots as a breach. The git state reads run with fsmonitor and the untracked cache forced off, and run no git command at all once the project's git folder differs from the setup pin. The real run is clean under the current rule. The seeded fixtures still end with exit 11. I recommend moving REQUIREMENTS.md from "In Progress (reopened)" to Complete.
+
+The check is a conservative classifier over command text, not a sandbox. Its remaining limits are named in the harness README, and the pinned allowlist and the snapshot diff back it. The deferred review warnings are Phase 4 hardening and do not block this phase. They are listed under Warnings.
 
 ## Goal Achievement
 
 ### Observable Truths
 
-Truths 1 to 5 are the roadmap success criteria, which are the contract. Truth 6 is derived from the goal. The plan frontmatter truths were checked against these and none reduces their scope.
+Truths 1 to 5 are the roadmap success criteria. Truth 6 is derived from the goal. No plan truth reduced their scope.
 
 | # | Truth | Status | Evidence |
 | - | ----- | ------ | -------- |
-| 1 | `--list`, `--dry-run`, unknown ids and the three preflight codes behave as specified; a SKIPPED row files under a SKIPPED label (HARN-01, HARN-02) | VERIFIED | See the spot-check table. Exit codes 10, 11 and 12 are named in `pc_exitcodes.py`. The SKIPPED label is exercised by `test_a_real_run_skip_files_a_label_folder_and_exits_10` and `test_a_precondition_with_a_reason_is_skip_10_and_printed_as_skipped`, both passing. |
-| 2 | One real row 1 run is filed in a new dated folder under `tests/evidence/` with the committed file set plus the five new files, every provenance field non-empty, every file leak-gated (HARN-05, EVID-04) | VERIFIED | 65 files in the folder. Every committed file is present except the two `auto-memory` snapshot files, which the model did not write in this run; 28 files only in the rerun. Provenance files and `usage.txt` are non-empty. I ran the leak gate over the folder: 65 files, 0 findings. A grep of the folder for home paths, hostnames, private addresses and the owner's email found nothing. |
-| 3 | The init manifest is asserted, the isolation mode is recorded as spike S1 decided, and the write-boundary and git-read-only checks report zero on the real run and fail on a seeded out-of-root write (HARN-07, HARN-09) | FAILED (partial) | Twelve init assertions per stage are `yes` for s1, s2 and s3. `isolation-mode.txt` says strict, matching the S1 finding. Zero writes outside the roots and zero git mutations are reported, and the seeded fixtures (snapshot path, Write-tool path, commit) end with exit 11. The failing part is soundness: the Bash route and the planted fsmonitor route are not covered. See gaps 1. |
-| 4 | The row README ends with `Reviewer verdict: PENDING` and a mechanical checklist, and no filed harness file carries an accepted, passed or failed verdict (EVID-05) | VERIFIED | The last line of the row README is `Reviewer verdict: PENDING`. A whole-word search of the folder for accepted, passed, failed, pass and fail outside traces and snapshots found nothing; the only match for verdict is that line. |
-| 5 | The read-only comparer prints per-row differences against the committed row 1 and leaves both trees byte-identical; the frozen trees are unchanged; `SKILL.md` is at most 12,000 bytes; all new code is under `tests/harness/` (EVID-06, HARN-13) | VERIFIED | I ran the comparer: exit 0, tree digests before and after identical for both trees, `old unchanged: yes`, `new unchanged: yes`. `git diff` from the phase base to HEAD shows no change to `SKILL.md`, `references/` or `tests/fixtures/`, and no modified or deleted file under `tests/evidence/`. `SKILL.md` is 11,994 bytes. Outside `.planning/` the only paths changed are under `tests/harness/` and the new evidence folder. |
-| 6 | A run the live path refused cannot be filed as a baseline by `--refile` (derived: filed evidence is the record of a clean run) | FAILED | `_unfileable` in `tests/harness/pc_evidence.py` is unchanged and never reads the stage evaluation. See gap 2. |
+| 1 | `--list`, `--dry-run`, unknown ids and the three preflight codes behave as specified; a SKIPPED row files under a SKIPPED label (HARN-01, HARN-02) | VERIFIED | `--list` prints 3 layouts and the rows with one implemented. `--row nope`, `--layout nope`, `--row row3`, an upper-case id and a bare `--row` each exit 2. With the clock set to a free date the dry run prints 3 stages, 2 sessions, caps 0.30, 1.30 and 0.40, and exits 0 with no `claude` on PATH. The SKIPPED label tests pass in the suite. See the dry-run warning for today's date. |
+| 2 | One real row 1 run is filed in a new dated folder under `tests/evidence/` with the committed file set plus the five new files, every provenance field non-empty, every file leak-gated (HARN-05, EVID-04) | VERIFIED | 65 files in `rerun-2026-10-29-claude-sonnet-5-5`, unchanged since commit 6637669. Claude Code 2.1.310, model claude-sonnet-5-5, strict isolation, digests, tools and usage with per-stage cost are all present. The leak gate scan ran over the folder: 65 files, 0 findings. A grep for home paths, the owner's email, private addresses and local hostnames found nothing. The only committed file absent is the auto-memory snapshot pair, which the model did not write in this run. |
+| 3 | The init manifest is asserted, the isolation mode is recorded as spike S1 decided, and the write-boundary and git-read-only checks report zero on the real run and fail on a seeded out-of-root write (HARN-07, HARN-09) | VERIFIED | Twelve init assertions per stage are yes in the filed mechanical checks. `isolation-mode.txt` says strict. The filed facts show zero outside snapshot paths, zero Write-tool paths, zero git mutations over 4 states. I re-judged every Bash command in the three filed traces with today's rule: 0 write escapes, 0 git mutations. Seeded fixtures and run-level tests for a snapshot path, a Write-tool path, a Bash write, a planted fsmonitor command and a planted clean filter all pass in the suite. See the HARN-09 section. |
+| 4 | The row README ends with `Reviewer verdict: PENDING` and a mechanical checklist, and no filed harness file carries an accepted, passed or failed verdict (EVID-05) | VERIFIED | The last line of the row README is `Reviewer verdict: PENDING`. A whole-word search of every harness-authored file for accepted, passed, failed, pass, fail and verdict matched only that line. The comparer output carries no verdict word either. |
+| 5 | The read-only comparer prints per-row differences against the committed row 1 and leaves both trees byte-identical; the frozen trees are unchanged; `SKILL.md` is at most 12,000 bytes; all new code is under `tests/harness/` (EVID-06, HARN-13) | VERIFIED | The comparer exits 0 and prints tree digests before and after for both trees, `old unchanged: yes` and `new unchanged: yes`. A diff from the phase base (0a97367) to HEAD shows no change to `SKILL.md`, `references/` or `tests/fixtures/`, and no modified or deleted file under `tests/evidence/`; the only additions there are the 65 new files. Outside `.planning/` every changed path is under `tests/harness/`. `SKILL.md` is 11,994 bytes. |
+| 6 | A run the live path refused cannot be filed as a baseline by `--refile` (derived: filed evidence is the record of a clean run) | VERIFIED | `_unfileable` in `tests/harness/pc_evidence.py` now refuses any stage record whose problem is not empty or whose evaluation is not the pass value, then requires the chain the registry defines. `file_row` also refuses a context without deny entries. The tests for a chain stopped at s2 by an error subtype, a failed isolation assertion and the controls that still refile pass in the suite. |
 
-**Score:** 4/6 truths verified (0 present, behavior-unverified)
+**Score:** 6/6 truths verified (0 present, behavior-unverified)
 
-### Decisions Honored
+### HARN-09: is it met now
 
-The context decisions that are observable in the filed run hold.
+Yes. The three holes from the first report are closed, each reproduced against the current code.
 
-- **D-01 and D-02:** s1 and s2 share one session id and s3 is a new session. `session.id`, `session-resume.id` and `usage.txt` agree.
-- **D-05 and D-06:** the folder is `rerun-2026-10-29-claude-sonnet-5-5` and its README labels the run a new baseline, not a replication.
-- **D-08:** the comparer exited 0 and printed no verdict.
-- **D-12 and D-13:** model claude-sonnet-5-5 in every stage, Claude Code 2.1.310 in every stage.
-- **D-14:** the dry run prints caps of 0.30, 1.30 and 0.40 USD and 15, 60 and 15 turns.
+- **Bash write outside the roots (was gap 1, CR-02).** `breaches()` now adds the write-escape count to the writes total. I fed 52 commands through the checker in two batches, with the roots set to a fake run root. Every write-capable form counted as an escape, and three git mutations counted under the git rule instead: mkdir, tee, cp, mv, dd, install, ln, rm, sed -i, curl -o, rsync, tar -C, unzip -d, a redirect, a tilde path, a home-variable path, a dot-dot path, `bash -c`, `sh -c`, `eval`, xargs, `find -fprint`, `exec 3>`, awk output, perl, node, sort -o, `cd /tmp; touch`, and a pipe into tee. Read-only forms (a listing, a read of a system file, a write inside the project) counted zero. One write form was not counted, `X=/tmp/elsewhere; touch $X/y`, which is the documented limit for expansions other than the home variable.
+- **Planted git configuration (was gap 1, CR-03).** I planted a `core.fsmonitor` command in a throwaway repository. A plain `git status` created its marker, so the probe can see what it guards. `git_state` and `capture_git_status` never created it. With the setup pin, the harness started no git process at all and returned the fixed not-read state.
+- **Refile of a refused run (was gap 2, CR-01).** Closed, see truth 6.
+
+The filed baseline was produced by the earlier, weaker rule. Its facts still hold under the current rule, as the re-judge in truth 3 shows.
+
+### Gap Closure Check
+
+| Earlier gap | Status | Evidence |
+| ----------- | ------ | -------- |
+| 1. Bash write blind spot and fsmonitor route (BLOCKER) | CLOSED | Plans 03-07, 03-10, 03-11, 03-12. Reproduced as above. |
+| 2. Refile files a refused run (BLOCKER) | CLOSED | Plans 03-08 and 03-09. Stage cleanliness and chain completeness are checked before filing. |
+| 3. Misleading fact, cost flag, deny entries (WARNING) | CLOSED in code, one residue in the frozen folder | The session-line fact now scans the first five lines for a line starting with `session `. The usage rendering now writes a `cumulative-consistent` line per stage. `file_row` refuses a missing deny list. The 03-06 summary sentence now says the cumulative question was settled by the review. The frozen folder keeps the old answer, which the harness README states. |
+
+All five review passes are closed on criticals: every critical in passes one to four is marked fixed with its proving commit, and the closing pass found none.
 
 ### Measured Cost
 
-The row total in `usage.txt` is 0.2723 USD. I recomputed it: s2 reported total 0.2071 plus s3 total 0.0652. The s2 call cost 0.1584 equals 0.2071 minus the s1 total 0.0487. The cumulative reading is supported by the committed 2.1.310 fixtures and the pinned test `test_the_delta_agrees_with_the_difference_of_the_two_cumulative_totals`, and by the review's finding that the per-call and per-model blocks of the real s2 result agree with it. The filed folder cannot show this by itself, which is the IN-01 part of gap 3. I accept 0.2723 USD as the measured figure.
+The row total in the filed usage file is 0.2723 USD. The sum of the three per-call costs (0.0487, 0.1584, 0.0652) matches it, and the s2 call cost equals the s2 cumulative total 0.2071 minus the s1 total. The cumulative reading rests on the first code review and the committed 2.1.310 fixtures, both with a passing named test. The filed `usage.txt` itself does not carry the consistency flag, because the folder was filed before the rendering fix and is frozen. I accept 0.2723 USD as the measured figure.
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 | -------- | -------- | ------ | ------- |
-| `tests/harness/pc_matrix.py` | Driver: list, plan, run, refile, authorize-retry | VERIFIED | Runs, exits as specified, wired to `pc_row1`, `pc_evidence`, `pc_spend`, `pc_preflight`. |
-| `tests/harness/pc_spend.py` | File-locked matrix ledger with delta cost | VERIFIED | Thread race tests pass; the review confirms read, check and append under one lock. |
+| `tests/harness/pc_matrix.py` | Driver: list, plan, run, refile, authorize-retry | VERIFIED | Ran list, dry run and the refusal ids. Wired to row, evidence, spend and preflight modules. |
+| `tests/harness/pc_spend.py` | File-locked matrix ledger with delta cost | VERIFIED | Spend tests pass. |
 | `tests/harness/pc_row1.py` | Seed, three-stage chain, init and instruction audit | VERIFIED | Produced the real run. |
-| `tests/harness/pc_checks.py` | Mechanical facts and breaches | PARTIAL | Substantive and wired, but the breach rule is unsound for Bash writes (gap 1). |
-| `tests/harness/pc_evidence.py` | Filing, SKIPPED, refile, checklist | PARTIAL | Wired and used by the real run; refile accepts unclean runs (gap 2). |
-| `tests/harness/pc_compare.py` | Read-only comparer with tree digests | VERIFIED | Ran it; digests unchanged. |
+| `tests/harness/pc_checks.py` | Mechanical facts and breaches | VERIFIED | Open-world write rule, wired into `breaches()`, git reads hardened. |
+| `tests/harness/pc_manifest.py` | Hardened git status, pin guard | VERIFIED | Hardening tuple used by both capture paths; raises on a changed git folder before any process starts. |
+| `tests/harness/pc_evidence.py` | Filing, SKIPPED, refile, checklist | VERIFIED | Clean-stage, chain and deny-entry refusals in place. |
+| `tests/harness/pc_compare.py` | Read-only comparer with tree digests | VERIFIED | Ran it; digests identical before and after. |
 | `tests/evidence/rerun-2026-10-29-claude-sonnet-5-5/` | New baseline folder | VERIFIED | See truth 2. |
 
 ### Key Link Verification
@@ -141,10 +144,11 @@ The row total in `usage.txt` is 0.2723 USD. I recomputed it: s2 reported total 0
 | From | To | Via | Status | Details |
 | ---- | -- | --- | ------ | ------- |
 | `pc_matrix.py` real path | `pc_row1.run_row` then `pc_evidence.file_row` | run, checks, filing | WIRED | The real run produced the folder through this path. |
-| `pc_row1.finish` | `pc_checks.breaches` | exit 11 on breach | WIRED, rule incomplete | Exit 11 is mapped; the rule does not cover Bash writes outside the run root. |
-| `pc_evidence.file_row` | `pc_sanitize`, `pc_leakgate`, `pc_promote` with deny entries | filing through the gate | WIRED | Every caller passes the deny entries; the API does not insist (WR-03). |
-| `pc_matrix --refile` | `pc_evidence.file_row` | same filing function | WIRED, guard missing | Gap 2. |
-| `pc_compare.py` | both evidence trees | read only | WIRED | Tree digests identical before and after. |
+| `pc_row1.finish` | `pc_checks.breaches` | exit 11 on breach | WIRED | `breaches()` sums snapshot, trace, Bash escape and default-memory writes, git mutations and run-record changes. |
+| `pc_checks.git_state`, `pc_manifest.capture_git_status` | git | `GIT_HARDENING` plus pin and nested-repository guard | WIRED | Marker file never created in my probe. |
+| `pc_evidence.file_row` | sanitizer, leak gate, promote with deny entries | filing through the gate | WIRED | The API now refuses a missing deny list. |
+| `pc_matrix --refile` | `pc_evidence.file_row` | same filing function | WIRED | Same refusals as the live path. |
+| `pc_compare.py` | both evidence trees | read only | WIRED | Digests identical before and after. |
 
 ### Data-Flow Trace (Level 4)
 
@@ -152,23 +156,26 @@ The row total in `usage.txt` is 0.2723 USD. I recomputed it: s2 reported total 0
 | -------- | ---- | ------ | --------- | ------ |
 | `usage.txt` | per-stage cost and tokens | result events of the real streams | Yes | FLOWING |
 | `mechanical-checks.md` | init manifest, counts, ids | real streams, snapshots, wrapper log | Yes | FLOWING |
-| `digests.txt` | skill and adapter digests | files on disk at run time | Yes, and the SKILL.md and references digests equal the digests of the repository files | FLOWING |
+| `digests.txt` | skill and adapter digests | files on disk at run time | Yes | FLOWING |
 
 ### Behavioral Spot-Checks
 
-All run with a tripwire `claude` first on PATH. It was never invoked.
+All run with no `claude` on PATH. A tripwire `claude` that logs any call was never invoked.
 
 | Behavior | Command shape | Result | Status |
 | -------- | ------------- | ------ | ------ |
-| `--list` prints 3 layouts then 18 rows | driver `--list` | exit 0, one implemented row | PASS |
-| Unknown or unimplemented ids | `--row row3`, `--row nope`, `--layout nope`, upper-case id, `--row row2-double-conflict`, bare `--row` | exit 2 each, fixed text, value never echoed | PASS |
-| Dry run prints plan | `--dry-run --row row1-wrong-binding` | prints 3 stages, 2 sessions, caps, worst case 2.00, 40 allowlist rules; exits 17 today (see Warnings) | PASS with note |
-| Comparer is read-only | comparer over committed and rerun trees | exit 0, digests identical before and after | PASS |
-| Leak gate over the folder | `pc_leakgate.py scan` | 65 files, 0 findings | PASS |
-| Zero-token suite | `tests/harness/selftest` | 1117 tests OK, 3 skipped, about 213 s | PASS |
-| Plain discovery | `python3 -I -B -m unittest discover -s tests/harness -p 'test_*.py'` | 1117 tests OK, 4 skipped, about 249 s | PASS |
+| List | driver `--list` | exit 0, one implemented row | PASS |
+| Unknown ids | `--row nope`, `--layout nope`, `--row row3`, upper-case id, bare `--row` | exit 2 each | PASS |
+| Dry run on a free date | driver main with the clock set to 2031-01-02 | prints the plan, gate ok, exit 0 | PASS |
+| Dry run today | `--dry-run --row row1-wrong-binding` and `--dry-run --all` | plan printed, then exit 17 because today's folder exists | PASS with warning |
+| Comparer read-only | comparer over committed and rerun trees | exit 0, digests identical before and after | PASS |
+| Leak gate | scan of the rerun folder | 65 files, 0 findings | PASS |
+| Bash write rule | 52 hostile commands, then 11 real traced commands | every write form counted except one variable-expansion form (documented limit); 0 escapes and 0 git mutations on the real ones | PASS |
+| Planted fsmonitor | throwaway repository with a planted command | control creates the marker; harness never does | PASS |
+| Zero-token suite | `tests/harness/selftest` | 1305 tests, OK, 3 skipped, header says 0 model calls, 426 s | PASS |
+| Plain discovery | `python3 -I -B -m unittest discover -s tests/harness -p 'test_*.py'` | 1305 tests, OK, 4 skipped, 484 s | PASS |
 
-The skips are environmental: shellcheck absent, a case-insensitive and normalizing filesystem, and a filesystem that refuses non-UTF-8 names. The working tree was unchanged after every check.
+The skips are environmental: shellcheck absent, and filesystem behaviours this machine lacks. The working tree was unchanged after every check.
 
 ### Probe Execution
 
@@ -176,63 +183,45 @@ No probe scripts are declared by the plans. Step 7c: SKIPPED (none declared).
 
 ### Requirements Coverage
 
-All nine phase IDs appear in plan frontmatter, and REQUIREMENTS.md maps exactly these nine to Phase 3, so none is orphaned.
+All nine phase IDs appear in plan frontmatter across plans 03-01 to 03-12. REQUIREMENTS.md maps exactly these nine to Phase 3, so none is orphaned.
 
-| Requirement | Source plan | Description | Status | Evidence |
-| ----------- | ----------- | ----------- | ------ | -------- |
-| HARN-01 | 03-01 | One command with list, row, layout, all, dry-run | SATISFIED | Spot-checks above. |
+| Requirement | Source plans | Description | Status | Evidence |
+| ----------- | ------------ | ----------- | ------ | -------- |
+| HARN-01 | 03-01 | One command with list, row, layout, all, dry-run | SATISFIED | Spot-checks. Dry run exits 17 today only because the dated folder exists. |
 | HARN-02 | 03-01 | SKIP, FAIL and BLOCKED distinct, skipped never a pass | SATISFIED | Codes 10, 11, 12; SKIPPED label tests pass. |
-| HARN-05 | 03-02, 03-04, 03-06 | Provenance recorded per run | SATISFIED | Truth 2. Cumulative flag not in the filed file (gap 3). |
+| HARN-05 | 03-02, 03-04, 03-06, 03-08, 03-09 | Provenance recorded per run | SATISFIED | Truth 2. |
 | HARN-07 | 03-02, 03-06 | Init manifest asserted every run, isolation mode recorded | SATISFIED | Twelve assertions per stage, strict recorded. |
-| HARN-09 | 03-03, 03-06 | Mechanical write-boundary and git-read-only assertions | BLOCKED | Gap 1. REQUIREMENTS.md marks it Complete; I recommend it be reopened until gap closure lands. |
+| HARN-09 | 03-03, 03-06, 03-07, 03-08, 03-09, 03-10, 03-11, 03-12 | Mechanical write-boundary and git-read-only assertions | SATISFIED | See the HARN-09 section. Reopen status can be cleared. |
 | HARN-13 | 03-05, 03-06 | New work under `tests/harness/`, skill frozen, size cap | SATISFIED | Truth 5. |
-| EVID-04 | 03-04, 03-06 | Per-row file set written exclusively into a new dated folder | SATISFIED | Truth 2. Refile hole (gap 2) and misleading status fact (gap 3) noted. |
+| EVID-04 | 03-04, 03-06, 03-08, 03-09 | Per-row file set written exclusively into a new dated folder | SATISFIED | Truth 2 and truth 6. |
 | EVID-05 | 03-04, 03-06 | No verdict printed, PENDING plus checklist | SATISFIED | Truth 4. |
 | EVID-06 | 03-05, 03-06 | Read-only structural comparer | SATISFIED | Truth 5. |
 
 ### Anti-Patterns Found
 
-I did not re-run a stub scan over every harness file. The code review (28 files, standard depth) is the evidence for code quality, and I read the cited lines for the three critical findings. No debt marker check was run beyond that; none is cited by the review.
+A search of `tests/harness` for TBD, FIXME and XXX matched only mktemp templates and a mktemp call in the selftest, none a debt marker. TODO, HACK and PLACEHOLDER matched one constant named for a ledger placeholder in the seed. No stub or empty implementation was found in the files I read, and the suite exercises the rest.
 
 | File | Line | Pattern | Severity | Impact |
 | ---- | ---- | ------- | -------- | ------ |
-| `tests/harness/pc_checks.py` | 283-311, 834-849 | Bash write mentions never feed `breaches()` | BLOCKER | CR-02, gap 1 |
-| `tests/harness/pc_manifest.py` | 74-105 | git status without fsmonitor disabled | BLOCKER | CR-03, gap 1 |
-| `tests/harness/pc_evidence.py` | 1017-1025 | `_unfileable` ignores stage evaluation | BLOCKER | CR-01, gap 2 |
-| `tests/harness/pc_checks.py` | 725 | Check can never be yes on a real run | WARNING | WR-02, gap 3 |
-
-### Review Findings Not Routed to Gap Closure
-
-The disposition defers WR-01, WR-04, WR-05, WR-06 and IN-02 to IN-10 to Phase 4 hardening. Phase 4's roadmap section names no hardening work, so I did not move any of them into `deferred:`. They stay non-blocking warnings for this verdict. WR-01 (three run-root places invisible to the snapshot) and WR-05 (two inputs fail open to no breach) sit on the same boundary as CR-02, so bundling them into the gap-closure plan is cheap. That is bokiko's call.
+| none | - | - | - | No blocker found |
 
 ### Warnings
 
-- **Dry run exits 17 on the day the baseline was filed.** The dry run runs the claude-free gate, and the dated destination now exists, so `--dry-run --row row1-wrong-binding` prints the plan and then exits 17 on 2026-10-29. This follows decision D-05 (a destination is never reused) and clears on any other date. Criterion 1's exit 0 holds when the destination is free, which the tests cover.
-- **Six permission denials in s2.** All six are Bash approval refusals of compound or variable-expansion forms, with the same shape as the committed baseline's seven. They are filed as facts with their ids and need no action from the harness.
-- **Leftover sentence in the 03-06 summary.** Unobserved question 2 still says the cumulative question is not settled by the filed data, which contradicts the resolved paragraph above it (part of gap 3).
+These do not change the status. None is mapped to a later roadmap phase, because Phase 4's roadmap section names no hardening work, so I did not move any of them into `deferred`.
 
-### Regression Check
-
-| Earlier phase | Result |
-| ------------- | ------ |
-| Phase 1 (publication gate) | No change to any file outside `.planning/`, `tests/harness/` and the new evidence folder since the phase base, so the Phase 1 files are untouched. |
-| Phase 2 (model-free foundation and stub) | The full suite, which includes all Phase 2 test modules (stub conformance, sanitizer, leak gate, run root, manifest, flags, stream, measure), passes with 1117 tests. Phase 3 edited the stub, the allowlist module, the branch table and the harness README, so the Phase 2 covered digest no longer matches. That is expected. |
+- **Dry run exits 17 today.** On 2026-10-29 `--dry-run` for row 1 and for `--all` print the plan and then exit 17, because decision D-05 says a dated destination is never reused and today's folder exists. Roadmap criterion 1 says the dry run exits 0. That holds on any date without a folder, which the tests pin with a fixed clock and I confirmed with a clock set to 2031-01-02. A stranger who tries it today sees 17.
+- **Deferred review warnings.** The closing review lists six: a literal `cd` joined by a semicolon, in a subshell or in a loop before a legitimate memory write ends the row with exit 11 (false positive); a `cd` to an expansion followed by a dot-dot write is no longer counted; an awk regular expression holding a semicolon or brace hides a redirect; five or more option letters before a slash value hide the value; a `cd` judged certain can still fail; a folder kept by a `cd` in one Bash call is not carried to the next. Earlier passes defer more warnings and info items. The three accepted residuals are a script file written earlier and run later, interpreter code that builds its path at run time, and leading assignment values. My own probe found the same limit for `X=/tmp/elsewhere; touch $X/y`, which the README states. These are Phase 4 items.
+- **Frozen baseline keeps the earlier answers.** `status-begins-with-session` is no in the filed folder, and its `usage.txt` has no consistency line. The harness README states the first. Neither is a harness fault, and both would differ on a fresh run.
 
 ### Human Verification Required
 
-None. Every item I checked is decidable from files and zero-token commands.
+None. Every item I checked is decidable from files and zero-token commands. The row's own Reviewer verdict stays PENDING by design and belongs to the later reviewer, not to this verification.
 
 ## Gaps Summary
 
-Three gaps, all already named by the code review and routed by its disposition to a gap-closure plan before the phase closes.
-
-1. **Write boundary and git safety (BLOCKER, CR-02 and CR-03).** The HARN-09 checks have a Bash blind spot and a command-execution hole through `.git/config`. Plan 03-03 chose that Bash mentions never decide a breach, so this is a design gap that the executor implemented faithfully, not a deviation. Fix the rule and add the two tests named in the gap.
-2. **Refile bypass (BLOCKER, CR-01).** One check in `file_row` closes it.
-3. **Evidence accuracy (WARNING, WR-02, WR-03, IN-01).** A misleading fact in the baseline, a cost-consistency flag missing from the filed file, and a deny-entries contract held by convention.
-
-Gap closure that changes the harness will change the code that produced the committed baseline. The folder was filed from head `baf8aa5` and the 03-06 commit changed no harness code, so the baseline remains a valid record of that run. Whether `status-begins-with-session: no` in it needs a note or a refile is a decision for bokiko.
+No gaps. The earlier gaps are closed and HARN-09 is met. The phase is ready to close once REQUIREMENTS.md is updated and the Phase 4 hardening list is carried forward.
 
 ---
 
-_Verified: 2026-10-29T09:20:00Z_
+_Verified: 2026-10-29T21:45:00Z_
 _Verifier: Claude (gsd-verifier)_
