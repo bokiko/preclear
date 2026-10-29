@@ -1,0 +1,2 @@
+I implemented step 2 in `widget_export.py`. `export_csv(widgets)` writes an `id,name` header and one quoted-as-needed row per widget, built from small pure helpers.
+The repo had no existing code, so I chose Python, and the ledger's CSV decision is the only one I used. I did not run tests, commit, start step 3, or change the plan checkbox or the ledger.

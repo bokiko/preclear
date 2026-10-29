@@ -1,0 +1,6 @@
+86e5b14e64b17397e3876768de398f15ddb40d6e31a3e605227dafed984c5a06  <run>/project/.claude/skills/preclear/SKILL.md
+eca134a3defce9f67f7ed05a60b7da32d589df5f5cdaacbbf97682c5ebdbe132  <run>/project/.claude/skills/preclear/references/checkpoint-v1.md
+1a85939bbef834f9d7f7f8ffaf6197e2404929d0d0d6c523209fcb7458bfbe74  <run>/project/.claude/skills/preclear/references/configuration.md
+8107f83c02382c7e0803fd93b824d5ed442051a78e89b72b0820f49f46afc0e3  <run>/project/.claude/skills/preclear/references/status-sidecar.md
+96791fa6f223da0a78836cebd5a340d926954834eb17e76476afea6f25233a0c  tests/harness/checkpoint_stub.py
+3d43613ee253e7e5cda7a8bb344a771e31542c0aa9f29653498cbec918b97851  <run>/wrapper/checkpoint
