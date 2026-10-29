@@ -684,12 +684,16 @@ def git_state(project: str, git: str, pinned_gitdir: Optional[str] = None) -> Di
     git command is started (git runs commands named in the repository's own configuration): head, branch and
     refs_digest are GIT_NOT_READ, staged is 0 and the current digest is reported, so the state differs from the
     setup state and the existing mutation rule counts it.
+
+    A project that holds a nested repository (pc_manifest.nested_git_present) is treated the same way, pinned or
+    not: git would enter a registered gitlink and run commands named in that repository's own configuration, so
+    no git command is started and the not-read state is returned (second-pass WR-03).
     """
     try:
         gitdir_digest = pc_manifest.gitdir_digest(project)
     except (pc_manifest.ManifestError, OSError):
         raise CheckError("the git folder could not be read for the state capture") from None
-    if pinned_gitdir is not None and gitdir_digest != pinned_gitdir:
+    if pc_manifest.nested_git_present(project) or (pinned_gitdir is not None and gitdir_digest != pinned_gitdir):
         return {"head": GIT_NOT_READ, "branch": GIT_NOT_READ, "refs_digest": GIT_NOT_READ,
                 "gitdir_digest": gitdir_digest, "staged": 0}
     code, out = _git_output(git, project, ["rev-parse", "HEAD"])
@@ -711,10 +715,18 @@ def git_state(project: str, git: str, pinned_gitdir: Optional[str] = None) -> Di
     return {"head": head, "branch": branch, "refs_digest": refs_digest, "gitdir_digest": gitdir_digest, "staged": staged}
 
 
-def pinned_gitdir(raw_dir: str) -> Optional[str]:
-    """The gitdir digest recorded at setup (raw/setup.git.json), or None when that file does not exist yet."""
-    if not os.path.isfile(os.path.join(raw_dir, SETUP_STATE + ".git.json")):
+def pinned_gitdir(raw_dir: str, setup: bool) -> Optional[str]:
+    """The gitdir digest recorded at setup (raw/setup.git.json).
+
+    setup is required, so no caller can reach the unpinned path by omission. At the setup boundary (setup true)
+    the pin does not exist yet and the result is None. At every later boundary the file must exist and hold a
+    well-formed state: a missing or malformed file is a CheckError, so removing the file can no longer unpin the
+    harness's git calls (second-pass WR-03).
+    """
+    if setup:
         return None
+    if not os.path.isfile(os.path.join(raw_dir, SETUP_STATE + ".git.json")):
+        raise CheckError("the setup git state is missing; the pin is required after setup")
     value = load_git_state(raw_dir, SETUP_STATE)["gitdir_digest"]
     if not isinstance(value, str) or _HEX64.match(value) is None:
         raise CheckError("a git state file has an unexpected shape")
@@ -722,9 +734,17 @@ def pinned_gitdir(raw_dir: str) -> Optional[str]:
 
 
 def capture_boundary_state(paths: Mapping[str, Optional[str]], name: str, git: str) -> None:
-    """Write raw/<name>.git.json exclusively with the current git state of the project."""
+    """Write raw/<name>.git.json exclusively with the current git state of the project.
+
+    After setup the pin is required (pinned_gitdir raises CheckError when it is missing). At the setup boundary
+    a nested repository is a broken fixture and is refused with a CheckError, so that a not-read setup state can
+    never hide a later one.
+    """
     raw = str(paths["raw"])
-    pin = None if name == SETUP_STATE else pinned_gitdir(raw)
+    setup = name == SETUP_STATE
+    pin = pinned_gitdir(raw, setup)
+    if setup and pc_manifest.nested_git_present(str(paths["project"])):
+        raise CheckError("the project holds a nested repository at setup")
     state = git_state(str(paths["project"]), git, pin)
     pc_runroot.write_exclusive(
         os.path.join(str(paths["raw"]), name + ".git.json"),

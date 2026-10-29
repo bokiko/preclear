@@ -24,7 +24,10 @@ the only candidate for evidence. Every harness git call against the model-writab
 carries GIT_HARDENING (core.fsmonitor and core.untrackedCache forced off), and a capture
 given the gitdir digest recorded at setup starts no process at all once the project's git
 folder differs from it: git runs commands named in the repository's own configuration, so
-the harness never runs git in a repository the model has changed (CR-03). tree_manifest refuses a root at or under any path in its
+the harness never runs git in a repository the model has changed (CR-03). The same holds for a project that
+holds a nested repository: git enters a registered gitlink and reads that repository's own configuration,
+which the top-level pin cannot see, so the harness runs no git command in a project where nested_git_present
+is true (an entry named .git below the top level). tree_manifest refuses a root at or under any path in its
 refuse_under argument (the harness-owned Claude config directory holds credentials).
 
 CLI: python3 -E -s -B pc_manifest.py ROOT [--jsonl]
@@ -84,6 +87,30 @@ class GitDirChanged(ManifestError):
     """The project's git folder differs from the recorded setup digest; no git command was started."""
 
 
+class NestedRepository(GitDirChanged):
+    """The project holds a nested repository (an entry named .git below the top level); no git command was started."""
+
+
+def nested_git_present(project_dir):
+    """True when an entry named .git (a folder, a file or a link) exists below the top level of PROJECT_DIR.
+
+    The project is walked once without following links. The top-level .git entry is skipped whatever its kind,
+    because a linked worktree has a .git file. An error while walking, such as a folder that cannot be read,
+    returns True: the walk fails closed.
+    """
+    try:
+        for dirpath, dirnames, filenames in os.walk(project_dir, onerror=_raise):
+            top = dirpath == project_dir
+            for name in list(dirnames) + list(filenames):
+                if name == ".git" and not top:
+                    return True
+            if top and ".git" in dirnames:
+                dirnames.remove(".git")
+        return False
+    except OSError:
+        return True
+
+
 def gitdir_digest(project_dir):
     """The sha256 hex of the project's .git folder, without the index and index.lock entries.
 
@@ -119,7 +146,9 @@ def capture_git_status(project_dir, git, pinned_gitdir=None):
     """Run git status read-only and return (raw NUL bytes, plain text bytes).
 
     PINNED_GITDIR is the gitdir digest recorded at setup. When it is given and the project's git folder no
-    longer matches it, GitDirChanged is raised before any process starts.
+    longer matches it, GitDirChanged is raised before any process starts. A project that holds a nested
+    repository raises NestedRepository (a GitDirChanged) first, pinned or not: git would enter a registered
+    gitlink and run commands named in that repository's own configuration.
 
     The first call is the NUL form named in SKILL.md Step 3, the second the same command
     without -z (git's quoted porcelain v1 form). Only --no-optional-locks status is ever
@@ -127,6 +156,8 @@ def capture_git_status(project_dir, git, pinned_gitdir=None):
     only; only the text form is a candidate for evidence, because the leak gate refuses
     NUL bytes. A non-zero exit raises ManifestError.
     """
+    if nested_git_present(project_dir):
+        raise NestedRepository("the project holds a nested repository; git was not run")
     if pinned_gitdir is not None and gitdir_digest(project_dir) != pinned_gitdir:
         raise GitDirChanged("the git folder differs from the setup state; git was not run")
     raw = _run_git_status(git, project_dir, True)

@@ -339,7 +339,13 @@ run root gives the same facts.
   against the project carries core.fsmonitor=false and core.untrackedCache=false, so a command planted in the
   project's git configuration is never run by the harness. The digest of the git folder without its index,
   taken at setup, is a pin: once the folder differs from it, the harness starts no git command in the project,
-  notes in the snapshot that status was not run, and the difference counts as a git mutation.
+  notes in the snapshot that status was not run, and the difference counts as a git mutation. The pin is
+  required after setup: a missing or malformed pin file (the setup git state) ends the row with exit 11, no git
+  command is started and nothing is filed. The harness also runs no git command in a project that holds a
+  nested repository (an entry named `.git` below the top level, whatever its kind; the top-level `.git` entry
+  may be a file in a linked worktree): git would enter a registered gitlink and run commands named in that
+  repository's own configuration, which the pin cannot see. The snapshot notes it with a fixed line, the git
+  state reads not-read, which counts as a git mutation, and a nested repository at setup is refused.
 - Helper calls, four counts per stage from structure only: Bash calls that name the wrapper, calls executed
   (the call lines of the stage's slice of the wrapper log), calls denied, and compound commands that were
   refused and name the wrapper. When the stream and the log agree, attempted equals executed plus denied plus
@@ -399,7 +405,9 @@ version, settings), the usage per stage with each call's own cost and the row to
 work turn's prompt and full trace, the resume line with the third stage's files, and in each snapshot a
 manifest next to its digest list. The usage file also lists, per stage, cumulative-consistent (whether the
 cumulative total equals the earlier total plus the call's own cost: yes, no or unknown), and a warning line for
-each stage where it reads no.
+each stage where it reads no. The value is unknown also when the call's own cost had to be derived from the totals
+(the result carried no per-call cost block), because then the two numbers are not independent and agree by
+construction.
 
 Every file the harness writes itself holds facts, counts and ids, as `name: value` lines with yes and no for
 booleans. A value that could not be measured is written UNCONFIRMED and never left blank. None of these files

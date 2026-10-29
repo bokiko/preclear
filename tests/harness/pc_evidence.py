@@ -263,7 +263,8 @@ def render_usage(data: RunData) -> bytes:
     Costs are the Decimal text exactly as parsed. The row total is the s2 cumulative total plus the s3 total
     (s1 is inside the s2 chain and is never added); the run total is the sum over the rows filed in this run.
     One cumulative-consistent line per stage shows the record's flag (whether the cumulative total equals the
-    earlier total plus the call's own cost: yes, no or unknown, UNCONFIRMED when the record lacks it), and one
+    earlier total plus the call's own cost: yes, no or unknown, UNCONFIRMED when the record lacks it; unknown also
+    when the call's own cost was derived from the totals and not read from the per-call block, WR-04), and one
     warning line follows for each stage whose flag is no (IN-01).
     """
     lines = ["usage for %s" % pc_rows.ROW1, "costs are in US dollars as the stream reported them, kept as text"]

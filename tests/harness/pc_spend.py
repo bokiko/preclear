@@ -440,15 +440,26 @@ def _as_decimal(value: Any) -> Decimal:
     return number
 
 
+def has_call_block(result_event: Mapping[str, Any]) -> bool:
+    """True when the result event carries the per-call cost block call_cost reads: model_usage_since_last_result
+    as a non-empty mapping. Without it the call's own cost is derived from the totals, so a comparison of that
+    cost with the totals compares a number with itself (second-pass WR-04). call_cost makes the same test by
+    calling this function, so the two cannot drift.
+    """
+    since = result_event.get("model_usage_since_last_result")
+    return isinstance(since, dict) and bool(since)
+
+
 def call_cost(result_event: Mapping[str, Any], previous_total: Optional[Decimal] = None) -> Decimal:
     """Return the cost of the one call a result event ends, as an exact Decimal.
 
     total_cost_usd is cumulative across a resumed session, so it is not a call's cost. The cost of the call is
-    the sum of costUSD over model_usage_since_last_result when that mapping is present and non-empty; else, for
-    a first call of a session, the total itself; else the total minus the previous cumulative total.
+    the sum of costUSD over model_usage_since_last_result when that mapping is present and non-empty
+    (has_call_block); else, for a first call of a session, the total itself; else the total minus the previous
+    cumulative total.
     """
-    since = result_event.get("model_usage_since_last_result")
-    if isinstance(since, dict) and since:
+    if has_call_block(result_event):
+        since = result_event["model_usage_since_last_result"]
         total = Decimal("0")
         for usage in since.values():
             if not isinstance(usage, dict) or "costUSD" not in usage:
