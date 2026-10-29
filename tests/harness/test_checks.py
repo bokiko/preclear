@@ -1627,6 +1627,10 @@ class CheckMixin(object):
 class WriteEscapeDotDotTests(CheckMixin, OpenWorldBase):
     """A dot-dot path is resolved against the folder the command works in (CR-01, D-03)."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        os.makedirs(os.path.join(self.project, "sub"))
+
     INSIDE = [
         "mkdir -p ../auto-memory", "mkdir ../ckpt/sub", "printf '%s\\n' hi > ../auto-memory/note.md",
         "echo hi >> ../auto-memory/log.md", "cp a ../auto-memory/b", "mktemp -p ../auto-memory",
@@ -1838,6 +1842,157 @@ class AwkProgramReaderTests(CheckMixin, OpenWorldBase):
         found = self.mentions("awk -v o=out.txt '{print \"a;b\" > o}' f")
         self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}})
         self.assertEqual(found["write_programs"], {"awk": 1})
+
+
+class AwkRawProgramTests(CheckMixin, OpenWorldBase):
+    """A double quote inside an awk regular expression or comment cannot hide a statement (fourth pass CR-01, D-03)."""
+
+    ESCAPING = [
+        "awk -v o=OUT/x '/\"/ {print > o}' f",
+        "awk -v o=OUT/x '{gsub(/\"/, \"\"); print $1 >> o}' f",
+        "awk -v c='touch OUT/x' '/\"/ {system(c)}' f",
+        "awk -v c='tee OUT/x' '$0 ~ /\"/ {print $1 | c}' f",
+        "awk -v o=OUT/x '/a\"b/ { print > o }' f",
+        "awk '/\"/ {print > \"OUT/x\"}' f",
+        "awk '/\"/ {system(\"touch OUT/x\")}' f",
+        "awk '/\"/ {close(\"OUT/x\")}' f",
+        "awk -v o=OUT/x '/\"/ { print \"b\" > o } /\"/' f",
+        "awk -v o=OUT/x '# \"word\n{print > o}' f",
+        "awk -v o=OUT/x '{print $1 ~ /\\(/ > o}' f",
+    ]
+    OVER_COUNT = "awk '/x/ {print \"a -> b\"}' OUT/f"
+    HARMLESS = [
+        "awk '{gsub(/\"/, \"\"); print $1}' OUT/f", "awk '{print \"a -> b\"}' OUT/f",
+        "awk '{print \"system(x)\"}' OUT/hosts", "awk '{printf \"%s -> %d\\n\", $1, NR}' OUT/f",
+        "awk '/system/ {print}' OUT/hosts", "awk '{print ($1 > 3)}' OUT/f",
+        "awk '{ if (length($0) > 80) print NR }' OUT/f",
+    ]
+
+    def test_each_quote_hidden_statement_is_one_escape_under_awk(self) -> None:
+        for number, command in enumerate(self.ESCAPING):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {"awk": 1}}, "raw awk case %d" % number)
+
+    def test_each_quote_hidden_statement_is_listed_under_awk(self) -> None:
+        for number, command in enumerate(self.ESCAPING):
+            self.assertEqual(self.mentions(command)["write_programs"], {"awk": 1}, "raw awk listed %d" % number)
+
+    def test_the_named_over_count_is_one_escape_under_awk(self) -> None:
+        self.assertEqual(self.found(self.OVER_COUNT), {"count": 1, "programs": {"awk": 1}}, "pattern then a string")
+
+    def test_the_harmless_string_forms_stay_read_only_and_unlisted(self) -> None:
+        self.check_zero_table(self.HARMLESS, "raw awk harmless")
+        for number, command in enumerate(self.HARMLESS):
+            self.assertEqual(self.mentions(command)["write_programs"], {}, "harmless awk not listed %d" % number)
+
+
+class WorkingFolderCertaintyTests(CheckMixin, OpenWorldBase):
+    """The working folder moves only on a cd that is certain to run in the main shell and to succeed (CR-02, WR-01)."""
+
+    STRICT = [
+        "cd nosuch; mkdir ../x", "cd nosuch || mkdir ../x", "cd sub | cat; mkdir ../x", "cd sub & mkdir ../x",
+        "cd sub; mkdir ../x", "cd sub\nmkdir ../x", "cd PRJ/sub; mkdir ../x", "cd nosuch && mkdir ../auto-memory/x",
+        "true || cd sub && mkdir ../x", "echo hi | cd sub && mkdir ../x", "cd sub && true & mkdir ../x",
+        "(cd sub && true); mkdir ../x", "(cd sub); mkdir ../x", "if true; then cd sub && true; fi; mkdir ../y",
+        "for d in a; do cd sub && true; done; mkdir ../y", "{ cd sub && true; }; mkdir ../y",
+        "x=$(cd sub; mkdir ../y)", "env -C nosuch mkdir ../x",
+    ]
+    STILL_ONE = [
+        "echo $(cd sub && true); mkdir ../x", "cd sub && mkdir ../../x", "cd sub && cd .. && mkdir ../x",
+    ]
+    CERTAIN = [
+        "cd sub && mkdir ../x", "cd PRJ/sub && mkdir ../x", "cd ../auto-memory && mkdir -p sub",
+        "mkdir y && cd sub && mkdir ../z; true; cd sub && mkdir ../x", "true & cd sub && mkdir ../x",
+        "cd sub && cd .. && mkdir ../auto-memory/x", "cd sub && mkdir ../x || true",
+        "cd sub && ls | wc -l && mkdir ../x", "x=$(cd sub && mkdir ../y)", "env -C sub mkdir ../x",
+        "cd sub && mkdir ../x\nmkdir ../y",
+    ]
+    LOOSE_ZERO = [
+        "cd \"$(git rev-parse --show-toplevel)\" && printf hi > ../auto-memory/x",
+        "cd \"$(pwd)\" && printf hi > ../auto-memory/x", "cd $d && mkdir ../auto-memory/x", "cd $d; mkdir ../ckpt/y",
+        "cd \"$PWD\" && cp a ../auto-memory/b",
+    ]
+    LOOSE_ONE = [
+        "cd $d && mkdir ../x", "cd \"$(pwd)\" && mkdir ../x", "cd $d && cd ../auto-memory && mkdir ../x",
+        "cd $d && mkdir ../../auto-memory/x",
+    ]
+
+    def setUp(self) -> None:
+        super().setUp()
+        os.makedirs(os.path.join(self.project, "sub"))
+
+    def test_every_cd_that_is_not_certain_leaves_a_later_dot_dot_word_an_escape(self) -> None:
+        for number, command in enumerate(self.STRICT):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {"mkdir": 1}}, "strict %d: %s" % (number, command))
+
+    def test_the_forms_that_were_already_one_escape_stay_one(self) -> None:
+        for number, command in enumerate(self.STILL_ONE):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {"mkdir": 1}}, "still one %d: %s" % (number, command))
+
+    def test_a_certain_cd_to_an_existing_folder_moves_the_folder(self) -> None:
+        self.check_zero_table(self.CERTAIN, "certain cd")
+
+    def test_a_cd_to_an_expansion_resolves_a_dot_dot_word_against_the_project(self) -> None:
+        self.check_zero_table(self.LOOSE_ZERO, "loose folder")
+        for number, command in enumerate(self.LOOSE_ONE):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {"mkdir": 1}}, "loose one %d: %s" % (number, command))
+
+    def test_the_two_unknown_states_in_one_place(self) -> None:
+        self.assertEqual(self.found("cd $d && mkdir ../auto-memory/x")["count"], 0, "loose: resolved from the project")
+        self.assertEqual(self.found("cd nosuch && mkdir ../auto-memory/x")["count"], 1, "strict: every dot-dot escapes")
+
+    def test_the_folder_is_never_carried_from_one_bash_call_to_the_next(self) -> None:
+        both = stream([bash(self.text("cd sub")), bash(self.text("mkdir ../x"))])
+        found = checks().bash_mentions(both, self.approved, [self.wrapper])
+        self.assertEqual(found["write_escapes"], {"count": 1, "programs": {"mkdir": 1}}, "the second call starts in the project")
+        quiet = stream([bash(self.text("cd sub && true")), bash(self.text("mkdir ../auto-memory/x"))])
+        found = checks().bash_mentions(quiet, self.approved, [self.wrapper])
+        self.assertEqual(found["write_escapes"]["count"], 0, "and from the project it is inside")
+
+    def test_the_connected_splitter_pairs_each_part_with_the_separator_after_it(self) -> None:
+        import pc_allowlist
+
+        self.assertEqual(pc_allowlist.split_compound_connected("cd sub && mkdir ../x"),
+                         [("cd sub", "&&"), ("mkdir ../x", "")], "two parts")
+        self.assertEqual(pc_allowlist.split_compound_connected("a; b | c & d || e\nf"),
+                         [("a", ";"), ("b", "|"), ("c", "&"), ("d", "||"), ("e", "\n"), ("f", "")], "every separator")
+        self.assertEqual(pc_allowlist.split_compound_connected("echo 'a;b' && \"x|y\""),
+                         [("echo 'a;b'", "&&"), ("\"x|y\"", "")], "a separator in quotes stays in its part")
+        self.assertEqual(pc_allowlist.split_compound_connected(""), [], "empty text")
+        tables = (self.STRICT + self.STILL_ONE + self.CERTAIN + self.LOOSE_ZERO + self.LOOSE_ONE + AwkRawProgramTests.ESCAPING
+                  + AwkRawProgramTests.HARMLESS)
+        for command in tables:
+            text = self.text(command)
+            self.assertEqual(pc_allowlist.split_compound(text),
+                             [part for part, _sep in pc_allowlist.split_compound_connected(text)], "one splitter: " + command)
+
+
+class AttachedClusterValueTests(CheckMixin, OpenWorldBase):
+    """The text after each option letter of a cluster is judged, and so is a sort cluster holding o (CR-03, D-03)."""
+
+    TILDE = "~" + "/neutral"
+    ESCAPING = [
+        ("tar -xC.. -f a.tar", "tar"), ("tar -xzC../.. -f a.tar", "tar"), ("tar -xzvfC.. a.tar", "tar"),
+        ("cp -rt../.. f", "cp"), ("sort -ro../x f", "sort"), ("sort -roOUT/x f", "sort"),
+    ]
+    ZERO = [
+        "env cc -o../ckpt/out f.c", "env cc -Iinclude/x -o out f.c", "env sort -n5 f", "sort -rn OUT/f",
+        "sort -t, -k2,2 OUT/f", "sort -u OUT/f", "sort --reverse OUT/f", "env tar -xzf a.tgz", "env cp -tPRJ f",
+    ]
+
+    def test_a_value_after_the_value_letter_of_a_cluster_is_one_escape_under_its_label(self) -> None:
+        self.check_table(self.ESCAPING, "cluster value")
+        self.check_table([("env " + command, label) for command, label in self.ESCAPING], "cluster value, env")
+
+    def test_a_tilde_value_after_a_sort_cluster_is_one_escape(self) -> None:
+        self.check_table([("sort -ro" + self.TILDE + " f", "sort"), ("env sort -ro" + self.TILDE + " f", "sort")], "tilde")
+
+    def test_relative_values_and_read_only_sort_forms_are_zero(self) -> None:
+        self.check_zero_table(self.ZERO, "cluster zero")
+
+    def test_the_sort_cluster_holding_o_is_listed_and_the_read_only_forms_are_not(self) -> None:
+        self.assertEqual(self.mentions("sort -roOUT/x f")["write_programs"], {"sort": 1}, "listed under sort")
+        for command in ("sort -rn OUT/f", "sort -t, -k2,2 OUT/f", "sort -u OUT/f", "sort --reverse OUT/f"):
+            self.assertEqual(self.mentions(command)["write_programs"], {}, "not listed: " + command)
 
 
 class GitCommandConfigTests(CheckMixin, OpenWorldBase):
@@ -2074,6 +2229,10 @@ class OpenWorldRunTests(unittest.TestCase):
         "sed -n 's/a/b/gw OUT/x' f", "sed -n '1!w OUT/x' f", "sed -n '/a/s//b/gw OUT/x' f",
         "awk 'BEGIN{print \"a;b\" > \"OUT/x\"}'", "awk 'BEGIN{print \"}\" > \"OUT/x\"}'",
         "awk 'BEGIN{print 1,\n 2 > \"OUT/x\"}'", "awk '{print \"a;b\" | \"tee OUT/x\"}' f",
+        "env tar -xC.. -f a.tar", "env sort -ro../x f", "env sort -roOUT/x f", "cd nosuch; mkdir ../x",
+        "cd sub | cat; mkdir ../x", "(cd sub && true); mkdir ../x", "awk -v o=OUT/x '/\"/ {print > o}' f",
+        "awk '/\"/ {print > \"OUT/x\"}' f", "awk -v c='touch OUT/x' '/\"/ {system(c)}' f",
+        "awk -v o=OUT/x '{print $1 ~ /\\(/ > o}' f",
     ]
     GIT_CONFIG = [
         "env git -c core.fsmonitor='touch x' status", "git -c include.path=$PROJECT/cfg status",
@@ -2085,7 +2244,8 @@ class OpenWorldRunTests(unittest.TestCase):
                 "mkdir -p ../auto-memory", "printf x > ../auto-memory/n.md", "cd ../auto-memory && mkdir -p sub",
                 "[[ -f ../auto-memory/x && -s ../auto-memory/x ]] && echo ok", "awk '/system/ {print}' OUT/hosts",
                 "sed -n 's/ w /x/p' OUT/f", "awk '{print \"a -> b\"}' OUT/f", "awk '{print ($1 > 3)}' OUT/f",
-                "git log -c"]
+                "git log -c", "cd \"$(git rev-parse --show-toplevel)\" && printf hi > ../auto-memory/n.md",
+                "awk '{gsub(/\"/, \"\"); print $1}' OUT/hosts", "sort -rn OUT/hosts", "env sort -n5 f"]
 
     def check_breach(self, run) -> None:
         self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))

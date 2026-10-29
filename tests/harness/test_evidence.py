@@ -1618,6 +1618,15 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn(phrase, text, "the guide says: " + phrase)
         self.assertNotIn("the home variable, a dot-dot segment and an absolute path", text, "the old blanket rule is gone")
 
+    def test_the_readme_describes_the_certain_cd_the_raw_awk_view_and_the_cluster_values(self) -> None:
+        text = self.readme()
+        for phrase in (
+            "certain to run in the main shell", "resolved against the project folder",
+            "every Bash call is judged from the project folder", "the raw program text", "after each option letter",
+        ):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        self.assertNotIn("A cd with a literal target inside the roots moves that folder", text, "the unconditional cd rule is gone")
+
     def test_the_readme_describes_the_readers_the_git_rule_the_nested_compare_and_the_pin(self) -> None:
         text = self.readme()
         for phrase in (
