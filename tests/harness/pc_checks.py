@@ -1030,6 +1030,14 @@ def first_status_text(events: Sequence[Dict[str, Any]], wrapper_path: str) -> Op
     return None
 
 
+STATUS_SCAN_LINES = 5
+
+
+def _session_line_in_front(text: str) -> bool:
+    """True when one of the first STATUS_SCAN_LINES lines starts with the word session and a space (exactly)."""
+    return any(line.startswith("session ") for line in text.splitlines()[:STATUS_SCAN_LINES])
+
+
 def _yes_no(value: bool) -> str:
     return CORRELATED_YES if value else CORRELATED_NO
 
@@ -1040,8 +1048,11 @@ def session_facts(
     """Session agreement per stage, the denial ids per stage and three questions about the first status result.
 
     Each stage reports whether init.session_id and result.session_id equal the session requested for it. The
-    status questions (begins with the word session, holds the first eight characters of the s1 session, names
-    ledger B) are yes or no, or UNCONFIRMED when s2 made no status call. Reply text is never read.
+    status questions (the helper's session line is among the first STATUS_SCAN_LINES lines, holds the first eight
+    characters of the s1 session, names ledger B) are yes or no, or UNCONFIRMED when s2 made no status call.
+    The helper prints its brand line first and the tool result merges both streams, so the first line of the real
+    result is the brand and the question is about the session line that follows it (WR-02; the key name is kept).
+    Reply text is never read.
     """
     stages: Dict[str, Any] = {}
     for name, events in events_by_stage.items():
@@ -1058,7 +1069,7 @@ def session_facts(
     else:
         s1 = requested.get("s1") or ""
         status = {
-            "status_begins_with_session": _yes_no(first_status.lstrip().startswith("session")),
+            "status_begins_with_session": _yes_no(_session_line_in_front(first_status)),
             "status_holds_s1_prefix": _yes_no(s1 != "" and s1[:8] in first_status),
             "status_names_ledger_b": _yes_no(_row1().LEDGER_B_NAME in first_status),
         }

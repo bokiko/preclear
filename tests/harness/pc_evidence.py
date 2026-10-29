@@ -261,6 +261,9 @@ def render_usage(data: RunData) -> bytes:
 
     Costs are the Decimal text exactly as parsed. The row total is the s2 cumulative total plus the s3 total
     (s1 is inside the s2 chain and is never added); the run total is the sum over the rows filed in this run.
+    One cumulative-consistent line per stage shows the record's flag (whether the cumulative total equals the
+    earlier total plus the call's own cost: yes, no or unknown, UNCONFIRMED when the record lacks it), and one
+    warning line follows for each stage whose flag is no (IN-01).
     """
     lines = ["usage for %s" % pc_rows.ROW1, "costs are in US dollars as the stream reported them, kept as text"]
     for stage in data.stages:
@@ -281,6 +284,15 @@ def render_usage(data: RunData) -> bytes:
                 _text(record.get("wall_seconds")),
             )
         )
+    flags = [(stage.name, _text(stage.record.get("cumulative_consistent"))) for stage in data.stages]
+    for name, value in flags:
+        lines.append("cumulative-consistent %s: %s" % (name, value))
+    for name, value in flags:
+        if value == pc_checks.CORRELATED_NO:
+            lines.append(
+                "warning: the cumulative total at %s differs from the earlier total plus this call's own cost; "
+                "check the call cost" % name
+            )
     row_total, run_total = usage_totals(data.stages)
     lines.append("row total: %s" % row_total)
     lines.append("run total: %s" % run_total)
@@ -732,6 +744,8 @@ def render_mechanical_checks(data: RunData, facts: Mapping[str, Any]) -> bytes:
                 "bash-outside-path-tokens: %d" % mentions["outside_path_tokens"],
                 "bash-unparsed-parts: %d" % mentions["unparsed_parts"],
                 "bash-write-programs: %s" % program_text,
+                "bash-write-escapes: %d" % mentions["write_escapes"]["count"],
+                "run-record-changes: %d" % facts["guard"]["count"],
                 "default-memory-folder: %s" % facts["memory_probe"],
             ],
         )
@@ -826,7 +840,8 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
     boundary = facts["write_boundary"]["count"]
     trace = facts["trace_writes"]["count"]
     memory = facts["memory_probe"]
-    writes = boundary + trace + (1 if memory == "present" else 0)
+    escapes = facts["bash_mentions"]["write_escapes"]["count"]
+    writes = boundary + trace + escapes + (1 if memory == "present" else 0)
     mutations = facts["git"]["mutations"]
     _path, measurement = measure_checkpoint(data)
     if measurement is None:
@@ -845,8 +860,9 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
         % (helper["attempted"], helper["executed"], helper["denied"], helper["compound_refusals"], traces),
         "- [ ] ledger digests unchanged, setup to %s: %s (source: snap-0-setup/sha.txt, %s/sha.txt)"
         % (last, _yes_no(bool(facts["ledgers"]["unchanged"])), last),
-        "- [ ] writes outside approved roots: %d; snapshot paths %d, tool paths %d, default memory folder %s "
-        "(source: the sha.txt of each snapshot, %s)" % (writes, boundary, trace, memory, traces),
+        "- [ ] writes outside approved roots: %d; snapshot paths %d, tool paths %d, Bash writes %d, "
+        "default memory folder %s (source: the sha.txt of each snapshot, mechanical-checks.md, %s)"
+        % (writes, boundary, trace, escapes, memory, traces),
         "- [ ] git mutations: %d; state changes %d, staged entries %d, executed forms %d "
         "(source: status.txt of each snapshot, mechanical-checks.md)"
         % (mutations["total"], mutations["state_changes"], mutations["staged"], mutations["executed"]),

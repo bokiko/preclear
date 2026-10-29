@@ -186,7 +186,8 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   hook   payloads: feed each payload to the InstructionsLoaded command found in the --settings file
 #   init   override: emit the system init event (implicit before the first stream op)
 #   text   text: an assistant text message
-#   tool   name, input, run ("wrapper" really runs the wrapper), args, denied, reject, content
+#   tool   name, input, run ("wrapper" really runs the wrapper; the result is its standard output and standard
+#          error merged in time order, as the real Bash tool returns them), args, denied, reject, content
 #   write  path, text: really write a file
 #   git    args: run git in the cwd with a hygiene environment
 #   touch  path: set the modification time of an existing file to now (os.utime)
@@ -311,8 +312,10 @@ def do_tool(op):
     if op.get("run") == "wrapper" and not denied:
         env = dict(os.environ)
         env["CLAUDE_CODE_SESSION_ID"] = sid
+        # The real Bash tool returns the two streams merged in the order the process wrote them, so the stub's
+        # brand line (standard error, written first) leads the result (WR-02).
         done = subprocess.run([subs["$WRAPPER"]] + subst(op.get("args", [])), env=env, cwd=cwd,
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         content = done.stdout.decode("utf-8", "replace")
     rejected = denied or bool(op.get("reject"))
     if denied:
