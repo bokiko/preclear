@@ -80,6 +80,7 @@ MESSAGE_NO_STREAM = "FAIL: a stage stream cannot be read; nothing is filed"
 MESSAGE_SANITIZER = "SCANNER_ERROR: the sanitizer could not process a staged file; nothing is filed"
 MESSAGE_STAGING = "FAIL: the stage folder could not be written; nothing is filed"
 MESSAGE_STAGE_NOT_CLEAN = "FAIL: a stage did not finish cleanly; nothing is filed"
+MESSAGE_STAGE_MISSING = "FAIL: a stage did not run; nothing is filed"
 MESSAGE_NO_DENY_ENTRIES = "SCANNER_ERROR: the deny entries were not built; nothing is filed"
 
 _STAGE_DIR_MODE = 0o700
@@ -262,7 +263,8 @@ def render_usage(data: RunData) -> bytes:
     Costs are the Decimal text exactly as parsed. The row total is the s2 cumulative total plus the s3 total
     (s1 is inside the s2 chain and is never added); the run total is the sum over the rows filed in this run.
     One cumulative-consistent line per stage shows the record's flag (whether the cumulative total equals the
-    earlier total plus the call's own cost: yes, no or unknown, UNCONFIRMED when the record lacks it), and one
+    earlier total plus the call's own cost: yes, no or unknown, UNCONFIRMED when the record lacks it; unknown also
+    when the call's own cost was derived from the totals and not read from the per-call block, WR-04), and one
     warning line follows for each stage whose flag is no (IN-01).
     """
     lines = ["usage for %s" % pc_rows.ROW1, "costs are in US dollars as the stream reported them, kept as text"]
@@ -1033,6 +1035,12 @@ def stage_tree(stage_dir: str, files: Mapping[str, bytes], sanitizer: Any) -> in
 
 
 def _unfileable(data: RunData) -> Optional[str]:
+    """The fixed line that refuses the filing, or None when the run may be filed.
+
+    Order: no stages, then each stage's prompt, stream and cleanliness, then the chain. Filing needs the chain the
+    registry defines (s1 and s2, and s3 exactly when s2 printed a resume line), because the live path files only
+    after s2 and runs s3 only then; a refile is held to the same rule.
+    """
     if not data.stages:
         return MESSAGE_UNREADABLE
     for stage in data.stages:
@@ -1045,6 +1053,29 @@ def _unfileable(data: RunData) -> Optional[str]:
         # live path refused (CR-01).
         if stage.record.get("problem") != "" or stage.record.get("evaluation") != _row1().STATUS_PASS:
             return MESSAGE_STAGE_NOT_CLEAN
+    return _chain_incomplete(data)
+
+
+def _chain_incomplete(data: RunData) -> Optional[str]:
+    """MESSAGE_STAGE_MISSING unless the stage records are exactly the chain the registry defines for row 1.
+
+    The live path files only after s2 has run and runs s3 only when s2 printed a resume line, so a run that
+    stopped early (a crash, an interrupt, a harness error after a paid call) has fewer records and must not be
+    filed or refiled (second-pass CR-01). The chain record names which shape is complete: s1 and s2 with the
+    marker none, or s1, s2 and s3 with the marker found. The stage names come from the registry entry that
+    run_row walks, not from a second list.
+    """
+    row1 = _row1()
+    marker = data.chain.get("marker") if isinstance(data.chain, dict) else None
+    if marker not in (row1.MARKER_FOUND, row1.MARKER_NONE):
+        return MESSAGE_STAGE_MISSING
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row1.ROW_ID)
+    if entry is None:
+        return MESSAGE_STAGE_MISSING
+    names = [spec.name for spec in entry.stages]
+    expected = names if marker == row1.MARKER_FOUND else names[:-1]
+    if [stage.name for stage in data.stages] != expected:
+        return MESSAGE_STAGE_MISSING
     return None
 
 
@@ -1186,7 +1217,8 @@ def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str
     promote is always called with both the deny entries and the config folder (review WR-14), and a context
     without the deny entries is refused with 15 before anything is read or made (WR-03). A breach found by the
     checks, or a stage that did not finish cleanly (a problem or a failed isolation assertion in its record),
-    files nothing (exit 11); a sanitizer error is 15, a gate refusal 14, a taken destination 17.
+    files nothing (exit 11), and so does a chain that stopped early (_unfileable); a sanitizer error is 15, a gate
+    refusal 14, a taken destination 17.
     """
     if ctx.deny_entries is None:
         return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))

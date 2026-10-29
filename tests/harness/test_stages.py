@@ -266,7 +266,11 @@ class CostTests(unittest.TestCase):
         run = Run(stages)
         settles = [r for r in run.ledger() if r["kind"] == "settle"]
         self.assertEqual(settles[1]["delta"], Decimal("0.06"))
-        self.assertEqual(read_json(run.raw("s2.record.json"))["cumulative_consistent"], "yes")
+        self.assertEqual(
+            read_json(run.raw("s2.record.json"))["cumulative_consistent"],
+            "unknown",
+            "the delta came from the totals, so nothing independent was compared (WR-04)",
+        )
         self.assertIn("row total: 0.13 USD", run.outcome.lines)
 
     def test_a_cumulative_that_disagrees_with_previous_plus_delta_is_recorded_as_inconsistent(self) -> None:
@@ -277,6 +281,51 @@ class CostTests(unittest.TestCase):
         self.assertEqual(record["delta"], "0.06")
         self.assertEqual(record["cumulative"], "0.2")
         self.assertIn("row total: 0.24 USD", run.outcome.lines)
+
+
+class ConsistencyUnknownTests(unittest.TestCase):
+    """WR-04 of the second pass: yes means two independent numbers agreed, so a cost derived from the totals
+    is unknown."""
+
+    def test_has_call_block_is_true_only_for_a_non_empty_mapping(self) -> None:
+        key = "model_usage_since_last_result"
+        self.assertTrue(pc_spend.has_call_block({key: {"some-model": {"costUSD": 0.01}}}), "a non-empty mapping")
+        self.assertFalse(pc_spend.has_call_block({}), "the key is missing")
+        self.assertFalse(pc_spend.has_call_block({key: {}}), "an empty mapping")
+        self.assertFalse(pc_spend.has_call_block({key: [1]}), "a list")
+        self.assertFalse(pc_spend.has_call_block({key: 3}), "a number")
+
+    def test_the_flag_gates_the_comparison(self) -> None:
+        consistent = row1()._consistent
+        prev, delta, total = Decimal("0.03"), Decimal("0.06"), Decimal("0.09")
+        self.assertEqual(consistent(prev, delta, total, False), "unknown", "no block, numbers agree")
+        self.assertEqual(consistent(prev, delta, Decimal("0.20"), False), "unknown", "no block, numbers disagree")
+        self.assertEqual(consistent(None, Decimal("0.03"), Decimal("0.03"), False), "unknown", "no block, first call")
+        self.assertEqual(consistent(prev, delta, total, True), "yes", "block, agree")
+        self.assertEqual(consistent(prev, delta, Decimal("0.20"), True), "no", "block, disagree")
+        self.assertEqual(consistent(prev, None, total, True), "unknown", "block, no delta")
+        self.assertEqual(consistent(prev, delta, None, True), "unknown", "block, no cumulative")
+
+    def test_a_result_without_the_block_reads_unknown_for_that_stage_only(self) -> None:
+        stages = default_stages()
+        stages[1]["result"].pop("delta")
+        run = Run(stages)
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        flags = [read_json(run.raw("s%d.record.json" % n))["cumulative_consistent"] for n in (1, 2, 3)]
+        self.assertEqual(flags, ["yes", "unknown", "yes"])
+
+    def test_disagreeing_totals_without_the_block_are_still_unknown_and_with_it_are_no(self) -> None:
+        stages = with_result(default_stages(), 1, total_cost_usd=0.20)
+        stages[1]["result"].pop("delta")
+        run = Run(stages)
+        self.assertEqual(read_json(run.raw("s2.record.json"))["cumulative_consistent"], "unknown", "nothing compared")
+        run = Run(with_result(default_stages(), 1, total_cost_usd=0.20))
+        self.assertEqual(read_json(run.raw("s2.record.json"))["cumulative_consistent"], "no", "two numbers compared")
+
+    def test_the_default_run_gives_yes_three_times(self) -> None:
+        run = Run(default_stages())
+        flags = [read_json(run.raw("s%d.record.json" % n))["cumulative_consistent"] for n in (1, 2, 3)]
+        self.assertEqual(flags, ["yes", "yes", "yes"])
 
 
 class StopRuleTests(unittest.TestCase):

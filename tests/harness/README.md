@@ -243,8 +243,10 @@ a dry run, then one row.
   to the spend ledger, for a stage that was attempted. It prints counts only, starts no process and
   refuses an unknown or never-attempted stage with exit 2. It exists so that a retry has a hook that
   a person types; no task of this phase runs it.
-- `--refile RUNROOT` repeats the checks and the filing for a finished run folder, for zero tokens (see
-  "What a run files"). It cannot be combined with another selection or with `--dry-run`.
+- `--refile RUNROOT` repeats the checks and the filing for a run folder, for zero tokens (see
+  "What a run files"); the folder must hold the whole chain, and a run in which a stage did not run is
+  refused with exit 11 and nothing is created. It cannot be combined with another selection or with
+  `--dry-run`.
 
 The spend gate, in words. A stage is attempted once. A launch reserves the stage's cap in the ledger
 before any process starts, under a file lock, so two launches cannot both pass the same check. The
@@ -337,7 +339,13 @@ run root gives the same facts.
   against the project carries core.fsmonitor=false and core.untrackedCache=false, so a command planted in the
   project's git configuration is never run by the harness. The digest of the git folder without its index,
   taken at setup, is a pin: once the folder differs from it, the harness starts no git command in the project,
-  notes in the snapshot that status was not run, and the difference counts as a git mutation.
+  notes in the snapshot that status was not run, and the difference counts as a git mutation. The pin is
+  required after setup: a missing or malformed pin file (the setup git state) ends the row with exit 11, no git
+  command is started and nothing is filed. The harness also runs no git command in a project that holds a
+  nested repository (an entry named `.git` below the top level, whatever its kind; the top-level `.git` entry
+  may be a file in a linked worktree): git would enter a registered gitlink and run commands named in that
+  repository's own configuration, which the pin cannot see. The snapshot notes it with a fixed line, the git
+  state reads not-read, which counts as a git mutation, and a nested repository at setup is refused.
 - Helper calls, four counts per stage from structure only: Bash calls that name the wrapper, calls executed
   (the call lines of the stage's slice of the wrapper log), calls denied, and compound commands that were
   refused and name the wrapper. When the stream and the log agree, attempted equals executed plus denied plus
@@ -397,7 +405,9 @@ version, settings), the usage per stage with each call's own cost and the row to
 work turn's prompt and full trace, the resume line with the third stage's files, and in each snapshot a
 manifest next to its digest list. The usage file also lists, per stage, cumulative-consistent (whether the
 cumulative total equals the earlier total plus the call's own cost: yes, no or unknown), and a warning line for
-each stage where it reads no.
+each stage where it reads no. The value is unknown also when the call's own cost had to be derived from the totals
+(the result carried no per-call cost block), because then the two numbers are not independent and agree by
+construction.
 
 Every file the harness writes itself holds facts, counts and ids, as `name: value` lines with yes and no for
 booleans. A value that could not be measured is written UNCONFIRMED and never left blank. None of these files
@@ -413,12 +423,15 @@ A row whose precondition is not met is filed as a folder named `SKIPPED-` follow
 no session was run and why, never reads as a result, passes through the same sanitizer and gate, and the run
 exits 10, never 0.
 
-`--refile RUNROOT` repeats the checks and the filing for a finished run folder, for zero tokens, after a
+`--refile RUNROOT` repeats the checks and the filing for a run folder, for zero tokens, after a
 refusal that came late (a taken name, the gate, a sanitizer error). It starts no claude, needs no budget,
 writes no ledger line, takes the evidence date and the model recorded in the run (not today's date) and calls
-the same filing function as a fresh run. A folder that is not a finished run folder under the runs root is
-refused with exit 2, a destination that already exists with exit 17, and a run the live path stopped (a stage
-that did not finish cleanly) with exit 11.
+the same filing function as a fresh run. A folder that is not a run folder with a run record under the runs
+root is refused with exit 2, a destination that already exists with exit 17, and a run the live path stopped
+with exit 11. The folder must hold the whole chain: the first two stages, and the third exactly when the
+second printed a resume line. A run in which a stage did not run (a crash, an interrupt or a harness error
+after the first call) is refused with exit 11, nothing is created and no destination name is used up, as is a
+stage that did not finish cleanly.
 
 ### Comparing a rerun with the committed row
 

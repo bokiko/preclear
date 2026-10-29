@@ -394,6 +394,7 @@ def _listing(names: Sequence[str]) -> bytes:
 
 
 STATUS_NOT_RUN = "git status was not run: the git folder differs from the setup state"
+STATUS_NOT_RUN_NESTED = "git status was not run: the project holds a nested repository"
 
 
 def take_snapshot(
@@ -401,6 +402,7 @@ def take_snapshot(
     name: str,
     git: str,
     refuse_under: Sequence[str] = (),
+    setup: bool = False,
 ) -> List[str]:
     """Write snaps/<name> and return the names of model-written trees whose copy was skipped.
 
@@ -412,17 +414,20 @@ def take_snapshot(
 
     git status is gated by the gitdir digest recorded at setup (pc_checks.pinned_gitdir): once the project's
     .git folder differs from it, git is not started (a command planted in the repository's own configuration
-    would run), status.raw is empty and status.txt holds the one fixed line STATUS_NOT_RUN. The first snapshot
-    of a run has no state file yet and is unpinned.
+    would run), status.raw is empty and status.txt holds the one fixed line STATUS_NOT_RUN. A project that holds
+    a nested repository gets the fixed line STATUS_NOT_RUN_NESTED instead, for the same reason. The pin is
+    required after setup: only the setup snapshot (setup true) is unpinned, any other snapshot without
+    raw/setup.git.json is a CheckError (second-pass WR-03).
     """
+    pin = pc_checks.pinned_gitdir(str(paths["raw"]), setup)
     run_root = str(paths["run_root"])
     entries = [e for e in pc_manifest.tree_manifest(run_root, tuple(refuse_under)) if not _excluded(e["path"])]
     dest = os.path.join(str(paths["snaps"]), name)
     pc_manifest.write_snapshot(dest, entries)
     try:
-        raw_status, text_status = pc_manifest.capture_git_status(
-            str(paths["project"]), git, pc_checks.pinned_gitdir(str(paths["raw"]))
-        )
+        raw_status, text_status = pc_manifest.capture_git_status(str(paths["project"]), git, pin)
+    except pc_manifest.NestedRepository:
+        raw_status, text_status = b"", (STATUS_NOT_RUN_NESTED + "\n").encode("utf-8")
     except pc_manifest.GitDirChanged:
         raw_status, text_status = b"", (STATUS_NOT_RUN + "\n").encode("utf-8")
     pc_runroot.write_exclusive(os.path.join(dest, "status.raw"), raw_status, 0o600)
@@ -720,9 +725,16 @@ def _usage_of(result_event: Mapping[str, Any]) -> Optional[Dict[str, int]]:
     return found
 
 
-def _consistent(previous_total: Optional[Decimal], delta: Optional[Decimal], cumulative: Optional[Decimal]) -> str:
-    """yes when the cumulative total equals the previous total plus this call's delta (to a millionth)."""
-    if delta is None or cumulative is None:
+def _consistent(
+    previous_total: Optional[Decimal], delta: Optional[Decimal], cumulative: Optional[Decimal], has_block: bool
+) -> str:
+    """yes when the cumulative total equals the previous total plus this call's delta (to a millionth).
+
+    has_block says the call's own cost was read from the per-call block of the result event
+    (pc_spend.has_call_block). Without it the delta was derived from the totals, so the comparison would hold by
+    construction and compares nothing independent: the value is unknown (second-pass WR-04, D-14).
+    """
+    if not has_block or delta is None or cumulative is None:
         return "unknown"
     expected = delta if previous_total is None else previous_total + delta
     return "yes" if abs(cumulative - expected) <= CONSISTENCY_TOLERANCE else "no"
@@ -856,7 +868,9 @@ def run_stage(
         "turns": summary["num_turns"] if summary is not None else None,
         "delta": _cost_text(delta),
         "cumulative": _cost_text(cumulative),
-        "cumulative_consistent": _consistent(previous_total, delta, cumulative),
+        "cumulative_consistent": _consistent(
+            previous_total, delta, cumulative, result_event is not None and pc_spend.has_call_block(result_event)
+        ),
         "usage": usage,
         "problem": problem,
         "stdout_sha256": stdout_sha,
@@ -1125,7 +1139,7 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
     vcs = _git_executable(ctx.env)
     session = str(uuid.uuid4())
     paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
-    take_snapshot(paths, SNAPSHOT_SETUP, vcs)
+    take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
     pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs)
     pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
     entry =pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)

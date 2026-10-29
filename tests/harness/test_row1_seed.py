@@ -108,9 +108,12 @@ class Seeded(object):
         )
 
     def guard_setup(self) -> None:
-        """Write the setup guard the way run_row does, so that run_stage has a previous boundary to compare."""
+        """Write the setup guard and the setup git state the way run_row does, so that run_stage has a previous
+        boundary to compare and the pin that every later harness git call needs (second-pass WR-03)."""
         import pc_checks
 
+        git = shutil.which("git", path=os.pathsep.join(pc_testutil.SYSTEM_DIRS))
+        pc_checks.capture_boundary_state(self.paths, pc_checks.SETUP_STATE, git)
         pc_checks.capture_guard(self.paths, "setup")
 
 
@@ -283,7 +286,7 @@ class SnapshotTests(unittest.TestCase):
         os.makedirs(os.path.join(seeded.run_root, "stage-extra"))
         with open(os.path.join(seeded.run_root, "stage-extra", "note.txt"), "wb") as handle:
             handle.write(b"a model-made stage-prefixed folder\n")
-        skipped = self.snapshot(seeded, "snap-0-setup")
+        skipped = self.snapshot(seeded, "snap-0-setup", setup=True)
         self.assertEqual(list(skipped), [])
         snap = os.path.join(p["snaps"], "snap-0-setup")
         names = sorted(os.listdir(snap))
@@ -316,9 +319,9 @@ class SnapshotTests(unittest.TestCase):
 
     def test_a_second_snapshot_of_the_same_name_is_refused(self) -> None:
         seeded = Seeded()
-        self.snapshot(seeded, "snap-0-setup")
+        self.snapshot(seeded, "snap-0-setup", setup=True)
         with self.assertRaises(FileExistsError):
-            self.snapshot(seeded, "snap-0-setup")
+            self.snapshot(seeded, "snap-0-setup", setup=True)
 
     def test_a_symlink_in_a_model_written_tree_skips_that_one_copy_only(self) -> None:
         seeded = Seeded()
@@ -327,6 +330,7 @@ class SnapshotTests(unittest.TestCase):
         os.symlink(seeded.run_root, os.path.join(p["project"], ".preclear", "link"))
         with open(os.path.join(p["auto_memory"], "note.md"), "wb") as handle:
             handle.write(b"memory body\n")
+        seeded.guard_setup()
         skipped = self.snapshot(seeded, "snap-1-after-work")
         self.assertEqual(list(skipped), ["preclear"])
         snap = os.path.join(p["snaps"], "snap-1-after-work")
