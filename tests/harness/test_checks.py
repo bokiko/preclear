@@ -763,5 +763,207 @@ class RefileFactsTests(unittest.TestCase):
         )
 
 
+def manifest():
+    import pc_manifest
+
+    return pc_manifest
+
+
+def real_git() -> str:
+    import shutil
+
+    return shutil.which("git", path=os.pathsep.join(pc_testutil.SYSTEM_DIRS))
+
+
+class Recorder(object):
+    """Stands in for subprocess.run: records each command and returns a successful empty result."""
+
+    def __init__(self) -> None:
+        self.commands = []
+
+    def __call__(self, command, *args, **kwargs):
+        import types
+
+        self.commands.append(list(command))
+        return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+
+def forbid_processes(*_args, **_kwargs):
+    raise AssertionError("a process was started")
+
+
+def marker_folder() -> str:
+    return os.path.realpath(tempfile.mkdtemp(prefix="pc-marker-"))
+
+
+def plant_fsmonitor(repo: str, marker: str) -> None:
+    git_in(repo, "config", "core.fsmonitor", "touch %s #" % marker)
+
+
+def plant_filter(repo: str, marker: str) -> None:
+    git_in(repo, "config", "filter.planted.clean", "touch %s #" % marker)
+    with open(os.path.join(repo, ".gitattributes"), "w", encoding="utf-8") as handle:
+        handle.write("* filter=planted\n")
+
+
+def plain_status(repo: str) -> None:
+    """The control: a plain git status under the harness git environment, with no hardening option."""
+    import subprocess
+
+    subprocess.run([real_git(), "-C", repo, "status"], env=manifest()._git_environment(), stdin=subprocess.DEVNULL,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+
+HARDENING = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"]
+
+
+class GitHardeningTests(unittest.TestCase):
+    def test_every_git_call_against_the_project_carries_both_options_before_the_subcommand(self) -> None:
+        recorder = Recorder()
+        repo = make_repo()
+        with unittest.mock.patch("subprocess.run", recorder):
+            manifest().capture_git_status(repo, "git")
+            checks().git_state(repo, "git")
+        self.assertEqual(manifest().GIT_HARDENING, tuple(HARDENING), "the shared options")
+        self.assertEqual(len(recorder.commands), 5, "two status captures and three state reads")
+        for command in recorder.commands:
+            self.assertEqual(command[1:3], ["-C", repo], "the project is named first")
+            self.assertEqual(command[3:7], HARDENING, "both options come right after the project")
+            if "status" in command:
+                self.assertLess(command.index("--no-optional-locks"), command.index("status"), "lock option first")
+        self.assertEqual(sum(1 for command in recorder.commands if "status" in command), 2, "with and without -z")
+        for verb in ("rev-parse", "symbolic-ref", "for-each-ref"):
+            self.assertEqual(sum(1 for command in recorder.commands if verb in command), 1, "one read: " + verb)
+
+    def test_a_planted_fsmonitor_command_runs_only_for_a_plain_status(self) -> None:
+        control, status_repo, state_repo = make_repo(), make_repo(), make_repo()
+        markers = [os.path.join(marker_folder(), "marker") for _ in range(3)]
+        for repo, marker in zip((control, status_repo, state_repo), markers):
+            plant_fsmonitor(repo, marker)
+        plain_status(control)
+        self.assertTrue(os.path.exists(markers[0]), "the control proves the plant works on this git")
+        manifest().capture_git_status(status_repo, real_git())
+        self.assertFalse(os.path.exists(markers[1]), "capture_git_status never ran the command")
+        checks().git_state(state_repo, real_git())
+        self.assertFalse(os.path.exists(markers[2]), "git_state never ran the command")
+
+    def test_the_digest_function_agrees_with_the_state_and_the_pin_stops_the_status(self) -> None:
+        repo = make_repo()
+        pin = manifest().gitdir_digest(repo)
+        self.assertEqual(pin, checks().git_state(repo, real_git())["gitdir_digest"], "one digest, two callers")
+        raw, text = manifest().capture_git_status(repo, real_git(), pin)
+        self.assertEqual((raw, text), (b"", b""), "a clean repository with the matching pin runs")
+        with open(os.path.join(repo, ".git", "config"), "a", encoding="utf-8") as handle:
+            handle.write("[alias]\n\tx = status\n")
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(manifest().GitDirChanged, msg="a changed git folder stops the capture"):
+                manifest().capture_git_status(repo, real_git(), pin)
+        self.assertTrue(issubclass(manifest().GitDirChanged, manifest().ManifestError), "a manifest refusal")
+
+    def test_a_change_confined_to_the_index_does_not_trip_the_pin(self) -> None:
+        repo = make_repo()
+        pin = manifest().gitdir_digest(repo)
+        os.utime(os.path.join(repo, "a.txt"), (1, 1))
+        git_in(repo, "update-index", "--refresh")
+        with open(os.path.join(repo, ".git", "index.lock"), "wb") as handle:
+            handle.write(b"")
+        self.assertEqual(manifest().gitdir_digest(repo), pin, "index and index.lock are left out")
+        manifest().capture_git_status(repo, real_git(), pin)
+
+    def test_git_state_starts_no_git_command_once_the_folder_differs_from_the_pin(self) -> None:
+        repo = make_repo()
+        pin = manifest().gitdir_digest(repo)
+        normal = checks().git_state(repo, real_git(), pin)
+        self.assertEqual(normal["gitdir_digest"], pin, "the matching pin reads normally")
+        self.assertRegex(normal["head"], r"^[0-9a-f]{40,64}$", "a real head")
+        with open(os.path.join(repo, ".git", "config"), "a", encoding="utf-8") as handle:
+            handle.write("[alias]\n\tx = status\n")
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            state = checks().git_state(repo, real_git(), pin)
+        self.assertEqual(sorted(state), GIT_KEYS, "the same five keys")
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], checks().GIT_NOT_READ, key + " is the fixed text")
+        self.assertEqual(checks().GIT_NOT_READ, "not-read", "the documented text")
+        self.assertEqual(state["staged"], 0, "nothing staged is claimed")
+        self.assertEqual(state["gitdir_digest"], manifest().gitdir_digest(repo), "the current digest is reported")
+        self.assertNotEqual(state["gitdir_digest"], pin, "and it differs from the pin")
+
+    def test_pinned_gitdir_reads_the_setup_state_file(self) -> None:
+        c = checks()
+        raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
+        os.makedirs(raw)
+        self.assertIsNone(c.pinned_gitdir(raw), "no setup state file, no pin")
+        state = {"head": "h", "branch": "b", "refs_digest": digest("1"), "gitdir_digest": digest("2"), "staged": 0}
+        with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        self.assertEqual(c.pinned_gitdir(raw), digest("2"), "the stored digest")
+        with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
+            handle.write("not json")
+        with self.assertRaises(c.CheckError, msg="a malformed file is refused"):
+            c.pinned_gitdir(raw)
+
+    def test_a_planted_clean_filter_driver_never_runs_once_the_pin_is_taken(self) -> None:
+        control, guarded = make_repo(), make_repo()
+        markers = [os.path.join(marker_folder(), "marker") for _ in range(2)]
+        pin = manifest().gitdir_digest(guarded)
+        for repo, marker in zip((control, guarded), markers):
+            plant_filter(repo, marker)
+            os.utime(os.path.join(repo, "a.txt"), None)
+        plain_status(control)
+        self.assertTrue(os.path.exists(markers[0]), "the control proves the filter plant works on this git")
+        self.assertNotEqual(manifest().gitdir_digest(guarded), pin, "the plant changed the git folder")
+        with self.assertRaises(manifest().GitDirChanged, msg="the pinned capture refuses"):
+            manifest().capture_git_status(guarded, real_git(), pin)
+        self.assertFalse(os.path.exists(markers[1]), "the driver never ran")
+
+    def test_a_pinned_snapshot_of_an_untouched_repository_runs_normally(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        paths = pc_row1.paths_for(run.run_root)
+        pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+        with open(os.path.join(run.run_root, "snaps", "snap-9-extra", "status.txt"), "rb") as handle:
+            text = handle.read()
+        self.assertNotIn(pc_row1.STATUS_NOT_RUN.encode("utf-8"), text, "real status output, not the fixed line")
+
+
+class PlantedConfigTracerTests(unittest.TestCase):
+    def check_plant(self, kind: str) -> None:
+        stages = pc_testutil.seed_git_config_plant(pc_testutil.default_row1_stages(), 0, kind)
+        run = Run(stages)
+        marker = os.path.join(run.rig.outside, "planted-" + kind)
+        self.assertFalse(os.path.exists(marker), "the planted command never ran")
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        text = "\n".join(run.outcome.lines)
+        self.assertRegex(text, r"isolation or git breach: git mutations: [1-9][0-9]*", "fixed text with the count")
+        self.assertNotIn(run.rig.base, text, "no path in the text")
+        raw = os.path.join(run.run_root, "raw")
+        for name in ("s1.record.json", "s1.git.json", "s1.stdout"):
+            self.assertTrue(os.path.isfile(os.path.join(raw, name)), "kept: " + name)
+        snap = os.path.join(run.run_root, "snaps", SNAP_ONE)
+        self.assertTrue(os.path.isdir(snap), "the snapshot is kept")
+        with open(os.path.join(snap, "status.txt"), "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), pc_row1.STATUS_NOT_RUN, "the fixed not-run line")
+        self.assertEqual(len(run.rig.calls()), 1, "the second stage was never launched")
+
+    def test_a_planted_fsmonitor_command_never_runs_and_the_row_ends_with_11(self) -> None:
+        self.check_plant("fsmonitor")
+
+    def test_a_planted_clean_filter_never_runs_and_the_row_ends_with_11(self) -> None:
+        self.check_plant("filter")
+
+    def test_the_clean_run_keeps_real_status_text_and_the_state_keys(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        for name in (SNAP_SETUP, SNAP_ONE, SNAP_TWO, SNAP_THREE):
+            with open(os.path.join(run.run_root, "snaps", name, "status.txt"), "r", encoding="utf-8") as handle:
+                self.assertNotEqual(handle.read().strip(), pc_row1.STATUS_NOT_RUN, "real status in " + name)
+        for name in ("setup", "s1", "s2", "s3"):
+            state = read_json(os.path.join(run.run_root, "raw", name + ".git.json"))
+            self.assertEqual(sorted(state), GIT_KEYS, "state file " + name)
+
+    def test_the_seed_refuses_an_unknown_kind(self) -> None:
+        with self.assertRaises(ValueError):
+            pc_testutil.seed_git_config_plant(pc_testutil.default_row1_stages(), 0, "other")
+
+
 if __name__ == "__main__":
     unittest.main()

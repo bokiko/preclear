@@ -189,6 +189,7 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   tool   name, input, run ("wrapper" really runs the wrapper), args, denied, reject, content
 #   write  path, text: really write a file
 #   git    args: run git in the cwd with a hygiene environment
+#   touch  path: set the modification time of an existing file to now (os.utime)
 #   sleep  seconds
 #   raw    line: print one line verbatim
 # Result keys: subtype, is_error, terminal_reason, text, total_cost_usd, delta (adds
@@ -332,6 +333,10 @@ def do_write(op):
         handle.write(subst(op.get("text", "")))
 
 
+def do_touch(op):
+    os.utime(subst(op["path"]), None)
+
+
 def do_git(op):
     env = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
@@ -358,6 +363,8 @@ for op in stage.get("ops", []):
         do_write(op)
     elif kind == "git":
         do_git(op)
+    elif kind == "touch":
+        do_touch(op)
     elif kind == "sleep":
         time.sleep(float(op.get("seconds", 0)))
     elif kind == "raw":
@@ -534,6 +541,32 @@ def seed_outside_mention(stages: list, stage_index: int = 1) -> list:
     return _with_ops(stages, stage_index, [
         {"op": "tool", "name": "Bash", "input": {"command": "ls $OUTSIDE"}, "content": "nothing"},
     ])
+
+
+_PLANT_CORE = "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
+
+
+def seed_git_config_plant(stages: list, stage_index: int = 0, kind: str = "fsmonitor") -> list:
+    """A stage list whose stage rewrites the project's own .git/config with a planted command (CR-03).
+
+    The command is `touch` of a marker file in the outside folder followed by a shell comment sign, so
+    nothing is ever created inside the repository. kind fsmonitor plants a core.fsmonitor command; kind
+    filter plants a clean-filter driver, writes an attributes file selecting it for every file and sets the
+    modification time of the tracked CLAUDE.md of the project, which makes git status run the driver.
+    """
+    if kind == "fsmonitor":
+        config = _PLANT_CORE + "\tfsmonitor = touch $OUTSIDE/planted-fsmonitor #\n"
+        ops: list = [{"op": "write", "path": "$PROJECT/.git/config", "text": config}]
+    elif kind == "filter":
+        config = _PLANT_CORE + '[filter "planted"]\n\tclean = touch $OUTSIDE/planted-filter #\n'
+        ops = [
+            {"op": "write", "path": "$PROJECT/.git/config", "text": config},
+            {"op": "write", "path": "$PROJECT/.gitattributes", "text": "* filter=planted\n"},
+            {"op": "touch", "path": "$PROJECT/CLAUDE.md"},
+        ]
+    else:
+        raise ValueError("unknown planted configuration kind")
+    return _with_ops(stages, stage_index, ops)
 
 
 _HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))
