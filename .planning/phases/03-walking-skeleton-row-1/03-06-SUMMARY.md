@@ -9,7 +9,7 @@ requires:
     provides: "pc_matrix driver, preflight, row 1 pipeline, checks, evidence filing, comparer, frozen-tree pins"
 provides:
   - "tests/evidence/rerun-2026-10-29-claude-sonnet-5-5: the first real row 1 baseline, sanitized and leak-gated, verdict PENDING"
-  - "The measured cost of one row: 0.2723 USD by the harness row total (see the cumulative question below for a possible 0.3210)"
+  - "The measured cost of one row: 0.2723 USD by the harness row total (the cumulative question was settled by the code review: the figure stands)"
 affects: [phase-04]
 
 status: complete
@@ -59,7 +59,7 @@ metrics:
 | s3 fresh resume | b7eb866d | 6 | 6 | 2222 | 9394 | 53607 | 0.0651687 | 0.0651687 | 19.5 |
 
 - **Row total (usage.txt): 0.27231170000000002 USD, the measured cost of one row by the harness's own accounting (the s2 reported total plus the s3 total). Phase 4's spend is confirmed from this figure, with the caveat below.** Run total is the same number. The caps (0.30, 1.30, 0.40) were far from reached; the 2.00 worst case is about 7 times the measurement.
-- **Open question on the number, recorded as measured and not judged.** The harness treats the stream's `total_cost_usd` on the resumed s2 call as cumulative (it subtracts s1's 0.0487 to get a call cost of 0.1584 and counts s1 inside the s2 chain). The filed token counts point the other way: priced at one fixed rate card, s1 and s3 (both fresh sessions, so the reported total is their own cost) come out at 0.79 and 0.77 of that card, while s2 comes out at 0.82 if its reported 0.2071 is its own cost and 0.63 if only 0.1584 is. If the reported total on a resumed call is that call's own cost, the real row cost is 0.0487 + 0.2071 + 0.0652 = 0.3210 USD, not 0.2723. This is an inference from token counts; the filed data cannot settle it, and it should be decided before Phase 4's matrix spend is projected from this row (it moves the figure by about 18 percent, which the 2.00 row cap and the 7-times headroom absorb either way).
+- **The cumulative question, resolved by the Phase 3 code review (IN-01).** The harness treats the stream's `total_cost_usd` on the resumed s2 call as cumulative and subtracts s1's 0.0487 to get a call cost of 0.1584. The executor's token-ratio inference suggested the reported total might be per call (which would make the row 0.3210 USD); the review showed that inference fails because the result's `usage` field is per call while `total_cost_usd` and the per-model token counts are cumulative: the committed 2.1.310 fixtures give 0.0577 plus the resumed call's own 0.0026 equal to the resumed total 0.0603 exactly, and the real s2 result carries s1-plus-s2 per-model token counts (28 input, 6486 output). The harness's own `cumulative_consistent` flag was yes for all three stages. The row cost of 0.2723 USD stands, and Phase 4's spend is projected from it. The flag is recorded only in raw records today; surfacing it in usage.txt is a gap-closure item.
 
 ## What the real run recorded (counts and ids)
 
