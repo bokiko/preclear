@@ -378,6 +378,20 @@ run root gives the same facts.
   escape unless it names a template, a directory option or a tmpdir option inside the roots and has no
   temporary-folder flag. Every write-capable part is listed by label in the mechanical checks, whether or not
   it escaped; a label is a short plain program name or other.
+  The shell grammar is read before the parts are judged. A comment (an unquoted hash that starts a word, to the
+  end of the line) is dropped and never opens a quote. The reserved words if, then, elif, else, while, until,
+  do, the bang, the double brackets and the braces are transparent: the next word is the program. A for,
+  select or case header is data, and fi, done, esac and in decide nothing. The body of a quoted heredoc is data
+  (any quoting of the delimiter counts: single quotes, double quotes or a backslash). The
+  body of an unquoted heredoc is scanned for command substitutions and backquote pairs, because the shell
+  expands them.
+  A command substitution, a backquote pair and a process substitution are parsed as commands of their own,
+  outside single quotes and inside double quotes, and a nesting deeper than four levels makes the command
+  unparsed, as does an unbalanced substitution or a heredoc with no closing line. Redirections are read from
+  the raw text of each part before it is split into words, so a quoted greater-than sign is an ordinary word
+  and a descriptor duplication or the null device is no target. The heredoc, comment, reserved-word and
+  substitution handling belongs to this rule only; the checks for git mutations and helper calls read a command
+  as they always did.
   Known limits, each stated and none hidden. Interpreters are never provably read-only, so an interpreter
   command that only reads an outside path, and interpreter code holding a regular expression that looks like
   an absolute path, are counted. The rule does not decide code that builds its path at run time, variable
@@ -385,9 +399,10 @@ run root gives the same facts.
   file operand read from standard input (xargs), GNU sed's e command and the e flag of its s command, or a
   working folder kept between separate Bash calls. A script file or program file the model wrote earlier (with
   the Write tool, or a heredoc redirected into a file) and runs later through sh on a file, an interpreter on
-  a file or env followed by either is judged by its command line only, and its content is not read. The
-  pinned allowlist and the binary's own permission layer are the first net, and the snapshot diff and the
-  Write and Edit trace are the others.
+  a file or env followed by either is judged by its command line only, and its content is not read; a heredoc
+  body used to be judged line by line as if its lines were commands, which caught such a script by accident, and
+  cutting the body removes that accident. The pinned allowlist and the binary's own permission layer are the
+  first net, and the snapshot diff and the Write and Edit trace are the others.
 - The run record guard. A guard file is written into the raw folder at setup and after every stage, holding
   the digest of every raw file except the append-only hook log, the tree digest of every snapshot folder, and
   the hook log's size and digest with a flag saying whether the bytes recorded at the previous boundary are

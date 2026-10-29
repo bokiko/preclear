@@ -269,10 +269,6 @@ _AWK_PRINT_REDIRECT = re.compile(r"\bprintf?\b[^;}\n]*[>|]")
 _SED_FILE_FLAG = re.compile(r"-[nEerzsu]*f")
 _LETTERS = re.compile(r"-[A-Za-z]+\Z")
 _PLAIN_LABEL = re.compile(r"[A-Za-z0-9._+-]{1,24}\Z")
-_REDIRECT_BARE = re.compile(r"(?:[0-9]*|&)>{1,2}\|?\Z")
-_REDIRECT_ATTACHED = re.compile(r"(?:[0-9]*|&)>{1,2}\|?(.+)\Z")
-_REDIRECT_INPUT = re.compile(r"[0-9]*<{1,3}\Z")
-_REDIRECT_INPUT_ATTACHED = re.compile(r"[0-9]*<{1,3}.+\Z")
 _FD_TARGET = re.compile(r"(?:[0-9]+|-)\Z")
 
 # The programs an executed Bash part may run and still be read-only (the open-world rule, plan 03-10): the
@@ -748,46 +744,364 @@ class _Tally(object):
         return any(_path_like(piece) and self.escapes(piece) for piece in text.split() + _cut(text))
 
 
-def _redirections(rest: Sequence[str]) -> Tuple[List[str], set]:
-    """The output redirection targets in these words, and the positions of every redirection operator and target.
+# ---------------------------------------------------------------------------------------------
+# Shell grammar: comments, heredocs, substitutions, raw-level redirections, reserved words
+# ---------------------------------------------------------------------------------------------
 
-    A target starting with an ampersand and a descriptor number (2>&1, >&2) is a duplication and is no target.
-    Input redirections and here-documents only contribute their positions.
-    """
-    targets: List[str] = []
-    used: set = set()
-    index = 0
-    while index < len(rest):
-        word = rest[index]
-        if _REDIRECT_BARE.match(word) and index + 1 < len(rest):
-            targets.append(rest[index + 1])
-            used.update((index, index + 1))
+_MAX_DEPTH = 4
+_NEUTRAL = "subst"
+_WORD_START = " \t\n;|&("
+_HEREDOC_END = " \t\n;|&()<>"
+_RESERVED_LEAD = re.compile(r"(?:if|then|elif|else|while|until|do|!|\{)(?=\s|\Z)\s*")
+_RESERVED_STANDALONE = ("fi", "done", "esac", "in", "}", "]]")
+_RESERVED_HEADERS = ("for", "select", "case")
+
+
+class _Unparsed(Exception):
+    """A command the pre-pass cannot read: an unbalanced substitution, an unterminated heredoc, a nesting too deep."""
+
+
+def _read_backquote(text: str, start: int) -> Tuple[str, int]:
+    """The body of a backquote pair that starts at start (after the opening mark) and the index after the closing mark."""
+    buf: List[str] = []
+    index = start
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\" and index + 1 < len(text) and text[index + 1] in "`\\$":
+            buf.append(text[index + 1])
             index += 2
             continue
-        if _REDIRECT_INPUT.match(word):
-            used.update((index, index + 1))
-            index += 2
-            continue
-        attached = _REDIRECT_ATTACHED.match(word)
-        if attached is not None:
-            targets.append(attached.group(1))
-            used.add(index)
-        elif _REDIRECT_INPUT_ATTACHED.match(word):
-            used.add(index)
+        if ch == "`":
+            return "".join(buf), index + 1
+        buf.append(ch)
         index += 1
-    kept: List[str] = []
-    for target in targets:
-        if target.startswith("&"):
-            if _FD_TARGET.match(target[1:]) or target[1:] == "":
-                continue
-            target = target[1:]
-        kept.append(target)
-    return kept, used
+    raise _Unparsed()
+
+
+def _skip_double(text: str, start: int) -> int:
+    """The index after the double quote that closes the string starting at start (after the opening quote)."""
+    index = start
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\":
+            index += 2
+        elif ch == '"':
+            return index + 1
+        elif text.startswith("$(", index):
+            _body, index = _read_paren(text, index + 2)
+        elif ch == "`":
+            _body, index = _read_backquote(text, index + 1)
+        else:
+            index += 1
+    raise _Unparsed()
+
+
+def _read_paren(text: str, start: int) -> Tuple[str, int]:
+    """The body of a parenthesis group that starts at start (after the opening mark) and the index after the closing one."""
+    depth = 1
+    index = start
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\":
+            index += 2
+            continue
+        if ch == "'":
+            end = text.find("'", index + 1)
+            if end < 0:
+                raise _Unparsed()
+            index = end + 1
+            continue
+        if ch == '"':
+            index = _skip_double(text, index + 1)
+            continue
+        if ch == "`":
+            _body, index = _read_backquote(text, index + 1)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start:index], index + 1
+        index += 1
+    raise _Unparsed()
+
+
+def _queue_body(body: str, queue: List[str]) -> None:
+    """Queue the body of a substitution as a command of its own; an arithmetic expansion only offers what it holds."""
+    if body.startswith("(") and body.endswith(")"):
+        _scan_expansions(body, queue)
+    else:
+        queue.append(body)
+
+
+def _scan_expansions(text: str, queue: List[str]) -> None:
+    """Queue the command substitutions and backquote pairs of a text the shell expands (an unquoted heredoc body)."""
+    index = 0
+    while index < len(text):
+        ch = text[index]
+        if ch == "\\":
+            index += 2
+        elif text.startswith("$(", index):
+            body, index = _read_paren(text, index + 2)
+            _queue_body(body, queue)
+        elif ch == "`":
+            body, index = _read_backquote(text, index + 1)
+            queue.append(body)
+        else:
+            index += 1
+
+
+def _heredoc_header(command: str, start: int) -> Tuple[str, bool, bool, int]:
+    """Read the operator at start (the two less-than marks): (delimiter, quoted, tab-stripping, index after it)."""
+    index = start + 2
+    dash = command.startswith("-", index)
+    if dash:
+        index += 1
+    while index < len(command) and command[index] in " \t":
+        index += 1
+    delimiter: List[str] = []
+    quoted = False
+    while index < len(command) and command[index] not in _HEREDOC_END:
+        ch = command[index]
+        if ch in "'\"":
+            end = command.find(ch, index + 1)
+            if end < 0:
+                raise _Unparsed()
+            delimiter.append(command[index + 1:end])
+            quoted = True
+            index = end + 1
+        elif ch == "\\":
+            if index + 1 < len(command):
+                delimiter.append(command[index + 1])
+            quoted = True
+            index += 2
+        else:
+            delimiter.append(ch)
+            index += 1
+    if not delimiter:
+        raise _Unparsed()
+    return "".join(delimiter), quoted, dash, index
+
+
+def _heredoc_bodies(command: str, start: int, pending: Sequence[Tuple[str, bool, bool]], queue: List[str]) -> int:
+    """Cut the bodies of the pending heredocs that begin at start; return the index after the last closing line."""
+    index = start
+    for delimiter, quoted, dash in pending:
+        body: List[str] = []
+        found = False
+        while index < len(command):
+            end = command.find("\n", index)
+            line = command[index:] if end < 0 else command[index:end]
+            index = len(command) if end < 0 else end + 1
+            if (line.lstrip("\t") if dash else line) == delimiter:
+                found = True
+                break
+            body.append(line)
+        if not found:
+            raise _Unparsed()
+        if not quoted:
+            _scan_expansions("\n".join(body), queue)
+    return index
+
+
+def _prepass(command: str) -> Tuple[str, List[str]]:
+    """Scan one command once with quote state: the text to split, and the bodies to analyse as commands of their own.
+
+    Comments are dropped (an unquoted hash that starts a word, to the end of the line, the newline kept). The
+    bodies of heredocs are cut out: a body whose delimiter has any quoting is data, a bare delimiter's body is
+    scanned for command substitutions and backquote pairs. Each command substitution, backquote pair and
+    process substitution outside single quotes (inside double quotes too) becomes a neutral word and its body is
+    queued. An unquoted parenthesis becomes a separator, and the force form of a redirection loses its bar.
+    Raises _Unparsed for an unbalanced group or an unterminated heredoc.
+    """
+    out: List[str] = []
+    queue: List[str] = []
+    pending: List[Tuple[str, bool, bool]] = []
+    quote = ""
+    index = 0
+    size = len(command)
+    while index < size:
+        ch = command[index]
+        if quote == "'":
+            out.append(ch)
+            if ch == "'":
+                quote = ""
+            index += 1
+        elif quote == '"':
+            if ch == "\\" and index + 1 < size:
+                out.append(command[index:index + 2])
+                index += 2
+            elif command.startswith("$(", index):
+                body, index = _read_paren(command, index + 2)
+                _queue_body(body, queue)
+                out.append(_NEUTRAL)
+            elif ch == "`":
+                body, index = _read_backquote(command, index + 1)
+                queue.append(body)
+                out.append(_NEUTRAL)
+            else:
+                out.append(ch)
+                if ch == '"':
+                    quote = ""
+                index += 1
+        elif ch == "\\" and index + 1 < size:
+            out.append(command[index:index + 2])
+            index += 2
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+            index += 1
+        elif ch == "#" and (not out or out[-1][-1] in _WORD_START):
+            while index < size and command[index] != "\n":
+                index += 1
+        elif command.startswith("$(", index):
+            body, index = _read_paren(command, index + 2)
+            _queue_body(body, queue)
+            out.append(_NEUTRAL)
+        elif ch == "`":
+            body, index = _read_backquote(command, index + 1)
+            queue.append(body)
+            out.append(_NEUTRAL)
+        elif ch in "<>" and command.startswith("(", index + 1):
+            body, index = _read_paren(command, index + 2)
+            queue.append(body)
+            out.append(_NEUTRAL)
+        elif command.startswith("<<", index) and not command.startswith("<<<", index):
+            delimiter, quoted, dash, index = _heredoc_header(command, index)
+            pending.append((delimiter, quoted, dash))
+            out.append(" ")
+        elif command.startswith(">|", index):
+            out.append(">")
+            index += 2
+        elif ch in "()":
+            out.append(";")
+            index += 1
+        elif ch == "\n":
+            out.append(ch)
+            index += 1
+            if pending:
+                index = _heredoc_bodies(command, index, pending, queue)
+                pending = []
+        else:
+            out.append(ch)
+            index += 1
+    if pending:
+        raise _Unparsed()
+    return "".join(out), queue
+
+
+def _units(command: str, depth: int = 0) -> List[str]:
+    """The texts to judge for one command: the command itself, then every substitution body, each its own command."""
+    if depth > _MAX_DEPTH:
+        raise _Unparsed()
+    text, queue = _prepass(command)
+    found = [text]
+    for body in queue:
+        found.extend(_units(body, depth + 1))
+    return found
+
+
+def _read_redirections(part: str) -> Optional[Tuple[List[str], str]]:
+    """Read the output redirections of one part from its raw text: (targets, the text with every redirection blanked).
+
+    An operator is the greater-than family with an optional leading descriptor number or an ampersand (the
+    append, force and ampersand forms), read only outside quotes, so a quoted greater-than is an ordinary word. The
+    target may be attached or follow whitespace. A duplication (2>&1, >&2) and an input redirection or
+    here-string have no output target. Returns None when a target does not split.
+    """
+    out: List[str] = []
+    targets: List[str] = []
+    quote = ""
+    index = 0
+    size = len(part)
+    while index < size:
+        ch = part[index]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and quote == '"' and index + 1 < size:
+                out.append(part[index + 1])
+                index += 1
+            elif ch == quote:
+                quote = ""
+            index += 1
+            continue
+        if ch == "\\" and index + 1 < size:
+            out.append(part[index:index + 2])
+            index += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            index += 1
+            continue
+        operator = index
+        if ch.isdigit() and (index == 0 or part[index - 1].isspace()):
+            while operator < size and part[operator].isdigit():
+                operator += 1
+        elif ch == "&" and part.startswith("&>", index):
+            operator = index + 1
+        if operator >= size or part[operator] not in "<>":
+            out.append(ch)
+            index += 1
+            continue
+        kind = part[operator]
+        cursor = operator + 1
+        duplication = False
+        if kind == ">" and part.startswith(">", cursor):
+            cursor += 1
+        elif kind == "<" and part.startswith("<<", cursor):
+            cursor += 2
+        elif kind == "<" and part.startswith(">", cursor):
+            kind = ">"
+            cursor += 1
+        elif part.startswith("&", cursor):
+            duplication = True
+            cursor += 1
+        while cursor < size and part[cursor] in " \t":
+            cursor += 1
+        end = cursor
+        word_quote = ""
+        while end < size:
+            cur = part[end]
+            if word_quote:
+                if cur == "\\" and word_quote == '"' and end + 1 < size:
+                    end += 1
+                elif cur == word_quote:
+                    word_quote = ""
+            elif cur == "\\" and end + 1 < size:
+                end += 1
+            elif cur in "'\"":
+                word_quote = cur
+            elif cur.isspace() or cur in "<>":
+                break
+            end += 1
+        try:
+            pieces = shlex.split(part[cursor:end])
+        except ValueError:
+            return None
+        if not pieces:
+            return None
+        target = pieces[0]
+        if kind == ">" and not (duplication and _FD_TARGET.match(target)):
+            targets.append(target)
+        out.append(" ")
+        index = end
+    return targets, "".join(out)
+
+
+def _lead_words(text: str) -> str:
+    """The text without the reserved words that only introduce a command (if, then, while, do, the bang, the brace)."""
+    text = text.lstrip()
+    while True:
+        match = _RESERVED_LEAD.match(text)
+        if match is None:
+            return text
+        text = text[match.end():]
 
 
 def _judge(
-    words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str], skipped: set, cwd_escaped: bool,
-    tally: _Tally,
+    words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str], cwd_escaped: bool, tally: _Tally,
 ) -> bool:
     """Classify one parsed part, list it when it is write-capable, count it when it escapes; return the cd flag."""
     program = os.path.basename(words[0])
@@ -817,7 +1131,7 @@ def _judge(
     for number, word in enumerate(rest):
         if escaping:
             break
-        if number in skipped or number in separators:
+        if number in separators:
             continue
         if number in scripts:
             candidates = _literal_candidates(word)
@@ -832,6 +1146,36 @@ def _judge(
     if escaping:
         tally.escaped(label)
     return cwd_escaped
+
+
+def _read_unit(text: str, tally: _Tally) -> None:
+    """Judge the parts of one command text (the command itself or one substitution body) with its own cd flag."""
+    cwd_escaped = False
+    for part in pc_allowlist.split_compound(text):
+        read = _read_redirections(part)
+        blanked = None if read is None else _lead_words(read[1])
+        head = blanked.split(None, 1)[0] if blanked is not None and blanked.split() else ""
+        if head in _RESERVED_STANDALONE or head in _RESERVED_HEADERS:
+            continue
+        split = None if blanked is None else _split_part(blanked)
+        if read is None or split is None:
+            tally.unparsed += 1
+            if tally.raw_escapes(part):
+                tally.escaped(_UNPARSED)
+            continue
+        redirects = read[0]
+        words, chdirs = split
+        for word in list(words) + redirects:
+            if word.startswith("/") and word not in tally.ignore and not any(
+                _inside(os.path.normpath(word), root) for root in tally.roots
+            ):
+                tally.outside += 1
+        if not words:
+            if any(tally.escapes(target) for target in redirects if target not in _DEV_PATHS):
+                tally.listed("redirect")
+                tally.escaped("redirect")
+            continue
+        cwd_escaped = _judge(words, chdirs, redirects, cwd_escaped, tally)
 
 
 def bash_mentions(
@@ -858,30 +1202,32 @@ def bash_mentions(
     command, or for a script file the model wrote earlier and runs later: the pinned allowlist and the snapshot
     diff are the other nets.
 
+    The shell grammar is read first (plan 03-10, WR-02), by a pre-pass over each command: comments are dropped
+    without disturbing the quote state; the body of a quoted-delimiter heredoc is data and the body of a bare
+    delimiter's heredoc is scanned for command substitutions and backquote pairs; each command substitution,
+    backquote pair and process substitution is parsed as a command of its own (to a depth of four, deeper or
+    unbalanced makes the command unparsed); redirections are read from the raw text of each part before it is
+    split into words, so a quoted greater-than is a word; the reserved words if, then, elif, else, while, until,
+    do, the bang and the opening brace are transparent, and a for, select or case header is data. The heredoc,
+    comment, reserved-word and substitution handling sits only here: git_mutations, helper_calls and
+    first_status_text read the command as before. A script a heredoc wrote to a file and a later part runs is
+    judged by its command line only.
+
     The paths in ignore (the helper itself) are not counted as mentions or as escapes. Counts and labels only,
     never a path; a label that is not a short plain word is other.
     """
     tally = _Tally(approved_abs, ignore)
     commands = executed_bash_commands(events)
     for command in commands:
-        cwd_escaped = False
-        for part in pc_allowlist.split_compound(command):
-            split = _split_part(part)
-            if split is None:
-                tally.unparsed += 1
-                if tally.raw_escapes(part):
-                    tally.escaped(_UNPARSED)
-                continue
-            words, chdirs = split
-            for word in words:
-                if word.startswith("/") and word not in tally.ignore and not any(
-                    _inside(os.path.normpath(word), root) for root in tally.roots
-                ):
-                    tally.outside += 1
-            if not words:
-                continue
-            redirects, positions = _redirections(words[1:])
-            cwd_escaped = _judge(words, chdirs, redirects, positions, cwd_escaped, tally)
+        try:
+            units = _units(command)
+        except _Unparsed:
+            tally.unparsed += 1
+            if tally.raw_escapes(command):
+                tally.escaped(_UNPARSED)
+            continue
+        for unit in units:
+            _read_unit(unit, tally)
     return {
         "commands": len(commands),
         "outside_path_tokens": tally.outside,
