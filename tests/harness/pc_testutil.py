@@ -543,7 +543,22 @@ def seed_outside_mention(stages: list, stage_index: int = 1) -> list:
     ])
 
 
-_PLANT_CORE = "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
+def seed_bash_outside_write(
+    stages: list, stage_index: int = 1, command: str = "mkdir $OUTSIDE/made", write_file: bool = True
+) -> list:
+    """A stage list whose stage runs an executed Bash command naming a place outside the approved roots (CR-02).
+
+    The Bash op returns an empty result; nothing is run for it. When write_file is true the stage also really
+    creates $OUTSIDE/made/escaped.txt, which neither the snapshot diff nor the Write and Edit trace can see.
+    The command may use the substitution tokens the scripted claude knows.
+    """
+    ops: list = [{"op": "tool", "name": "Bash", "input": {"command": command}, "content": ""}]
+    if write_file:
+        ops.append({"op": "write", "path": "$OUTSIDE/made/escaped.txt", "text": "written outside the run root\n"})
+    return _with_ops(stages, stage_index, ops)
+
+
+_PLANT_CORE ="[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
 
 
 def seed_git_config_plant(stages: list, stage_index: int = 0, kind: str = "fsmonitor") -> list:

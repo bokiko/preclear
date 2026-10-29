@@ -380,7 +380,8 @@ class MemoryProbeTests(unittest.TestCase):
         os.makedirs(c.default_memory_path(self.config, self.project))
         self.assertEqual(c.memory_probe(self.config, self.project), "present", "the folder is there")
         with unittest.mock.patch("pc_checks.os.lstat", side_effect=PermissionError("planted")):
-            self.assertEqual(c.memory_probe(self.config, self.project), "unknown", "any other error is unknown")
+            with self.assertRaises(c.CheckError, msg="any other error is a failure to read"):
+                c.memory_probe(self.config, self.project)
 
     def test_one_lstat_and_the_config_folder_is_never_opened_listed_or_walked(self) -> None:
         import builtins
@@ -963,6 +964,229 @@ class PlantedConfigTracerTests(unittest.TestCase):
     def test_the_seed_refuses_an_unknown_kind(self) -> None:
         with self.assertRaises(ValueError):
             pc_testutil.seed_git_config_plant(pc_testutil.default_row1_stages(), 0, "other")
+
+
+class WriteEscapeTests(unittest.TestCase):
+    """The write-escape rule of bash_mentions (CR-02, D-03). OUT and PRJ stand for real folders of the test."""
+
+    ESCAPING = [
+        ("mkdir OUT/x", "mkdir"),
+        ("mkdir -p OUT/x/y", "mkdir"),
+        ("touch ~/x", "touch"),
+        ("mkdir $HOME/x", "mkdir"),
+        ("mkdir ${HOME}/x", "mkdir"),
+        ("cp a ../b", "cp"),
+        ("mv a ../../b", "mv"),
+        ("cp -t OUT a", "cp"),
+        ("tee OUT/f", "tee"),
+        ("dd if=a of=OUT/f", "dd"),
+        ("install -D a OUT/f", "install"),
+        ("find . -fprint OUT/f", "find-output"),
+        ("find . -exec cp {} OUT/ \\;", "find-output"),
+        ("git diff --output=OUT/f", "git-diff-output"),
+        ("python3 -c \"open('OUT/f','w').write('x')\"", "python3-c"),
+        ("awk 'BEGIN{print \"x\" > \"OUT/f\"}'", "awk"),
+        ("sed -n 'w OUT/f' g", "sed-write"),
+        ("sed -i s/a/b/ OUT/f", "sed-write"),
+        ("cat a > OUT/f", "redirect"),
+        ("printf x >> ~/f", "redirect"),
+        ("cd OUT && mkdir x", "mkdir"),
+        ("cd && touch x", "touch"),
+        ("cd .. && touch x", "touch"),
+        ("env FOO=1 mkdir OUT/x", "mkdir"),
+        ("LC_ALL=C mkdir OUT/x", "mkdir"),
+        ("LC_ALL=C env FOO=1 mkdir OUT/x", "mkdir"),
+        ("FOO=1 BAR=2 touch ~/x", "touch"),
+        ("env -C OUT mkdir x", "mkdir"),
+        ("awk -v f=OUT/x 'BEGIN{print 1 > f}'", "awk"),
+        ("timeout 5 mkdir OUT/x", "mkdir"),
+        ("ls && mkdir OUT/x", "mkdir"),
+    ]
+    HARMLESS = [
+        "ls", "cat a", "head f", "wc -l f", "shasum f", "git status", "pwd", "date", "find . -name x",
+        "sed -n '1,3p' f", "sed -n '/^## /p' f", "awk '{print $1}' f", "python3 -c 'print(1)'",
+        "ls OUT", "cat OUT/f", "ls ~", "ls ..", "cd OUT", "cd OUT && ls",
+        "mkdir -p PRJ/sub", "cp PRJ/a PRJ/b", "touch t", "tee PRJ/f", "mkdir CKPT/d", "install a MEM/f",
+        "sed -i s/a/b/ PRJ/f", "git diff --output=out.txt", "python3 -c \"open('PRJ/f').read()\"",
+        "find . -exec grep -l x {} \\;", "env -C PRJ mkdir sub", "LC_ALL=C awk '{print}' f",
+        "cat a > PRJ/f", "cat a > /dev/null", "ls 2>&1", "ls >&2", "ls &>/dev/null",
+    ]
+
+    def setUp(self) -> None:
+        self.run, self.project, self.ckpt, self.memory, self.outside = real_dirs()
+        self.approved = [self.project, self.ckpt, self.memory]
+
+    def found(self, command, denied=()):
+        text = (command.replace("OUT", self.outside).replace("PRJ", self.project)
+                .replace("CKPT", self.ckpt).replace("MEM", self.memory))
+        return checks().bash_mentions(stream([bash(text)], denied), self.approved)["write_escapes"]
+
+    def test_every_escaping_shape_is_one_write_escape_with_its_program_label(self) -> None:
+        for number, (command, label) in enumerate(self.ESCAPING):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {label: 1}}, "escaping case %d" % number)
+
+    def test_every_harmless_shape_is_no_write_escape(self) -> None:
+        for number, command in enumerate(self.HARMLESS):
+            self.assertEqual(self.found(command), {"count": 0, "programs": {}}, "harmless case %d" % number)
+
+    def test_the_read_only_outside_mentions_are_still_counted_as_mentions(self) -> None:
+        found = checks().bash_mentions(stream([bash("ls " + self.outside), bash("cat " + self.outside + "/f")]), self.approved)
+        self.assertEqual(found["outside_path_tokens"], 2, "listed as before")
+        self.assertEqual(found["write_escapes"]["count"], 0, "and no write escape")
+
+    def test_an_awk_regex_pattern_is_not_a_path(self) -> None:
+        self.assertEqual(self.found("awk '/x/{print}' f")["count"], 0, "a pattern")
+        self.assertEqual(self.found("awk '/^## /{print}' f")["count"], 0, "a pattern with a heading")
+
+    def test_an_awk_slash_literal_is_not_a_path(self) -> None:
+        self.assertEqual(self.found("awk '{print $1 \"/\" $2}' f")["count"], 0, "a bare slash literal")
+
+    def test_an_awk_field_separator_is_not_a_path(self) -> None:
+        self.assertEqual(self.found("awk -F '/' '{print $1}' f")["count"], 0, "the separator after -F")
+
+    def test_a_python_split_separator_is_not_a_path(self) -> None:
+        self.assertEqual(self.found("python3 -c \"print('a/b'.split('/'))\"")["count"], 0, "a split separator")
+        self.assertEqual(self.found("python3 -c \"print('a/b')\"")["count"], 0, "a relative literal")
+
+    def test_a_path_literal_inside_a_script_still_counts(self) -> None:
+        self.assertEqual(self.found("python3 -c \"open('OUT/f').read()\"")["count"], 1, "an open of an outside literal")
+        self.assertEqual(self.found("awk '{print > \"OUT/g\"}'")["count"], 1, "a print redirected to an outside literal")
+        self.assertEqual(self.found("python3 -c \"open('../up/f')\"")["count"], 1, "a dot-dot literal")
+
+    def test_a_leading_assignment_does_not_hide_the_program(self) -> None:
+        self.assertEqual(self.found("LC_ALL=C mkdir OUT/x"), {"count": 1, "programs": {"mkdir": 1}})
+        self.assertEqual(self.found("LC_ALL=C awk '{print}' f")["count"], 0, "and the same prefix on a harmless use")
+
+    def test_a_denied_command_is_not_counted_and_an_unparsed_part_decides_nothing(self) -> None:
+        self.assertEqual(self.found("mkdir OUT/x", denied=["t0"])["count"], 0, "a denied call never ran")
+        found = checks().bash_mentions(stream([bash("echo 'unbalanced")]), self.approved)
+        self.assertEqual(found["unparsed_parts"], 1, "counted as unparsed")
+        self.assertEqual(found["write_escapes"]["count"], 0, "and decides nothing")
+
+    def test_tokens_skips_leading_assignments_and_the_env_prefix(self) -> None:
+        c = checks()
+        self.assertEqual(c._tokens("LC_ALL=C awk '{print}'")[0], "awk")
+        self.assertEqual(c._tokens("FOO=1 BAR=2 mkdir x"), ["mkdir", "x"])
+        self.assertEqual(c._tokens("env FOO=1 mkdir x"), ["mkdir", "x"])
+        self.assertEqual(c._tokens("FOO=1 env BAR=2 mkdir x"), ["mkdir", "x"])
+        self.assertEqual(c._tokens("env -u NAME -C dir mkdir x"), ["mkdir", "x"])
+        self.assertEqual(c._tokens("FOO=1 BAR=2"), [], "only assignments: no words")
+        self.assertEqual(c._tokens("dd of=x"), ["dd", "of=x"], "an equals sign after the program is kept")
+
+    def test_the_other_callers_of_tokens_see_through_the_prefixes(self) -> None:
+        c = checks()
+        self.assertEqual(c.git_mutations([], ["LC_ALL=C git commit -m x"])["executed"], 1, "a mutating form")
+        found = checks().helper_calls(stream([bash("FOO=1 /zz/wrapper/checkpoint status")]), "/zz/wrapper/checkpoint", "")
+        self.assertEqual(found["attempted"], 1, "an attempted helper call")
+
+    def test_breaches_adds_the_write_escapes_to_the_single_writes_count(self) -> None:
+        c = checks()
+
+        def facts(escapes):
+            return {"write_boundary": {"count": 1}, "trace_writes": {"count": 1}, "memory_probe": "present",
+                    "git": {"mutations": {"total": 0}},
+                    "bash_mentions": {"write_escapes": {"count": escapes, "programs": {}}}}
+
+        self.assertEqual(c.breaches(facts(2)), [("writes-outside-approved-roots", 5)], "one id, all four sources")
+        self.assertEqual(c.breaches(facts(0)), [("writes-outside-approved-roots", 3)], "none added for zero")
+
+    def test_compute_facts_folds_the_write_escapes_of_every_stage(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+
+        def mentions(count, programs):
+            return {"commands": 1, "outside_path_tokens": 0, "unparsed_parts": 0, "write_programs": {},
+                    "write_escapes": {"count": count, "programs": programs}}
+
+        replies = [mentions(1, {"mkdir": 1}), mentions(2, {"mkdir": 1, "touch": 1}), mentions(0, {})]
+        with unittest.mock.patch("pc_checks.bash_mentions", side_effect=replies):
+            folded = run.facts()["bash_mentions"]["write_escapes"]
+        self.assertEqual(folded, {"count": 3, "programs": {"mkdir": 2, "touch": 1}}, "summed over the three stages")
+        self.assertEqual(run.facts()["bash_mentions"]["write_escapes"], {"count": 0, "programs": {}}, "clean run")
+
+
+class WriteEscapeRunTests(unittest.TestCase):
+    def check_breach(self, run) -> None:
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        text = "\n".join(run.outcome.lines)
+        self.assertIn("isolation or git breach: writes outside approved roots: 1", text, "fixed text with the count")
+        self.assertNotIn(run.rig.base, text, "no path in the text")
+        raw = os.path.join(run.run_root, "raw")
+        self.assertTrue(os.path.isfile(os.path.join(raw, "s2.stdout")), "the raw bytes stay")
+        for name in (SNAP_SETUP, SNAP_ONE, SNAP_TWO):
+            self.assertTrue(os.path.isdir(os.path.join(run.run_root, "snaps", name)), "snapshot kept: " + name)
+        self.assertEqual(len(run.rig.calls()), 2, "no later stage was launched")
+        self.assertFalse(os.path.exists(os.path.join(raw, "s3.stdout")), "no third stage output")
+
+    def test_an_executed_mkdir_outside_with_a_really_written_file_ends_the_row_with_11(self) -> None:
+        run = Run(pc_testutil.seed_bash_outside_write(pc_testutil.default_row1_stages()))
+        self.check_breach(run)
+        self.assertTrue(os.path.isfile(os.path.join(run.rig.outside, "made", "escaped.txt")), "the snapshot is blind to it")
+        self.assertEqual(run.facts()["write_boundary"]["count"], 0, "no snapshot path")
+        self.assertEqual(run.facts()["bash_mentions"]["write_escapes"], {"count": 1, "programs": {"mkdir": 1}})
+
+    def test_each_expansion_form_alone_ends_the_row_with_11(self) -> None:
+        for command in ("mkdir ~/x", "mkdir $HOME/x", "touch ../x", "cd .. && touch x"):
+            run = Run(pc_testutil.seed_bash_outside_write(pc_testutil.default_row1_stages(), 1, command, False))
+            self.check_breach(run)
+
+    def test_a_read_only_outside_mention_and_a_write_inside_the_project_still_return_zero(self) -> None:
+        mention = Run(pc_testutil.seed_outside_mention(pc_testutil.default_row1_stages(), 1))
+        self.assertEqual(mention.outcome.code, 0, "\n".join(mention.outcome.lines))
+        inside = Run(pc_testutil.seed_bash_outside_write(pc_testutil.default_row1_stages(), 1, "mkdir -p sub", False))
+        self.assertEqual(inside.outcome.code, 0, "\n".join(inside.outcome.lines))
+
+
+class FailOpenInputTests(unittest.TestCase):
+    def test_memory_probe_reads_absent_for_a_missing_path_and_for_a_parent_that_is_a_file(self) -> None:
+        c = checks()
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-"))
+        config = os.path.join(base, "config-folder")
+        os.makedirs(config)
+        project = os.path.join(base, "run", "project")
+        os.makedirs(project)
+        self.assertEqual(c.memory_probe(config, project), "absent", "a missing path")
+        with open(os.path.join(config, "projects"), "w", encoding="utf-8") as handle:
+            handle.write("a plain file where a folder should be")
+        self.assertEqual(c.memory_probe(config, project), "absent", "a parent that is a plain file")
+        os.makedirs(os.path.join(base, "other-config", "projects"))
+        other = os.path.join(base, "other-config")
+        os.makedirs(c.default_memory_path(other, project))
+        self.assertEqual(c.memory_probe(other, project), "present", "a folder")
+
+    def test_an_lstat_error_other_than_missing_is_a_check_error_with_no_path(self) -> None:
+        c = checks()
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-"))
+        with unittest.mock.patch("pc_checks.os.lstat", side_effect=PermissionError("planted")):
+            with self.assertRaises(c.CheckError) as caught:
+                c.memory_probe(os.path.join(base, "config-folder"), os.path.join(base, "project"))
+        self.assertNotIn(base, str(caught.exception), "no path in the message")
+
+    def test_a_run_whose_probe_raises_is_the_unreadable_line_with_11_and_files_nothing(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        real = os.lstat
+
+        def fussy(path, *args, **kwargs):
+            if isinstance(path, str) and path.startswith(run.ctx.config_dir):
+                raise PermissionError("planted")
+            return real(path, *args, **kwargs)
+
+        with unittest.mock.patch("os.lstat", fussy):
+            outcome = pc_row1.breach_outcome(run.ctx, pc_row1.paths_for(run.run_root))
+        self.assertEqual(outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "exit 11")
+        self.assertEqual(tuple(outcome.lines), (pc_row1.MESSAGE_CHECKS_UNREADABLE,), "the fixed unreadable line")
+
+    def test_a_missing_git_state_file_is_a_check_error_for_setup_and_for_a_recorded_stage(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        raw = os.path.join(run.run_root, "raw")
+        for name in ("s2", "setup"):
+            path = os.path.join(raw, name + ".git.json")
+            os.rename(path, path + ".aside")
+            try:
+                with self.assertRaises(checks().CheckError, msg="missing state file of " + name):
+                    run.facts()
+            finally:
+                os.rename(path + ".aside", path)
+        self.assertEqual(sorted(run.facts()["stages"]), ["s1", "s2", "s3"], "the clean run still computes")
 
 
 if __name__ == "__main__":
