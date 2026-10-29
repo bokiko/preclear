@@ -1619,9 +1619,12 @@ class OpenWorldRunTests(unittest.TestCase):
         "sed -n 'wOUT/x' f", "sed -n '1,3wOUT/x' f", "sed -n '/re/wOUT/x' f", "awk 'BEGIN{system(\"touch OUT/x\")}'",
         "python3 -c \"import os; os.system('touch OUT/x')\"", "sh -c 'touch OUT/x'", "env -a name mkdir OUT/x",
         "mktemp -d", "awk -f prog.awk f", "sed -n -f s.sed f",
+        "cat <<EOF\n$(touch OUT/x)\nEOF", "ls $(touch OUT/x)", "echo `rm OUT/x`", "cat <(touch OUT/x)",
+        "if [ -e a ]; then rm OUT/x; fi",
     ]
     HARMLESS = ["awk '{print}' OUT/hosts", "cat OUT/hosts", "find OUT -name x -exec ls {} \\;", "sed -n '/w/p' f",
-                "env sh -c 'touch x'", "mktemp -p ."]
+                "env sh -c 'touch x'", "mktemp -p .", "cat > f <<'EOF'\nmkdir OUT/x\nEOF", "cat '>' OUT/hosts",
+                "ls\n# rm OUT/x", "if [ -e a ]; then wc -c a; fi"]
 
     def check_breach(self, run) -> None:
         self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
@@ -1647,6 +1650,199 @@ class OpenWorldRunTests(unittest.TestCase):
         for command in self.HARMLESS:
             run = self.run_of(command)
             self.assertEqual(run.outcome.code, 0, command + ": " + "\n".join(run.outcome.lines))
+
+
+def lines(*items):
+    """A multi-line command built with explicit newlines."""
+    return "\n".join(items)
+
+
+class ShellGrammarTests(OpenWorldBase):
+    """Shell grammar read as the shell reads it (WR-02): quotes, heredocs, substitutions, comments, reserved words."""
+
+    def check_zero(self, table, what):
+        for number, command in enumerate(table):
+            found = self.mentions(command)
+            self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}}, "%s zero case %d" % (what, number))
+
+    def test_a_quoted_greater_than_is_a_word_and_an_unquoted_redirection_is_read_in_every_form(self) -> None:
+        self.check_zero([
+            "cat '>' OUT/hosts", "printf '%s\\n' '>' OUT/hosts", "awk -F '>' '{print $1}' OUT/hosts",
+            "cat a > PRJ/f", "ls 2>&1", "ls >&2", "cat a > /dev/null", "cat a 2> /dev/null",
+        ], "redirection")
+        self.check_table([
+            ("cat a > OUT/f", "redirect"), ("cat a >OUT/f", "redirect"), ("cat a 2>OUT/f", "redirect"),
+            ("cat a >> OUT/f", "redirect"), ("cat a &> OUT/f", "redirect"), ("cat a >| OUT/f", "redirect"),
+            ("cat a 2> OUT/f", "redirect"), ("cat a >>OUT/f", "redirect"),
+        ], "redirection")
+
+    def test_a_quoted_greater_than_makes_no_listed_redirect(self) -> None:
+        found = self.mentions("cat '>' OUT/hosts")
+        self.assertEqual(found["write_programs"], {}, "a read-only cat with a word that is only a greater-than sign")
+
+    def test_the_body_of_a_quoted_delimiter_heredoc_is_data(self) -> None:
+        self.check_zero([
+            lines("cat > PRJ/f <<'EOF'", "mkdir OUT/x", "EOF"),
+            lines("cat > PRJ/f <<\"EOF\"", "mkdir OUT/x", "EOF"),
+            lines("cat > PRJ/f <<\\EOF", "mkdir OUT/x", "EOF"),
+            lines("cat <<'EOF'", "$(rm OUT/x)", "EOF"),
+            lines("cat <<'EOF'", "`rm OUT/x`", "EOF"),
+        ], "quoted heredoc")
+
+    def test_the_body_of_an_unquoted_delimiter_heredoc_is_scanned_for_substitutions(self) -> None:
+        self.check_zero([
+            lines("cat <<EOF", "mkdir OUT/x", "EOF"),
+            lines("cat <<-EOF", "\tmkdir OUT/x", "\tEOF"),
+            lines("cat <<A <<B", "mkdir OUT/x", "A", "rm OUT/y", "B"),
+            lines("cat <<EOF", "price is \\$(rm OUT/x)", "EOF"),
+        ], "unquoted heredoc with plain text")
+        self.check_table([
+            (lines("cat <<EOF", "$(rm OUT/x)", "EOF"), "rm"),
+            (lines("cat <<EOF", "`rm OUT/x`", "EOF"), "rm"),
+            (lines("cat <<-EOF", "\t$(touch OUT/x)", "\tEOF"), "touch"),
+            (lines("cat <<A <<B", "plain", "A", "$(rm OUT/y)", "B"), "rm"),
+        ], "unquoted heredoc with a substitution")
+
+    def test_the_lines_after_the_closing_delimiter_are_judged(self) -> None:
+        self.check_table([
+            (lines("cat <<'EOF'", "body", "EOF", "rm OUT/x"), "rm"),
+            (lines("cat > PRJ/f <<'EOF'", "mkdir OUT/x", "EOF", "touch OUT/y"), "touch"),
+        ], "after the delimiter")
+
+    def test_an_unterminated_heredoc_makes_the_command_unparsed(self) -> None:
+        found = self.mentions(lines("cat <<EOF", "mkdir PRJ/x"))
+        self.assertEqual(found["unparsed_parts"], 1, "counted as unparsed")
+        self.assertEqual(found["write_escapes"]["count"], 0, "no escaping word")
+        self.assertEqual(self.found(lines("cat <<EOF", "rm OUT/x")), {"count": 1, "programs": {"unparsed": 1}})
+
+    def test_a_substitution_is_a_command_of_its_own(self) -> None:
+        self.check_table([
+            ("ls $(touch OUT/x)", "touch"),
+            ("echo `rm OUT/x`", "rm"),
+            ("cat <(touch OUT/x)", "touch"),
+            ("echo \"$(touch OUT/x)\"", "touch"),
+            ("echo $(echo $(rm OUT/x))", "rm"),
+            ("d=$(mktemp -d)", "mktemp"),
+        ], "substitution")
+        self.check_zero([
+            "ls $(ls OUT)", "echo \"$(ls OUT)\"", "echo '$(touch OUT/x)'",
+        ], "substitution")
+
+    def test_an_unbalanced_or_too_deep_substitution_makes_the_command_unparsed(self) -> None:
+        self.assertEqual(self.found("echo $(rm OUT/x"), {"count": 1, "programs": {"unparsed": 1}}, "unbalanced and holding OUT")
+        self.assertEqual(self.mentions("echo $(ls")["unparsed_parts"], 1, "unbalanced")
+        deep = "echo " + "$(echo " * 6 + "x" + ")" * 6
+        self.assertEqual(self.mentions(deep)["unparsed_parts"], 1, "nested over four levels")
+        shallow = "echo " + "$(echo " * 3 + "x" + ")" * 3
+        self.assertEqual(self.mentions(shallow)["unparsed_parts"], 0, "nested to a depth the rule reads")
+
+    def test_a_comment_is_dropped_and_never_opens_a_quote(self) -> None:
+        tilde = "~" + "/neutral-name"
+        self.check_zero([
+            lines("ls", "# it's " + tilde + " here", "wc -c f"),
+            "# rm OUT/x",
+            "ls # rm OUT/x",
+            lines("ls", "# an apostrophe: don't", "wc -c f"),
+        ], "comment")
+        self.check_table([
+            (lines("# a note", "rm OUT/x"), "rm"),
+            (lines("ls # it's", "rm OUT/x"), "rm"),
+            ("mkdir x#y OUT/z", "mkdir"),
+            ("mkdir $# OUT/z", "mkdir"),
+            ("mkdir \"x # y\" OUT/z", "mkdir"),
+        ], "comment")
+
+    def test_reserved_words_are_transparent_and_loop_headers_are_data(self) -> None:
+        self.check_zero([
+            "if [ -e ../auto-memory/x ]; then wc -c ../auto-memory/x; fi",
+            "for f in OUT/a OUT/b; do ls $f; done",
+            "while read l; do echo $l; done",
+            "if ! test -e OUT/x; then echo no; fi",
+            "[[ -e OUT/x ]] && echo yes",
+            "{ ls; wc -c f; }",
+            "case $x in a) ls;; esac",
+        ], "reserved word")
+        self.check_table([
+            ("if [ -e a ]; then rm OUT/x; fi", "rm"),
+            ("for f in a b; do touch OUT/x; done", "touch"),
+            ("while true; do mkdir OUT/x; done", "mkdir"),
+            ("case $x in a) rm OUT/x;; esac", "rm"),
+            ("if [ -e a ]; then ls; else rm OUT/x; fi", "rm"),
+        ], "reserved word")
+
+    def test_the_old_redirection_reader_is_gone(self) -> None:
+        self.assertFalse(hasattr(checks(), "_redirections"), "redirections are read from the raw text")
+
+
+REFUSAL_PREFIXES = (
+    "A variable", "A command used as a file", "A pipeline in this command", "Contains brace with quote character",
+    "This command requires approval", "This Bash command contains multiple operations",
+)
+CONTROL_TRACE = os.path.join("publication-2026-10-20", "row10-large-status-first-pass", "s3-resume-full-trace.md")
+CONTROL_CALL = 5
+EVIDENCE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tests", "evidence")
+
+
+class WriteEscapeCorpusTests(OpenWorldBase):
+    """The rule replayed over every committed full trace: zero write escapes among the commands that ran (WR-02)."""
+
+    def trace_files(self):
+        found = []
+        for folder, _names, files in os.walk(EVIDENCE_DIR):
+            found.extend(os.path.join(folder, name) for name in files if name.endswith("full-trace.md"))
+        return sorted(found)
+
+    def concrete(self, command: str) -> str:
+        killswitch = "~" + "/killswitch-neutral"
+        return (command.replace("<repo>/<run>", self.run).replace("<run>", self.run)
+                .replace("<helper-killswitch>", killswitch))
+
+    def judged(self, command: str):
+        return checks().bash_mentions(stream([bash(self.concrete(command))]), self.approved, [self.wrapper])["write_escapes"]
+
+    def walk(self):
+        """Yield (trace name, call, kind) for every Bash call; kind is flagged, not-run or judged."""
+        import pc_mine
+
+        for path in self.trace_files():
+            with open(path, "r", encoding="utf-8", newline="") as handle:
+                calls = pc_mine.parse_trace(handle.read())
+            name = os.path.relpath(path, EVIDENCE_DIR).replace(os.sep, "/")
+            for call in calls:
+                if call["refusal"]:
+                    yield name, call, "flagged"
+                elif call["result"].startswith(REFUSAL_PREFIXES):
+                    yield name, call, "not-run"
+                else:
+                    yield name, call, "judged"
+
+    def test_no_command_that_ran_in_a_committed_trace_is_a_write_escape(self) -> None:
+        parsed = judged = 0
+        first = None
+        for name, call, kind in self.walk():
+            parsed += 1
+            if kind != "judged":
+                continue
+            judged += 1
+            if first is None and self.judged(call["command"])["count"] != 0:
+                first = "%s call %d" % (name, call["number"])
+        self.assertGreaterEqual(len(self.trace_files()), 35, "full traces found")
+        self.assertGreaterEqual(parsed, 348, "Bash calls parsed")
+        self.assertGreaterEqual(judged, 231, "Bash calls judged")
+        self.assertIsNone(first, "a command that ran is judged a write escape: %s" % first)
+
+    def test_the_refused_temporary_folder_write_is_not_judged_and_is_an_escape_when_handed_to_the_rule(self) -> None:
+        control = [call for name, call, kind in self.walk()
+                   if name == CONTROL_TRACE.replace(os.sep, "/") and call["number"] == CONTROL_CALL]
+        self.assertEqual(len(control), 1, "the control call is in the corpus")
+        kinds = [kind for name, call, kind in self.walk()
+                 if name == CONTROL_TRACE.replace(os.sep, "/") and call["number"] == CONTROL_CALL]
+        self.assertEqual(kinds, ["not-run"], "the walker skips it: the binary refused it, so it never ran")
+        whole = self.judged(control[0]["command"])
+        self.assertGreaterEqual(whole["programs"].get("mktemp", 0), 1, "the temporary folder made by a substitution")
+        self.assertGreaterEqual(whole["programs"].get("rm", 0), 1, "the removal after the change to the root")
+        self.assertEqual(self.judged("d=$(mktemp -d)")["programs"], {"mktemp": 1}, "the mktemp rule alone")
+        self.assertEqual(self.judged("cd / && rm -r \"$d\"")["programs"], {"rm": 1}, "the rm after the cd alone")
 
 
 class FailOpenInputTests(unittest.TestCase):

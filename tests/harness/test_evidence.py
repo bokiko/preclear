@@ -1583,6 +1583,13 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn(phrase, text, "the guide says: " + phrase)
         self.assertNotIn("closed set", text, "the closed list of write programs is gone")
 
+    def test_the_readme_describes_the_shell_grammar_the_write_rule_reads(self) -> None:
+        text = self.readme()
+        for phrase in ("heredoc", "command substitution", "comment", "reserved word", "GNU sed"):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        self.assertIn("body of an unquoted heredoc is scanned", text, "an unquoted body is scanned")
+        self.assertIn("quoted heredoc is data", text, "a quoted body is data")
+
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
         text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
         self.assertIn("<scratch>", text, "the scratch token is listed")
