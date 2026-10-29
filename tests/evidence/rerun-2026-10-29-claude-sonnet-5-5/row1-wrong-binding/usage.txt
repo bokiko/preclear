@@ -1,0 +1,7 @@
+usage for row1-wrong-binding
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session e125001c-ff38-49aa-a88c-5d19975cfbc5, subtype success, turns 5, input 6, cache creation 8704, cache read 53425, output 854, cost 0.048710500000000004, cumulative 0.048710500000000004, wall 20.0 seconds
+stage s2: session e125001c-ff38-49aa-a88c-5d19975cfbc5, subtype success, turns 20, input 22, cache creation 16672, cache read 353805, output 5632, cost 0.15843250000000003, cumulative 0.20714300000000002, wall 61.6 seconds
+stage s3: session b7eb866d-54f5-46f0-9a7a-97a484230f77, subtype success, turns 6, input 6, cache creation 9394, cache read 53607, output 2222, cost 0.0651687, cumulative 0.0651687, wall 19.5 seconds
+row total: 0.27231170000000002
+run total: 0.27231170000000002
