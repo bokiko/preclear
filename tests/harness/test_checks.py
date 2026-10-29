@@ -726,7 +726,7 @@ class SessionFactTests(unittest.TestCase):
 
 
 FACT_NAMES = [
-    "bash_mentions", "denials", "git", "helper_calls", "ledgers", "memory_probe", "session", "snapshots",
+    "bash_mentions", "denials", "git", "guard", "helper_calls", "ledgers", "memory_probe", "session", "snapshots",
     "stages", "streams", "trace_writes", "write_boundary",
 ]
 
@@ -1084,7 +1084,7 @@ class WriteEscapeTests(unittest.TestCase):
 
         def facts(escapes):
             return {"write_boundary": {"count": 1}, "trace_writes": {"count": 1}, "memory_probe": "present",
-                    "git": {"mutations": {"total": 0}},
+                    "git": {"mutations": {"total": 0}}, "guard": {"count": 0, "kinds": {}},
                     "bash_mentions": {"write_escapes": {"count": escapes, "programs": {}}}}
 
         self.assertEqual(c.breaches(facts(2)), [("writes-outside-approved-roots", 5)], "one id, all four sources")
@@ -1187,6 +1187,237 @@ class FailOpenInputTests(unittest.TestCase):
             finally:
                 os.rename(path + ".aside", path)
         self.assertEqual(sorted(run.facts()["stages"]), ["s1", "s2", "s3"], "the clean run still computes")
+
+
+def make_guard(raw=None, snaps=None, size=0, sha=None, prefix="n/a") -> dict:
+    return {"raw": dict(raw or {}), "snaps": dict(snaps or {}),
+            "hooklog": {"size": size, "sha256": sha if sha is not None else digest("9"), "prefix_intact": prefix}}
+
+
+class RunRecordGuardTests(unittest.TestCase):
+    PREVIOUS_RAW = {"run.json": digest("1"), "s1.stdout": digest("2"), "s1.git.json": digest("3"), "setup.guard.json": digest("4")}
+    PREVIOUS_SNAPS = {"snap-0-setup": digest("5"), "snap-1-after-work": digest("6")}
+
+    def previous(self) -> dict:
+        return make_guard(self.PREVIOUS_RAW, self.PREVIOUS_SNAPS, 100, digest("7"), "yes")
+
+    def current(self, extra_raw=(), extra_snaps=(), prefix="yes", drop_raw=(), drop_snaps=(), change_raw=(), change_snaps=()):
+        raw = dict(self.PREVIOUS_RAW)
+        for name in extra_raw:
+            raw[name] = digest("8")
+        for name in drop_raw:
+            raw.pop(name)
+        for name in change_raw:
+            raw[name] = digest("0")
+        snaps = dict(self.PREVIOUS_SNAPS)
+        for name in extra_snaps:
+            snaps[name] = digest("8")
+        for name in drop_snaps:
+            snaps.pop(name)
+        for name in change_snaps:
+            snaps[name] = digest("0")
+        return make_guard(raw, snaps, 250, digest("a"), prefix)
+
+    S2_WINDOW = ("s1.record.json", "s1.guard.json", "s2.prompt", "s2.stdout", "s2.stderr", "s2.git.json")
+
+    def test_what_the_harness_writes_in_a_window_and_a_grown_hook_log_are_no_violation(self) -> None:
+        c = checks()
+        grown = self.current(extra_raw=self.S2_WINDOW, extra_snaps=["snap-2-after-preclear"])
+        self.assertEqual(c.guard_violations(self.previous(), grown, "s2"), [], "the s1 to s2 window")
+        raw = dict(grown["raw"])
+        snaps = dict(grown["snaps"])
+        for name in ("s2.record.json", "s2.guard.json", "chain.json", "s3.prompt", "s3.stdout", "s3.stderr", "s3.git.json"):
+            raw[name] = digest("8")
+        snaps["snap-3-after-resume"] = digest("8")
+        later = make_guard(raw, snaps, 300, digest("b"), "yes")
+        self.assertEqual(c.guard_violations(grown, later, "s3"), [], "the s2 to s3 window adds chain.json")
+        self.assertEqual(c.guard_violations(grown, make_guard(dict(raw, **{"s1.stdout": digest("0")}), snaps, 300,
+                                                              digest("b"), "yes"), "s3"),
+                         ["raw-entry-changed"], "an earlier stream that changed")
+
+    def test_each_kind_of_change_is_one_violation_of_its_name(self) -> None:
+        c = checks()
+        previous = self.previous()
+        cases = [
+            (self.current(change_raw=["run.json"]), "raw-entry-changed"),
+            (self.current(drop_raw=["run.json"]), "raw-entry-changed"),
+            (self.current(extra_raw=["extra.txt"]), "raw-entry-unexpected"),
+            (self.current(extra_raw=["s3.stdout"]), "raw-entry-unexpected"),
+            (self.current(change_snaps=["snap-1-after-work"]), "snapshot-changed"),
+            (self.current(drop_snaps=["snap-0-setup"]), "snapshot-changed"),
+            (self.current(extra_snaps=["snap-9-extra"]), "snapshot-unexpected"),
+            (self.current(prefix="no"), "hooklog-rewritten"),
+        ]
+        for number, (current, kind) in enumerate(cases):
+            self.assertEqual(c.guard_violations(previous, current, "s2"), [kind], "violation case %d" % number)
+
+    def test_the_names_are_the_documented_ones(self) -> None:
+        c = checks()
+        self.assertEqual(tuple(c.GUARD_ORDER), ("setup", "s1", "s2", "s3"), "the boundary order")
+        self.assertEqual(c.BREACH_RECORD, "run-record-changes", "the breach id")
+
+    def layout(self):
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-"))
+        raw, snaps = os.path.join(base, "raw"), os.path.join(base, "snaps")
+        os.makedirs(raw)
+        os.makedirs(os.path.join(snaps, "snap-0-setup"))
+        with open(os.path.join(raw, "run.json"), "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        os.makedirs(os.path.join(raw, "sub"))
+        with open(os.path.join(raw, "hooklog.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("first line\n")
+        with open(os.path.join(snaps, "snap-0-setup", "manifest.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("")
+        return {"raw": raw, "snaps": snaps}
+
+    def test_capture_guard_lists_every_raw_file_but_the_hook_log_every_snapshot_tree_and_the_hook_log_state(self) -> None:
+        import hashlib
+
+        c = checks()
+        paths = self.layout()
+        c.capture_guard(paths, "setup")
+        guard = read_json(os.path.join(paths["raw"], "setup.guard.json"))
+        self.assertEqual(sorted(guard), ["hooklog", "raw", "snaps"], "the three parts")
+        self.assertEqual(guard["raw"], {"run.json": hashlib.sha256(b"{}\n").hexdigest(), "sub": "dir"}, "raw without the log")
+        expected = hashlib.sha256(manifest().jsonl_bytes(manifest().tree_manifest(os.path.join(paths["snaps"], "snap-0-setup")))).hexdigest()
+        self.assertEqual(guard["snaps"], {"snap-0-setup": expected}, "the tree digest of the snapshot")
+        self.assertEqual(guard["hooklog"], {"size": 11, "sha256": hashlib.sha256(b"first line\n").hexdigest(),
+                                            "prefix_intact": "n/a"})
+        with self.assertRaises(FileExistsError, msg="a second guard of the same name is refused"):
+            c.capture_guard(paths, "setup")
+
+    def test_a_boundary_after_setup_needs_the_previous_guard(self) -> None:
+        paths = self.layout()
+        with self.assertRaises(checks().CheckError):
+            checks().capture_guard(paths, "s1")
+
+    def test_the_prefix_flag_follows_the_hook_log_between_boundaries(self) -> None:
+        c = checks()
+        paths = self.layout()
+        log = os.path.join(paths["raw"], "hooklog.jsonl")
+        c.capture_guard(paths, "setup")
+        with open(log, "a", encoding="utf-8") as handle:
+            handle.write("second line\n")
+        os.makedirs(os.path.join(paths["snaps"], "snap-1-after-work"))
+        c.capture_guard(paths, "s1")
+        self.assertEqual(read_json(os.path.join(paths["raw"], "s1.guard.json"))["hooklog"]["prefix_intact"], "yes", "grown")
+        os.rename(log, log + ".aside")
+        with open(log, "w", encoding="utf-8") as handle:
+            handle.write("another long first line\nand more\n")
+        c.capture_guard(paths, "s2")
+        self.assertEqual(read_json(os.path.join(paths["raw"], "s2.guard.json"))["hooklog"]["prefix_intact"], "no", "rewritten")
+
+    def test_a_shorter_or_missing_hook_log_is_not_intact(self) -> None:
+        c = checks()
+        for replacement in (None, "x\n"):
+            paths = self.layout()
+            log = os.path.join(paths["raw"], "hooklog.jsonl")
+            c.capture_guard(paths, "setup")
+            os.rename(log, log + ".aside")
+            if replacement is not None:
+                with open(log, "w", encoding="utf-8") as handle:
+                    handle.write(replacement)
+            c.capture_guard(paths, "s1")
+            self.assertEqual(read_json(os.path.join(paths["raw"], "s1.guard.json"))["hooklog"]["prefix_intact"], "no")
+
+    def test_load_guard_is_strict(self) -> None:
+        c = checks()
+        raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
+        os.makedirs(raw)
+        good = make_guard({"a": digest("1"), "d": "dir"}, {"snap-0-setup": digest("2")}, 3, digest("3"), "n/a")
+        bad = [
+            "not json",
+            [1],
+            dict(good, extra=1),
+            dict((k, v) for k, v in good.items() if k != "snaps"),
+            dict(good, raw={"a": "ABC"}),
+            dict(good, raw={"a": digest("1").upper()}),
+            dict(good, snaps={"s": 5}),
+            dict(good, hooklog=dict(good["hooklog"], size=True)),
+            dict(good, hooklog=dict(good["hooklog"], size=-1)),
+            dict(good, hooklog=dict(good["hooklog"], sha256="abc")),
+            dict(good, hooklog=dict(good["hooklog"], prefix_intact="maybe")),
+            dict(good, hooklog={"size": 1}),
+        ]
+        with open(os.path.join(raw, "setup.guard.json"), "w", encoding="utf-8") as handle:
+            json.dump(good, handle)
+        self.assertEqual(c.load_guard(raw, "setup"), good, "a good guard is read")
+        for number, value in enumerate(bad):
+            with open(os.path.join(raw, "s1.guard.json"), "w", encoding="utf-8") as handle:
+                if isinstance(value, str):
+                    handle.write(value)
+                else:
+                    json.dump(value, handle)
+            with self.assertRaises(c.CheckError, msg="bad guard case %d" % number):
+                c.load_guard(raw, "s1")
+        with self.assertRaises(c.CheckError, msg="a missing guard file"):
+            c.load_guard(raw, "s3")
+
+
+class RunRecordRunTests(unittest.TestCase):
+    def test_a_clean_run_has_four_guard_files_and_a_guard_fact_of_zero(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        for name in ("setup", "s1", "s2", "s3"):
+            self.assertTrue(os.path.isfile(os.path.join(run.run_root, "raw", name + ".guard.json")), "guard of " + name)
+        facts = run.facts()
+        self.assertEqual(facts["guard"], {"count": 0, "kinds": {}}, "the hook's own appends are no violation")
+        self.assertGreater(read_json(os.path.join(run.run_root, "raw", "s3.guard.json"))["hooklog"]["size"], 0, "the log grew")
+
+    def test_breaches_adds_the_record_changes_when_the_count_is_above_zero(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        facts = run.facts()
+        self.assertEqual(checks().breaches(facts), [], "none for a clean run")
+        facts = dict(facts, guard={"count": 3, "kinds": {"raw-entry-changed": 3}})
+        self.assertEqual(checks().breaches(facts), [("run-record-changes", 3)], "the id and the count")
+
+    def check_tamper(self, kind: str) -> None:
+        run = Run(pc_testutil.seed_run_record_tamper(pc_testutil.default_row1_stages(), kind))
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, kind + ": " + "\n".join(run.outcome.lines))
+        text = "\n".join(run.outcome.lines)
+        self.assertRegex(text, r"isolation or git breach: changes to the run's own record files: [1-9][0-9]*", kind)
+        self.assertNotIn(run.rig.base, text, kind + ": no path in the text")
+        raw = os.path.join(run.run_root, "raw")
+        self.assertTrue(os.path.isfile(os.path.join(raw, "s2.stdout")), kind + ": the raw bytes stay")
+        self.assertFalse(os.path.exists(os.path.join(raw, "s3.stdout")), kind + ": no third stage")
+        self.assertEqual(len(run.rig.calls()), 2, kind + ": no later stage was launched")
+        self.assertFalse(os.path.lexists(run.ctx.destination), kind + ": nothing was filed")
+
+    def test_a_rewritten_hook_log_ends_the_row_with_11(self) -> None:
+        self.check_tamper("hooklog")
+
+    def test_a_replaced_stage_record_ends_the_row_with_11(self) -> None:
+        self.check_tamper("record")
+
+    def test_an_extra_raw_file_ends_the_row_with_11(self) -> None:
+        self.check_tamper("extra")
+
+    def test_an_emptied_snapshot_manifest_ends_the_row_with_11(self) -> None:
+        self.check_tamper("snapshot")
+
+    def test_the_seed_refuses_an_unknown_kind(self) -> None:
+        with self.assertRaises(ValueError):
+            pc_testutil.seed_run_record_tamper(pc_testutil.default_row1_stages(), "other")
+
+    def test_a_model_made_stage_prefixed_folder_is_listed_as_a_write_outside_the_roots(self) -> None:
+        stages = with_extra_ops(pc_testutil.default_row1_stages(), 1, [
+            {"op": "write", "path": "$RUN/stage-9/x.txt", "text": "a model-made folder\n"}])
+        run = Run(stages)
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        facts = run.facts()
+        self.assertIn("stage-9/x.txt", facts["write_boundary"]["paths"], "the file is listed")
+        self.assertGreaterEqual(facts["write_boundary"]["count"], 1, "and counted")
+
+    def test_a_missing_guard_file_is_a_check_error(self) -> None:
+        run = Run(pc_testutil.default_row1_stages())
+        path = os.path.join(run.run_root, "raw", "s2.guard.json")
+        os.rename(path, path + ".aside")
+        try:
+            with self.assertRaises(checks().CheckError):
+                run.facts()
+        finally:
+            os.rename(path + ".aside", path)
+        self.assertEqual(run.facts()["guard"]["count"], 0, "back in place, the run reads clean")
 
 
 if __name__ == "__main__":

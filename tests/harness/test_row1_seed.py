@@ -275,6 +275,8 @@ class SnapshotTests(unittest.TestCase):
         with open(os.path.join(p["auto_memory"], "note.md"), "wb") as handle:
             handle.write(b"memory body\n")
         os.makedirs(os.path.join(seeded.run_root, "stage-extra"))
+        with open(os.path.join(seeded.run_root, "stage-extra", "note.txt"), "wb") as handle:
+            handle.write(b"a model-made stage-prefixed folder\n")
         skipped = self.snapshot(seeded, "snap-0-setup")
         self.assertEqual(list(skipped), [])
         snap = os.path.join(p["snaps"], "snap-0-setup")
@@ -287,8 +289,8 @@ class SnapshotTests(unittest.TestCase):
         for path in paths:
             self.assertFalse(path.startswith("raw"), "raw entry listed")
             self.assertFalse(path.startswith("snaps"), "snaps entry listed")
-            self.assertFalse(path.startswith("stage"), "stage entry listed")
             self.assertFalse(path.startswith("project/.git/"), ".git entry listed")
+        self.assertIn("stage-extra/note.txt", paths, "a stage-prefixed folder is no longer hidden from the snapshot")
         self.assertIn(PLAN_RELATIVE, paths)
         calls = [line for line in sha_lines if line.endswith("  wrapper/calls.log")]
         self.assertEqual(len(calls), 1)

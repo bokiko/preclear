@@ -558,7 +558,28 @@ def seed_bash_outside_write(
     return _with_ops(stages, stage_index, ops)
 
 
-_PLANT_CORE ="[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
+def seed_run_record_tamper(stages: list, kind: str, stage_index: int = 1) -> list:
+    """A stage list whose stage rewrites the run root's own record (WR-01); kinds hooklog, record, extra, snapshot.
+
+    hooklog replaces raw/hooklog.jsonl, record replaces the record of the previous stage, extra creates a new
+    raw/extra.txt and snapshot empties the manifest of the previous boundary's snapshot. Each is one write op
+    through the $RUN token.
+    """
+    previous_snapshot = ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear")[stage_index]
+    if kind == "hooklog":
+        op = {"op": "write", "path": "$RUN/raw/hooklog.jsonl", "text": "forged hook log line\n" * 200}
+    elif kind == "record":
+        op = {"op": "write", "path": "$RUN/raw/s%d.record.json" % stage_index, "text": "{}\n"}
+    elif kind == "extra":
+        op = {"op": "write", "path": "$RUN/raw/extra.txt", "text": "an extra raw file\n"}
+    elif kind == "snapshot":
+        op = {"op": "write", "path": "$RUN/snaps/%s/manifest.jsonl" % previous_snapshot, "text": ""}
+    else:
+        raise ValueError("unknown run record tamper kind")
+    return _with_ops(stages, stage_index, [op])
+
+
+_PLANT_CORE = "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
 
 
 def seed_git_config_plant(stages: list, stage_index: int = 0, kind: str = "fsmonitor") -> list:
