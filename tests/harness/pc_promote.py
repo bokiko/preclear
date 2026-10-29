@@ -137,13 +137,18 @@ def _check_stage(stage_text):
         raise _Refused("the stage cannot be read") from None
 
 
-def promote(stage, dest, repo_root, config_dir=None, deny_entries=None):
+def promote(stage, dest, repo_root, config_dir=None, deny_entries=None, allow_default_deny=False):
     """Promote STAGE into the new path DEST under REPO_ROOT/tests/evidence.
 
     Returns PromoteResult(code, message, report_text): code 0, 14 (leak), 15 (scanner error) or
     17 (refused). report_text holds the gate's counts-and-labels lines when the gate refused.
-    DENY_ENTRIES None builds the entries at run time (a failure to do so is exit 15).
+    DENY_ENTRIES None builds the default entries at run time (a failure to do so is exit 15) only when the
+    caller opts in with ALLOW_DEFAULT_DENY=True; without the opt-out a missing list raises ValueError, because
+    the default entries carry no login and a caller that forgot to pass the sanitizer's list would file a run
+    whose login the gate never checks (WR-03). An explicit empty list is accepted.
     """
+    if deny_entries is None and not allow_default_deny:
+        raise ValueError("promote needs the deny entries unless allow_default_deny is passed")
     try:
         stage_text = _as_text(stage, "the stage")
         dest_text = _as_text(dest, "the destination")
@@ -237,7 +242,8 @@ def main(argv):
         sys.stderr.write(USAGE_TEXT)
         return pc_exitcodes.USAGE
     try:
-        result = promote(args[0], args[1], repo_root)
+        # The command line has no sanitizer, and its default entries carry no login by design.
+        result = promote(args[0], args[1], repo_root, allow_default_deny=True)
     except Exception:
         sys.stderr.write("promote stopped: scanner error\n")
         return pc_exitcodes.SCANNER_ERROR

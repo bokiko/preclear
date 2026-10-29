@@ -725,6 +725,58 @@ class SessionFactTests(unittest.TestCase):
         self.assertEqual(claimed.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "still a breach")
 
 
+class StatusFactTests(unittest.TestCase):
+    """WR-02: the status question is about the helper's session line, which follows the brand line."""
+
+    def answer(self, text):
+        c = checks()
+        found = c.session_facts({"s1": stream([])}, {"s1": "sid"}, text)
+        return found["status_begins_with_session"]
+
+    def test_the_helper_session_line_among_the_first_five_lines_is_yes(self) -> None:
+        brand = "a brand line"
+        cases = {
+            "brand then session": brand + "\nsession abc\nledger x\n",
+            "session alone": "session abc\nledger x\n",
+            "session as the fifth line": "one\ntwo\nthree\nfour\nsession abc\nsix\n",
+        }
+        for label, text in sorted(cases.items()):
+            self.assertEqual(self.answer(text), "yes", label)
+
+    def test_anything_else_is_no(self) -> None:
+        cases = {
+            "session as the sixth line": "one\ntwo\nthree\nfour\nfive\nsession abc\n",
+            "the word sessions": "sessions abc\nledger x\n",
+            "a capital S": "Session abc\nledger x\n",
+            "only indented session text": "brand\n  session abc\n",
+            "the word with no space after it": "brand\nsession\n",
+            "empty": "",
+        }
+        for label, text in sorted(cases.items()):
+            self.assertEqual(self.answer(text), "no", label)
+
+    def test_the_other_two_questions_and_the_unconfirmed_case_are_unchanged(self) -> None:
+        c = checks()
+        found = c.session_facts({"s1": stream([])}, {"s1": "abcdefgh-1234"}, "brand\nsession abcdefgh\nledger B\n")
+        self.assertEqual(found["status_holds_s1_prefix"], "yes")
+        self.assertEqual(found["status_names_ledger_b"], "no")
+        missing = c.session_facts({"s1": stream([])}, {"s1": "sid"}, None)
+        for key in ("status_begins_with_session", "status_holds_s1_prefix", "status_names_ledger_b"):
+            self.assertEqual(missing[key], "UNCONFIRMED", key)
+
+    def test_the_scripted_status_result_starts_with_the_stub_brand_line_and_the_default_run_is_yes(self) -> None:
+        import checkpoint_stub
+
+        run = Run(pc_testutil.default_row1_stages())
+        wrapper = os.path.join(run.run_root, "wrapper", "checkpoint")
+        text = checks().first_status_text(events_of(run, "s2"), wrapper)
+        self.assertIsNotNone(text, "s2 made an executed status call")
+        lines = text.splitlines()
+        self.assertEqual(lines[0], checkpoint_stub.BRAND, "the brand line comes first, as on the real tool result")
+        self.assertTrue(lines[1].startswith("session "), "the session line is the second line")
+        self.assertEqual(run.facts()["session"]["status_begins_with_session"], "yes")
+
+
 FACT_NAMES = [
     "bash_mentions", "denials", "git", "guard", "helper_calls", "ledgers", "memory_probe", "session", "snapshots",
     "stages", "streams", "trace_writes", "write_boundary",

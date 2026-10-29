@@ -299,7 +299,9 @@ class Wr14Tests(unittest.TestCase):
             "the staged file still holds the login",
         )
         control = os.path.join(run.rig.repo, "tests", "evidence", "negative-control")
-        result = pc_promote.promote(staged, control, run.rig.repo, config_dir=run.ctx.config_dir, deny_entries=None)
+        result = pc_promote.promote(
+            staged, control, run.rig.repo, config_dir=run.ctx.config_dir, deny_entries=None, allow_default_deny=True
+        )
         self.assertEqual(result.code, 0, "the same bytes without the entries are accepted: " + result.message)
 
 
@@ -672,6 +674,110 @@ class UsageTests(unittest.TestCase):
         self.assertIn("cumulative 0.1,", text, "the text 0.1 is kept")
         self.assertIn("cost 0.2,", text, "the delta is kept as text")
         self.assertIn("row total: 0.34", text, "0.3 plus 0.04 added as decimals")
+
+
+def copied(facts: dict) -> dict:
+    return json.loads(json.dumps(facts))
+
+
+class UsageConsistencyTests(unittest.TestCase):
+    """IN-01: usage.txt shows the cumulative-consistent flag behind the row total, and warns on a no."""
+
+    def lines_of(self, filed) -> list:
+        return filed.read("usage.txt").splitlines()
+
+    def test_the_default_run_shows_yes_for_each_stage_in_order_and_no_warning(self) -> None:
+        import re
+
+        lines = self.lines_of(default_filed())
+        flags = [line for line in lines if line.startswith("cumulative-consistent ")]
+        self.assertEqual(
+            flags,
+            ["cumulative-consistent s1: yes", "cumulative-consistent s2: yes", "cumulative-consistent s3: yes"],
+            "one flag per stage in stage order",
+        )
+        self.assertEqual([line for line in lines if line.startswith("warning")], [], "no warning line")
+        first = max(index for index, line in enumerate(lines) if line.startswith("stage "))
+        self.assertLess(first, lines.index(flags[0]), "the flags follow the stage lines")
+        self.assertLess(lines.index(flags[-1]), lines.index("row total: 0.13"), "and come before the row total")
+        pattern = re.compile(UsageTests.LINE)
+        stage_lines = [line for line in lines if line.startswith("stage ")]
+        self.assertEqual(len(stage_lines), 3, "the stage lines are unchanged in number")
+        for line in stage_lines:
+            self.assertIsNotNone(pattern.match(line), "a stage line keeps its documented fields")
+        self.assertIn("row total: 0.13", lines)
+        self.assertIn("run total: 0.13", lines)
+
+    def test_a_cumulative_total_that_disagrees_gives_a_no_and_exactly_one_warning_naming_the_stage(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, total_cost_usd=0.20)
+        filed = Filed(stages)
+        lines = self.lines_of(filed)
+        self.assertIn("cumulative-consistent s2: no", lines, "the flag reads no")
+        self.assertIn("cumulative-consistent s1: yes", lines)
+        warnings = [line for line in lines if line.startswith("warning")]
+        self.assertEqual(len(warnings), 1, "one warning line")
+        self.assertIn("s2", warnings[0], "it names the stage")
+        self.assertIsNone(verdict_pattern().search("\n".join(lines)), "no line holds a verdict word")
+
+    def test_a_record_without_the_key_shows_unconfirmed_and_no_warning(self) -> None:
+        run = Unfiled()
+        path = os.path.join(run.run_root, "raw", "s2.record.json")
+        record = json.loads(read_text(path))
+        del record["cumulative_consistent"]
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        self.assertEqual(run.file().code, 0, "the run still files")
+        lines = read_text(os.path.join(run.destination, ROW1, "usage.txt")).splitlines()
+        self.assertIn("cumulative-consistent s2: UNCONFIRMED", lines)
+        self.assertEqual([line for line in lines if line.startswith("warning")], [], "no warning for a missing key")
+
+
+class MechanicalFactLineTests(unittest.TestCase):
+    """EVID-04, D-09: the filed counters and the checklist hold the numbers the exit rule uses."""
+
+    def parts(self):
+        import pc_checks
+
+        run = default_filed().run
+        data = evidence().load_stage_data(run.run_root)
+        facts = pc_checks.compute_facts(run.run_root, run.ctx.config_dir)
+        return data, facts
+
+    def test_the_default_run_lists_both_counters_in_the_write_boundary_section(self) -> None:
+        filed = default_filed()
+        section = parse_sections(filed.read("mechanical-checks.md"))["Write boundary"]
+        self.assertIn("bash-write-escapes: 0", section)
+        self.assertIn("run-record-changes: 0", section)
+
+    def test_the_rendered_lines_show_the_counts_of_the_facts(self) -> None:
+        data, facts = self.parts()
+        changed = copied(facts)
+        changed["bash_mentions"]["write_escapes"] = {"count": 2, "programs": {"mkdir": 2}}
+        changed["guard"] = {"count": 3, "kinds": {"raw-entry-changed": 3}}
+        text = evidence().render_mechanical_checks(data, changed).decode("utf-8")
+        section = parse_sections(text)["Write boundary"]
+        self.assertIn("bash-write-escapes: 2", section)
+        self.assertIn("run-record-changes: 3", section)
+
+    def test_the_checklist_writes_number_equals_the_count_the_exit_rule_uses(self) -> None:
+        import re
+
+        import pc_checks
+
+        data, facts = self.parts()
+        changed = copied(facts)
+        changed["write_boundary"]["count"] = 1
+        changed["trace_writes"]["count"] = 1
+        changed["bash_mentions"]["write_escapes"] = {"count": 2, "programs": {"mkdir": 2}}
+        changed["memory_probe"] = "present"
+        line = [item for item in evidence().checklist_lines(data, changed) if "writes outside approved roots" in item]
+        self.assertEqual(len(line), 1, "one writes line")
+        match = re.search(r"writes outside approved roots: ([0-9]+);", line[0])
+        self.assertIsNotNone(match, "the line carries the total")
+        self.assertEqual(int(match.group(1)), 5, "1 snapshot path, 1 tool path, 2 Bash writes and the memory folder")
+        self.assertIn("Bash writes 2", line[0], "the Bash writes are named")
+        used = dict(pc_checks.breaches(changed))[pc_checks.BREACH_WRITES]
+        self.assertEqual(int(match.group(1)), used, "the number a reviewer reads is the number breaches() uses")
 
 
 class TraceTests(unittest.TestCase):
@@ -1076,6 +1182,128 @@ class RefileTests(unittest.TestCase):
         self.assertEqual(spy.call_count, 1, "a refile calls file_row once")
 
 
+def tripwire_env(run: "Unfiled") -> tuple:
+    """The rig's environment with a tripwire claude first on PATH, and the folder that holds its log."""
+    import tempfile
+
+    wire = tempfile.mkdtemp(prefix="pc-wire-")
+    pc_testutil.make_tripwire(wire)
+    env = dict(run.rig.env)
+    env["PATH"] = os.pathsep.join([wire, env["PATH"]])
+    return wire, env
+
+
+NOT_CLEAN_TEXT = "did not finish cleanly"
+
+
+class RefileCleanRunTests(unittest.TestCase):
+    """CR-01: a run the live path refused cannot be refiled; the rule is the live path's own."""
+
+    def assert_refused_for_nothing_filed(self, run: "Unfiled", label: str) -> None:
+        import pc_spend
+
+        wire, env = tripwire_env(run)
+        ledger = pc_spend.read_records(run.ctx.harness_home)
+        calls = len(run.rig.calls())
+        before = sorted(os.listdir(run.run_root))
+        code, text = refile(run, env=env)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + text)
+        self.assertIn(NOT_CLEAN_TEXT, text, label + ": the fixed line")
+        self.assertNotIn(run.rig.base, text, label + ": no folder in the text")
+        self.assertEqual(rerun_folders(run.rig), [], label + ": no evidence folder")
+        self.assertEqual(sorted(os.listdir(run.run_root)), before, label + ": no stage folder in the run root")
+        self.assertEqual(len(run.rig.calls()), calls, label + ": no stage process was started")
+        self.assertEqual(pc_testutil.read_tripwire(wire), [], label + ": no claude was run")
+        self.assertEqual(pc_spend.read_records(run.ctx.harness_home), ledger, label + ": no ledger line was written")
+
+    def test_a_chain_stopped_at_s2_by_an_error_subtype_cannot_be_refiled(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, subtype="error_during_execution")
+        run = Unfiled(stages)
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "the live path refused the run")
+        self.assert_refused_for_nothing_filed(run, "error_during_execution")
+
+    def test_every_unclean_stage_shape_is_refused(self) -> None:
+        base = pc_testutil.default_row1_stages()
+        cases = {
+            "max turns subtype": with_result(base, 1, subtype="error_max_turns"),
+            "error flag": with_result(base, 1, is_error=True),
+            "terminal reason": with_result(base, 1, terminal_reason="max_turns"),
+            "process exit": pc_testutil.stages_with(base, 1, exit=1),
+            "failed isolation assertion": pc_testutil.stages_with(base, 0, init={"model": "some-other-model"}),
+        }
+        for label, stages in sorted(cases.items()):
+            run = Unfiled(stages)
+            self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": the live path refused")
+            self.assert_refused_for_nothing_filed(run, label)
+
+    def test_a_record_without_its_problem_or_evaluation_key_or_with_a_stop_is_refused(self) -> None:
+        def drop(key):
+            def change(record):
+                del record[key]
+
+            return change
+
+        def stop(record):
+            record["evaluation"] = "stop"
+
+        cases = {"no problem key": drop("problem"), "no evaluation key": drop("evaluation"), "stop": stop}
+        for label, change in sorted(cases.items()):
+            run = Unfiled()
+            path = os.path.join(run.run_root, "raw", "s2.record.json")
+            record = json.loads(read_text(path))
+            change(record)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+            self.assert_refused_for_nothing_filed(run, label)
+
+    def test_the_clean_default_run_and_a_run_with_no_s3_still_refile(self) -> None:
+        run = Unfiled()
+        code, text = refile(run)
+        self.assertEqual(code, 0, "the clean default run: " + text)
+        stages = with_result(pc_testutil.default_row1_stages(), 1, text="Checkpoint written. Nothing to resume.")
+        run = Unfiled(stages)
+        code, text = refile(run)
+        self.assertEqual(code, 0, "a run with no s3: " + text)
+
+
+class DenyEntriesContractTests(unittest.TestCase):
+    """WR-03: filing needs the sanitizer's deny entries, so the login check is not left to the caller."""
+
+    def test_file_row_without_deny_entries_is_15_and_does_nothing(self) -> None:
+        run = Unfiled()
+        ctx = run.file_context()._replace(deny_entries=None)
+        before = sorted(os.listdir(run.run_root))
+        with mock.patch.object(pc_promote, "promote") as spy, mock.patch.object(
+            evidence(), "load_stage_data"
+        ) as reader:
+            outcome = evidence().file_row(ctx, run.run_root)
+        self.assertEqual(outcome.code, pc_exitcodes.SCANNER_ERROR, "\n".join(outcome.lines))
+        self.assertEqual(spy.call_count, 0, "promote was not called")
+        self.assertEqual(reader.call_count, 0, "the run root was not read")
+        self.assertEqual(sorted(os.listdir(run.run_root)), before, "no stage folder was made")
+        self.assertFalse(os.path.lexists(run.destination), "the destination was not created")
+        self.assertIn("deny entries", "\n".join(outcome.lines), "the fixed line")
+        self.assertNotIn(run.rig.base, "\n".join(outcome.lines), "no folder in the text")
+
+    def test_file_skipped_without_deny_entries_is_15_and_creates_nothing(self) -> None:
+        import pc_sanitize
+
+        rig = pc_testutil.RowRig()
+        ctx = rig.context()
+        sanitizer = pc_sanitize.Sanitizer.from_machine(rig.repo)
+        runs_before = sorted(os.listdir(ctx.runs_root))
+        evidence_before = sorted(os.listdir(os.path.dirname(ctx.destination)))
+        with mock.patch.object(pc_promote, "promote") as spy:
+            outcome = evidence().file_skipped(
+                rig.repo, ctx.destination, ROW1, FIXED_REASON, sanitizer, None, ctx.config_dir, ctx.runs_root,
+                fixed_clock,
+            )
+        self.assertEqual(outcome.code, pc_exitcodes.SCANNER_ERROR, "\n".join(outcome.lines))
+        self.assertEqual(spy.call_count, 0, "promote was not called")
+        self.assertEqual(sorted(os.listdir(ctx.runs_root)), runs_before, "nothing in the runs root")
+        self.assertEqual(sorted(os.listdir(os.path.dirname(ctx.destination))), evidence_before, "nothing filed")
+
+
 class RaceTests(unittest.TestCase):
     def test_two_filings_of_one_run_give_exactly_one_winner_and_one_17(self) -> None:
         import threading
@@ -1105,6 +1333,63 @@ class RaceTests(unittest.TestCase):
         self.assertEqual(filed, tree_bytes(os.path.join(run.run_root, "stage-2")), "from either stage")
 
 
+class Harn09ReproofTests(unittest.TestCase):
+    """HARN-09 re-proved at zero tokens through the driver (matrix.main), the entry a person types.
+
+    The scripted claude is the only claude; every case also checks its tripwire log. The cases are the routes the
+    verification and the review found: a snapshot-path write, a Write-tool path, a commit, a Bash write outside
+    the roots that was really written, a Bash expansion-form write, a planted fsmonitor command, a planted clean
+    filter and a rewritten hook log.
+    """
+
+    def seeded(self) -> list:
+        base = pc_testutil.default_row1_stages()
+        return [
+            ("snapshot-path write", pc_testutil.seed_outside_write(base, 1), None),
+            ("write-tool path", pc_testutil.seed_trace_write(base, 1), None),
+            ("commit", pc_testutil.seed_git_commit(base, 1), None),
+            ("bash write outside, really written", pc_testutil.seed_bash_outside_write(base, 1), None),
+            (
+                "bash expansion-form write",
+                pc_testutil.seed_bash_outside_write(base, 1, command="mkdir ~/x", write_file=False),
+                None,
+            ),
+            ("planted fsmonitor command", pc_testutil.seed_git_config_plant(base, 0, "fsmonitor"), "planted-fsmonitor"),
+            ("planted clean filter", pc_testutil.seed_git_config_plant(base, 0, "filter"), "planted-filter"),
+            ("rewritten hook log", pc_testutil.seed_run_record_tamper(base, "hooklog"), None),
+        ]
+
+    def test_the_clean_control_files_through_the_driver_and_exits_0(self) -> None:
+        world = World()
+        self.assertEqual(world.code, 0, world.text)
+        self.assertTrue(os.path.isdir(world.destination), "the dated folder was created")
+        self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
+        mechanical = read_text(os.path.join(world.row_dir, "mechanical-checks.md"))
+        self.assertIn("bash-write-escapes: 0", mechanical)
+        self.assertIn("run-record-changes: 0", mechanical)
+        self.assertIn("status-begins-with-session: yes", mechanical)
+        usage = read_text(os.path.join(world.row_dir, "usage.txt")).splitlines()
+        for stage in ("s1", "s2", "s3"):
+            self.assertIn("cumulative-consistent %s: yes" % stage, usage)
+        self.assertEqual([line for line in usage if line.startswith("warning")], [], "no warning line")
+
+    def test_each_seeded_failure_ends_with_11_files_nothing_and_leaves_no_marker(self) -> None:
+        cases = self.seeded()
+        self.assertEqual(len(cases), 8, "eight seeded failures")
+        for label, stages, marker in cases:
+            world = World(stages=stages)
+            self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
+            self.assertIn("isolation or git breach", world.text, label + ": a breach line is printed")
+            created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
+            self.assertEqual(created, [], label + ": nothing was created under tests/evidence")
+            self.assertNotIn(world.rig.base, world.text, label + ": no folder of the rig is printed")
+            self.assertEqual(world.rig.tripwire(), [], label + ": no other claude was started")
+            if marker is not None:
+                self.assertFalse(
+                    os.path.exists(os.path.join(world.rig.outside, marker)), label + ": the planted command never ran"
+                )
+
+
 class ReadmeTests(unittest.TestCase):
     def readme(self) -> str:
         here = os.path.dirname(os.path.abspath(__file__))
@@ -1115,6 +1400,23 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn("### What a run files", text, "the subsection")
         section = text.split("### What a run files", 1)[1].split("\n## ", 1)[0].split("\n### ", 1)[0]
         for phrase in ("rerun-", "SKIPPED-", "--refile", "zero tokens", VERDICT_LINE, "raw", "never filed"):
+            self.assertIn(phrase, section, "the subsection says: " + phrase)
+
+    def test_the_readme_states_the_new_rules(self) -> None:
+        text = self.readme()
+        for phrase in (
+            "write escape",
+            "run record guard",
+            "core.fsmonitor=false",
+            "first five lines",
+            "did not finish cleanly",
+            "cumulative-consistent",
+        ):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        section = text.split("### What a run files", 1)[1].split("\n## ", 1)[0].split("\n### ", 1)[0]
+        for phrase in ("rerun-", "SKIPPED-", "--refile", "zero tokens", VERDICT_LINE, "raw", "never filed"):
+            self.assertIn(phrase, section, "the subsection still says: " + phrase)
+        for phrase in ("did not finish cleanly", "cumulative-consistent", "deny entries"):
             self.assertIn(phrase, section, "the subsection says: " + phrase)
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:

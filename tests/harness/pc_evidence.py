@@ -79,6 +79,8 @@ MESSAGE_NO_PROMPT = "FAIL: a stage prompt was not stored in the run root; nothin
 MESSAGE_NO_STREAM = "FAIL: a stage stream cannot be read; nothing is filed"
 MESSAGE_SANITIZER = "SCANNER_ERROR: the sanitizer could not process a staged file; nothing is filed"
 MESSAGE_STAGING = "FAIL: the stage folder could not be written; nothing is filed"
+MESSAGE_STAGE_NOT_CLEAN = "FAIL: a stage did not finish cleanly; nothing is filed"
+MESSAGE_NO_DENY_ENTRIES = "SCANNER_ERROR: the deny entries were not built; nothing is filed"
 
 _STAGE_DIR_MODE = 0o700
 _FILE_MODE = 0o644
@@ -259,6 +261,9 @@ def render_usage(data: RunData) -> bytes:
 
     Costs are the Decimal text exactly as parsed. The row total is the s2 cumulative total plus the s3 total
     (s1 is inside the s2 chain and is never added); the run total is the sum over the rows filed in this run.
+    One cumulative-consistent line per stage shows the record's flag (whether the cumulative total equals the
+    earlier total plus the call's own cost: yes, no or unknown, UNCONFIRMED when the record lacks it), and one
+    warning line follows for each stage whose flag is no (IN-01).
     """
     lines = ["usage for %s" % pc_rows.ROW1, "costs are in US dollars as the stream reported them, kept as text"]
     for stage in data.stages:
@@ -279,6 +284,15 @@ def render_usage(data: RunData) -> bytes:
                 _text(record.get("wall_seconds")),
             )
         )
+    flags = [(stage.name, _text(stage.record.get("cumulative_consistent"))) for stage in data.stages]
+    for name, value in flags:
+        lines.append("cumulative-consistent %s: %s" % (name, value))
+    for name, value in flags:
+        if value == pc_checks.CORRELATED_NO:
+            lines.append(
+                "warning: the cumulative total at %s differs from the earlier total plus this call's own cost; "
+                "check the call cost" % name
+            )
     row_total, run_total = usage_totals(data.stages)
     lines.append("row total: %s" % row_total)
     lines.append("run total: %s" % run_total)
@@ -730,6 +744,8 @@ def render_mechanical_checks(data: RunData, facts: Mapping[str, Any]) -> bytes:
                 "bash-outside-path-tokens: %d" % mentions["outside_path_tokens"],
                 "bash-unparsed-parts: %d" % mentions["unparsed_parts"],
                 "bash-write-programs: %s" % program_text,
+                "bash-write-escapes: %d" % mentions["write_escapes"]["count"],
+                "run-record-changes: %d" % facts["guard"]["count"],
                 "default-memory-folder: %s" % facts["memory_probe"],
             ],
         )
@@ -824,7 +840,8 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
     boundary = facts["write_boundary"]["count"]
     trace = facts["trace_writes"]["count"]
     memory = facts["memory_probe"]
-    writes = boundary + trace + (1 if memory == "present" else 0)
+    escapes = facts["bash_mentions"]["write_escapes"]["count"]
+    writes = boundary + trace + escapes + (1 if memory == "present" else 0)
     mutations = facts["git"]["mutations"]
     _path, measurement = measure_checkpoint(data)
     if measurement is None:
@@ -843,8 +860,9 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
         % (helper["attempted"], helper["executed"], helper["denied"], helper["compound_refusals"], traces),
         "- [ ] ledger digests unchanged, setup to %s: %s (source: snap-0-setup/sha.txt, %s/sha.txt)"
         % (last, _yes_no(bool(facts["ledgers"]["unchanged"])), last),
-        "- [ ] writes outside approved roots: %d; snapshot paths %d, tool paths %d, default memory folder %s "
-        "(source: the sha.txt of each snapshot, %s)" % (writes, boundary, trace, memory, traces),
+        "- [ ] writes outside approved roots: %d; snapshot paths %d, tool paths %d, Bash writes %d, "
+        "default memory folder %s (source: the sha.txt of each snapshot, mechanical-checks.md, %s)"
+        % (writes, boundary, trace, escapes, memory, traces),
         "- [ ] git mutations: %d; state changes %d, staged entries %d, executed forms %d "
         "(source: status.txt of each snapshot, mechanical-checks.md)"
         % (mutations["total"], mutations["state_changes"], mutations["staged"], mutations["executed"]),
@@ -1022,6 +1040,11 @@ def _unfileable(data: RunData) -> Optional[str]:
             return MESSAGE_NO_PROMPT
         if stage.events is None:
             return MESSAGE_NO_STREAM
+        # The live path goes on only when the call is ok (an empty problem) and the isolation evaluation is
+        # pass; a record that lacks either key is not clean (fail closed), so a refile cannot file a run the
+        # live path refused (CR-01).
+        if stage.record.get("problem") != "" or stage.record.get("evaluation") != _row1().STATUS_PASS:
+            return MESSAGE_STAGE_NOT_CLEAN
     return None
 
 
@@ -1160,9 +1183,13 @@ def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str
     """Stage, sanitize, gate and promote the finished run in run_root into ctx.destination.
 
     The sanitizer and the deny entries are the ones the row built before spend (ctx.sanitizer, ctx.deny_entries);
-    promote is always called with both the deny entries and the config folder (review WR-14). A breach found by
-    the checks files nothing (exit 11); a sanitizer error is 15, a gate refusal 14, a taken destination 17.
+    promote is always called with both the deny entries and the config folder (review WR-14), and a context
+    without the deny entries is refused with 15 before anything is read or made (WR-03). A breach found by the
+    checks, or a stage that did not finish cleanly (a problem or a failed isolation assertion in its record),
+    files nothing (exit 11); a sanitizer error is 15, a gate refusal 14, a taken destination 17.
     """
+    if ctx.deny_entries is None:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))
     try:
         data = load_stage_data(run_root)
         found = dict(facts) if facts is not None else pc_checks.compute_facts(run_root, ctx.config_dir)
@@ -1235,7 +1262,10 @@ def file_skipped(
     The run is never counted as a success: the exit code is 10 (PREFLIGHT_SKIP) when the label is filed, and 14,
     15, 17 or 11 when the sanitizer, the gate, promote or the staging refuse. The reason passes through the same
     sanitizer, gate and promote as any other file, so a reason shaped like a home path is refused with 14.
+    Deny entries of None are refused with 15 before anything is made (WR-03).
     """
+    if deny_entries is None:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))
     if not pc_rows.is_valid_id(row_id):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_SKIP_ROW,))
     stamp = clock().strftime("%Y%m%dT%H%M%SZ")
