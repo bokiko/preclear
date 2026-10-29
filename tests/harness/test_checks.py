@@ -945,15 +945,17 @@ class GitHardeningTests(unittest.TestCase):
         c = checks()
         raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
         os.makedirs(raw)
-        self.assertIsNone(c.pinned_gitdir(raw), "no setup state file, no pin")
+        self.assertIsNone(c.pinned_gitdir(raw, True), "at setup the pin does not exist yet")
+        with self.assertRaises(c.CheckError, msg="after setup a missing file is refused, not unpinned"):
+            c.pinned_gitdir(raw, False)
         state = {"head": "h", "branch": "b", "refs_digest": digest("1"), "gitdir_digest": digest("2"), "staged": 0}
         with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
             json.dump(state, handle)
-        self.assertEqual(c.pinned_gitdir(raw), digest("2"), "the stored digest")
+        self.assertEqual(c.pinned_gitdir(raw, False), digest("2"), "the stored digest")
         with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
             handle.write("not json")
         with self.assertRaises(c.CheckError, msg="a malformed file is refused"):
-            c.pinned_gitdir(raw)
+            c.pinned_gitdir(raw, False)
 
     def test_a_planted_clean_filter_driver_never_runs_once_the_pin_is_taken(self) -> None:
         control, guarded = make_repo(), make_repo()
@@ -976,6 +978,234 @@ class GitHardeningTests(unittest.TestCase):
         with open(os.path.join(run.run_root, "snaps", "snap-9-extra", "status.txt"), "rb") as handle:
             text = handle.read()
         self.assertNotIn(pc_row1.STATUS_NOT_RUN.encode("utf-8"), text, "real status output, not the fixed line")
+
+
+def bare_paths():
+    """A seeded run root with no snapshot and no state file yet, and its paths."""
+    import uuid
+
+    rig = pc_testutil.RowRig()
+    ctx = rig.context()
+    run_root = rig.new_run_root(ctx, "row1-bare-case")
+    paths = pc_row1.seed_row1(
+        rig.repo, run_root, str(uuid.uuid4()), ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model
+    )
+    return rig, paths
+
+
+def move_pin_aside(run_root: str) -> None:
+    raw = os.path.join(run_root, "raw")
+    os.rename(os.path.join(raw, "setup.git.json"), os.path.join(raw, "setup.git.json.moved"))
+
+
+class PinRequiredTests(unittest.TestCase):
+    """WR-03 of the second pass: the pin is required after setup; a missing file refuses and never unpins."""
+
+    def test_the_boundary_is_a_required_argument(self) -> None:
+        c = checks()
+        raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
+        os.makedirs(raw)
+        self.assertIsNone(c.pinned_gitdir(raw, True), "setup, no file")
+        state = {"head": "h", "branch": "b", "refs_digest": digest("1"), "gitdir_digest": digest("2"), "staged": 0}
+        with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        self.assertIsNone(c.pinned_gitdir(raw, True), "setup, with a file: the pin is not used at setup")
+        self.assertEqual(c.pinned_gitdir(raw, False), digest("2"), "after setup the stored digest")
+        with self.assertRaises(TypeError, msg="no caller can reach the unpinned path by omission"):
+            c.pinned_gitdir(raw)
+
+    def test_a_missing_pin_file_refuses_and_starts_no_process(self) -> None:
+        c = checks()
+        run = Run(pc_testutil.default_row1_stages())
+        move_pin_aside(run.run_root)
+        paths = pc_row1.paths_for(run.run_root)
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(c.CheckError, msg="a snapshot after setup needs the pin"):
+                pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+            with self.assertRaises(c.CheckError, msg="a boundary state after setup needs the pin"):
+                c.capture_boundary_state(paths, "s9", real_git())
+        self.assertFalse(os.path.exists(os.path.join(run.run_root, "snaps", "snap-9-extra")), "no partial snapshot")
+
+    def test_the_setup_boundary_still_works_on_a_bare_run_root(self) -> None:
+        c = checks()
+        rig, paths = bare_paths()
+        pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git(), setup=True)
+        c.capture_boundary_state(paths, c.SETUP_STATE, real_git())
+        state = read_json(os.path.join(paths["raw"], "setup.git.json"))
+        self.assertEqual(sorted(state), GIT_KEYS, "the setup state was written")
+        pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+        self.assertTrue(os.path.isdir(os.path.join(paths["snaps"], "snap-9-extra")), "a pinned snapshot runs")
+
+    def test_a_pinned_snapshot_without_the_keyword_is_not_a_setup_snapshot(self) -> None:
+        rig, paths = bare_paths()
+        with self.assertRaises(checks().CheckError, msg="the keyword defaults to false"):
+            pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git())
+
+    def test_the_end_to_end_row_with_the_pin_removed_ends_with_a_check_error(self) -> None:
+        stages = pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0)
+        with self.assertRaises(checks().CheckError):
+            Run(stages)
+
+
+def make_nested_plant(marker: str, committed: bool = True) -> str:
+    """A repository holding a nested repository with a clean filter planted in its own configuration.
+
+    The tracked file of the nested repository is staged first (and committed, so that the gitlink in the
+    project's index names a real commit), then the filter command, an attributes file and a new modification
+    time are planted. The top-level git folder is not changed by any of it.
+    """
+    repo = make_repo()
+    nested = os.path.join(repo, "sub")
+    git_in(repo, "init", "-q", nested)
+    with open(os.path.join(nested, "tracked.txt"), "w", encoding="utf-8") as handle:
+        handle.write("one\n")
+    git_in(nested, "add", "tracked.txt")
+    if committed:
+        git_in(nested, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "first")
+        object_name = git_in(nested, "rev-parse", "HEAD").strip()
+    else:
+        object_name = "1" * 40
+    git_in(repo, "update-index", "--add", "--cacheinfo", "160000,%s,sub" % object_name)
+    git_in(nested, "config", "filter.planted.clean", "touch %s #" % marker)
+    with open(os.path.join(nested, ".gitattributes"), "w", encoding="utf-8") as handle:
+        handle.write("* filter=planted\n")
+    os.utime(os.path.join(nested, "tracked.txt"), None)
+    return repo
+
+
+def harness_shaped_status(repo: str) -> None:
+    """The control: the harness's own status command, run without the walk that refuses a nested repository."""
+    import subprocess
+
+    m = manifest()
+    command = [real_git(), "-C", repo] + m._GIT_STATUS_BEFORE_Z + m._GIT_STATUS_AFTER_Z
+    subprocess.run(command, env=m._git_environment(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE, check=True)
+
+
+class NestedRepositoryTests(unittest.TestCase):
+    """WR-03 of the second pass: the harness runs no git command in a project that holds a nested repository."""
+
+    def plain_project(self) -> str:
+        return os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-nested-")), "project")
+
+    def test_the_walk_refuses_an_entry_named_git_below_the_top_level_only(self) -> None:
+        present = manifest().nested_git_present
+        self.assertFalse(present(make_repo()), "a repository whose only .git is the top-level one")
+        linked = self.plain_project()
+        os.makedirs(linked)
+        with open(os.path.join(linked, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("gitdir: elsewhere\n")
+        self.assertFalse(present(linked), "a top-level .git file (a linked worktree layout)")
+        linked_dir = self.plain_project()
+        os.makedirs(linked_dir)
+        os.symlink(make_repo(), os.path.join(linked_dir, ".git"))
+        self.assertFalse(present(linked_dir), "a top-level .git link")
+        nested = make_repo()
+        git_in(nested, "init", "-q", os.path.join(nested, "sub"))
+        self.assertTrue(present(nested), "a nested repository in a subfolder")
+        as_file = make_repo()
+        os.makedirs(os.path.join(as_file, "sub"))
+        with open(os.path.join(as_file, "sub", ".git"), "w", encoding="utf-8") as handle:
+            handle.write("gitdir: elsewhere\n")
+        self.assertTrue(present(as_file), "a .git file in a subfolder")
+        as_link = make_repo()
+        os.makedirs(os.path.join(as_link, "sub"))
+        os.symlink(make_repo(), os.path.join(as_link, "sub", ".git"))
+        self.assertTrue(present(as_link), "a link named .git")
+        deep = make_repo()
+        os.makedirs(os.path.join(deep, "a", "b", "c"))
+        git_in(deep, "init", "-q", os.path.join(deep, "a", "b", "c", "d"))
+        self.assertTrue(present(deep), "three folders deep")
+
+    def test_the_walk_fails_closed_and_follows_no_links(self) -> None:
+        present = manifest().nested_git_present
+        unreadable = make_repo()
+        hidden = os.path.join(unreadable, "locked")
+        os.makedirs(hidden)
+        os.chmod(hidden, 0)
+        try:
+            if os.access(hidden, os.R_OK):
+                self.skipTest("this user can read a folder with no permissions")
+            self.assertTrue(present(unreadable), "a folder that cannot be read counts as a nested repository")
+        finally:
+            os.chmod(hidden, 0o700)
+        outside = make_repo()
+        outside_project = self.plain_project()
+        os.makedirs(outside_project)
+        os.symlink(os.path.dirname(outside), os.path.join(outside_project, "elsewhere"))
+        self.assertFalse(present(outside_project), "a link to a folder that holds a repository is not followed")
+
+    def test_a_planted_nested_clean_filter_runs_on_a_plain_status_and_never_under_the_harness(self) -> None:
+        markers = [os.path.join(marker_folder(), "marker") for _ in range(3)]
+        control, guarded, stated = [make_nested_plant(marker) for marker in markers]
+        harness_shaped_status(control)
+        self.assertTrue(os.path.exists(markers[0]), "the control proves the nested plant runs on the harness's status")
+        pin = manifest().gitdir_digest(guarded)
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(manifest().NestedRepository, msg="the capture refuses before a process starts"):
+                manifest().capture_git_status(guarded, real_git(), pin)
+            with self.assertRaises(manifest().GitDirChanged, msg="it is a git folder refusal"):
+                manifest().capture_git_status(guarded, real_git())
+            state = checks().git_state(stated, real_git(), manifest().gitdir_digest(stated))
+        self.assertFalse(os.path.exists(markers[1]), "capture_git_status never ran the filter")
+        self.assertFalse(os.path.exists(markers[2]), "git_state never ran the filter")
+        self.assertEqual(sorted(state), GIT_KEYS, "the same five keys")
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], checks().GIT_NOT_READ, key + " is the not-read text")
+        self.assertEqual(state["gitdir_digest"], manifest().gitdir_digest(stated), "the current digest is reported")
+        self.assertTrue(issubclass(manifest().NestedRepository, manifest().GitDirChanged), "a GitDirChanged")
+
+    def test_the_pin_alone_cannot_see_the_nested_plant(self) -> None:
+        repo = make_repo()
+        before = manifest().gitdir_digest(repo)
+        marker = os.path.join(marker_folder(), "marker")
+        nested = os.path.join(repo, "sub")
+        git_in(repo, "init", "-q", nested)
+        with open(os.path.join(nested, "tracked.txt"), "w", encoding="utf-8") as handle:
+            handle.write("one\n")
+        git_in(nested, "add", "tracked.txt")
+        git_in(repo, "update-index", "--add", "--cacheinfo", "160000,%s,sub" % ("1" * 40))
+        git_in(nested, "config", "filter.planted.clean", "touch %s #" % marker)
+        self.assertEqual(manifest().gitdir_digest(repo), before, "the top-level digest is the same after the plant")
+
+    def test_a_nested_repository_at_setup_is_a_broken_fixture(self) -> None:
+        c = checks()
+        rig, paths = bare_paths()
+        git_in(paths["project"], "init", "-q", os.path.join(paths["project"], "inner"))
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(c.CheckError, msg="a nested repository at setup is refused"):
+                c.capture_boundary_state(paths, c.SETUP_STATE, real_git())
+
+    def test_the_snapshot_notes_the_nested_repository_with_a_fixed_line(self) -> None:
+        rig, paths = bare_paths()
+        pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git(), setup=True)
+        c = checks()
+        c.capture_boundary_state(paths, c.SETUP_STATE, real_git())
+        git_in(paths["project"], "init", "-q", os.path.join(paths["project"], "inner"))
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+        with open(os.path.join(paths["snaps"], "snap-9-extra", "status.txt"), "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), pc_row1.STATUS_NOT_RUN_NESTED, "the fixed nested not-run line")
+        self.assertNotEqual(pc_row1.STATUS_NOT_RUN_NESTED, pc_row1.STATUS_NOT_RUN, "a line of its own")
+        self.assertNotIn("inner", pc_row1.STATUS_NOT_RUN_NESTED, "no name of the nested folder in the line")
+
+    def test_the_end_to_end_row_ends_with_11_and_the_filter_never_runs(self) -> None:
+        stages = pc_testutil.seed_nested_repo_plant(pc_testutil.default_row1_stages(), 0)
+        run = Run(stages)
+        marker = os.path.join(run.rig.outside, "planted-nested")
+        self.assertFalse(os.path.exists(marker), "the planted command never ran")
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        text = "\n".join(run.outcome.lines)
+        self.assertRegex(text, r"isolation or git breach: git mutations: [1-9][0-9]*", "fixed text with the count")
+        self.assertNotIn(run.rig.base, text, "no path in the text")
+        state = read_json(os.path.join(run.run_root, "raw", "s1.git.json"))
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], checks().GIT_NOT_READ, key + " is the not-read text")
+        snap = os.path.join(run.run_root, "snaps", SNAP_ONE)
+        with open(os.path.join(snap, "status.txt"), "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), pc_row1.STATUS_NOT_RUN_NESTED, "the fixed nested not-run line")
+        self.assertEqual(len(run.rig.calls()), 1, "the second stage was never launched")
 
 
 class PlantedConfigTracerTests(unittest.TestCase):

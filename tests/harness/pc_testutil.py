@@ -191,6 +191,7 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   write  path, text: really write a file
 #   git    args: run git in the cwd with a hygiene environment
 #   touch  path: set the modification time of an existing file to now (os.utime)
+#   remove path: remove one file (os.remove). It may only aim at a file of the test's own run root.
 #   sleep  seconds
 #   raw    line: print one line verbatim
 # Result keys: subtype, is_error, terminal_reason, text, total_cost_usd, delta (adds
@@ -340,6 +341,10 @@ def do_touch(op):
     os.utime(subst(op["path"]), None)
 
 
+def do_remove(op):
+    os.remove(subst(op["path"]))
+
+
 def do_git(op):
     env = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
@@ -368,6 +373,8 @@ for op in stage.get("ops", []):
         do_git(op)
     elif kind == "touch":
         do_touch(op)
+    elif kind == "remove":
+        do_remove(op)
     elif kind == "sleep":
         time.sleep(float(op.get("seconds", 0)))
     elif kind == "raw":
@@ -448,7 +455,7 @@ def default_row1_stages() -> list:
             {"op": "text", "text": "step 2 done"},
         ],
         "result": {"text": "step 2 done\nfunctions are small and pure\nno tests were run",
-                   "total_cost_usd": 0.03, "num_turns": 2},
+                   "total_cost_usd": 0.03, "delta": 0.03, "num_turns": 2},
     }
     checkpoint = "".join("## %s\nA short body for this section.\n\n" % name for name in _CHECKPOINT_SECTIONS)
     s2 = {
@@ -479,7 +486,8 @@ def default_row1_stages() -> list:
              "input": {"file_path": "$PROJECT/.preclear/widget-export/checkpoint.md"}, "content": "checkpoint body"},
             {"op": "text", "text": "read the checkpoint"},
         ],
-        "result": {"text": "Read the checkpoint; nothing was changed.", "total_cost_usd": 0.04, "num_turns": 2},
+        "result": {"text": "Read the checkpoint; nothing was changed.", "total_cost_usd": 0.04, "delta": 0.04,
+                   "num_turns": 2},
     }
     return [s1, s2, s3]
 
@@ -606,6 +614,42 @@ def seed_git_config_plant(stages: list, stage_index: int = 0, kind: str = "fsmon
     else:
         raise ValueError("unknown planted configuration kind")
     return _with_ops(stages, stage_index, ops)
+
+
+def seed_pin_removed(stages: list, stage_index: int = 0) -> list:
+    """A stage list whose stage removes the run root's own pin file raw/setup.git.json (second-pass WR-03).
+
+    One remove op through the $RUN token, aimed at a file of the test's own run root.
+    """
+    return _with_ops(stages, stage_index, [{"op": "remove", "path": "$RUN/raw/setup.git.json"}])
+
+
+NESTED_FOLDER = "nested-repo"
+
+
+def seed_nested_repo_plant(stages: list, stage_index: int = 0) -> list:
+    """A stage list whose stage creates a nested repository with a planted clean filter (second-pass WR-03).
+
+    In this order: git init of a subfolder repository, a tracked file written in it, that file staged inside it,
+    the subfolder registered as a gitlink in the project's index (the object name is built here, never written
+    out), the subfolder's own .git/config rewritten with a clean-filter driver whose command is `touch` of a
+    marker named planted-nested in the outside folder followed by a comment sign, an attributes file selecting
+    the driver for every file and a touch of the tracked file. Staging comes before the configuration is
+    planted, so the scripted claude's own git calls never run the driver. The top-level .git folder is not
+    changed, so the pin alone cannot see it.
+    """
+    nested = "$PROJECT/" + NESTED_FOLDER
+    object_name = "1" * 40
+    config = _PLANT_CORE + '[filter "planted"]\n\tclean = touch $OUTSIDE/planted-nested #\n'
+    return _with_ops(stages, stage_index, [
+        {"op": "git", "args": ["init", "-q", nested]},
+        {"op": "write", "path": nested + "/tracked.txt", "text": "one\n"},
+        {"op": "git", "args": ["-C", nested, "add", "tracked.txt"]},
+        {"op": "git", "args": ["update-index", "--add", "--cacheinfo", "160000,%s,%s" % (object_name, NESTED_FOLDER)]},
+        {"op": "write", "path": nested + "/.git/config", "text": config},
+        {"op": "write", "path": nested + "/.gitattributes", "text": "* filter=planted\n"},
+        {"op": "touch", "path": nested + "/tracked.txt"},
+    ])
 
 
 _HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))

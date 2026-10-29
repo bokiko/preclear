@@ -719,6 +719,20 @@ class UsageConsistencyTests(unittest.TestCase):
         self.assertIn("s2", warnings[0], "it names the stage")
         self.assertIsNone(verdict_pattern().search("\n".join(lines)), "no line holds a verdict word")
 
+    def test_a_result_without_the_per_call_block_shows_unknown_and_no_warning(self) -> None:
+        stages = pc_testutil.default_row1_stages()
+        stages[1]["result"].pop("delta")
+        lines = self.lines_of(Filed(stages))
+        flags = [line for line in lines if line.startswith("cumulative-consistent ")]
+        self.assertEqual(
+            flags,
+            ["cumulative-consistent s1: yes", "cumulative-consistent s2: unknown", "cumulative-consistent s3: yes"],
+        )
+        self.assertEqual([line for line in lines if line.startswith("warning")], [], "no warning line")
+        self.assertEqual(len([line for line in lines if line.startswith("stage ")]), 3, "the stage lines are unchanged")
+        self.assertIn("row total: 0.13", lines)
+        self.assertIn("run total: 0.13", lines)
+
     def test_a_record_without_the_key_shows_unconfirmed_and_no_warning(self) -> None:
         run = Unfiled()
         path = os.path.join(run.run_root, "raw", "s2.record.json")
@@ -1473,6 +1487,7 @@ class Harn09ReproofTests(unittest.TestCase):
             ("planted fsmonitor command", pc_testutil.seed_git_config_plant(base, 0, "fsmonitor"), "planted-fsmonitor"),
             ("planted clean filter", pc_testutil.seed_git_config_plant(base, 0, "filter"), "planted-filter"),
             ("rewritten hook log", pc_testutil.seed_run_record_tamper(base, "hooklog"), None),
+            ("nested repository with a planted clean filter", pc_testutil.seed_nested_repo_plant(base, 0), "planted-nested"),
         ]
 
     def test_the_clean_control_files_through_the_driver_and_exits_0(self) -> None:
@@ -1491,7 +1506,7 @@ class Harn09ReproofTests(unittest.TestCase):
 
     def test_each_seeded_failure_ends_with_11_files_nothing_and_leaves_no_marker(self) -> None:
         cases = self.seeded()
-        self.assertEqual(len(cases), 8, "eight seeded failures")
+        self.assertEqual(len(cases), 9, "nine seeded failures")
         for label, stages, marker in cases:
             world = World(stages=stages)
             self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
@@ -1504,6 +1519,15 @@ class Harn09ReproofTests(unittest.TestCase):
                 self.assertFalse(
                     os.path.exists(os.path.join(world.rig.outside, marker)), label + ": the planted command never ran"
                 )
+
+    def test_a_removed_pin_file_ends_with_11_files_nothing_and_starts_no_git_command(self) -> None:
+        world = World(stages=pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0))
+        self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
+        created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
+        self.assertEqual(created, [], "nothing was created under tests/evidence")
+        self.assertNotIn(world.rig.base, world.text, "no folder of the rig is printed")
+        self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
+        self.assertEqual(len(world.rig.calls()), 1, "the second stage was never launched")
 
 
 class ReadmeTests(unittest.TestCase):
@@ -1540,6 +1564,13 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn("a stage did not run", text, "the guide names the refusal")
         self.assertNotIn("a finished run folder", text, "the old phrase is gone")
         self.assertIn("whole chain", text, "the guide says the chain must be whole")
+
+    def test_the_readme_describes_the_pin_the_nested_refusal_and_the_unknown_value(self) -> None:
+        text = self.readme()
+        for phrase in ("nested repository", "pin file", "derived from the totals"):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        bullet = text.split("Git read-only", 1)[1].split("\n- ", 1)[0]
+        self.assertIn("required", bullet, "the Git read-only bullet describes the pin as required after setup")
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
         text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
