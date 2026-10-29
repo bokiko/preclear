@@ -10,12 +10,14 @@ What is a breach (decided by breaches(), nothing else):
 
   * writes-outside-approved-roots   a concrete write outside the approved roots (project, ckpt, auto-memory):
                                     a path that changed between boundary snapshots, an executed Write, Edit or
-                                    NotebookEdit tool path, or the default auto-memory folder being present
+                                    NotebookEdit tool path, an executed write-capable Bash part that names a
+                                    place outside the roots (a write escape, plan 03-07), or the default
+                                    auto-memory folder being present
   * git-mutations                   a change of HEAD, branch, refs or the git folder (the index excluded), a
                                     staged entry, or an executed mutating git command
 
-Denials, changed ledgers, a helper-call disagreement and Bash path mentions are facts for the reviewer and
-never a breach. Messages are fixed text with counts, ids and state names only, never a path.
+Denials, changed ledgers, a helper-call disagreement and read-only Bash path mentions are facts for the
+reviewer and never a breach. Messages are fixed text with counts, ids and state names only, never a path.
 
 The default auto-memory folder is looked at with one lstat on a constructed path. The harness config folder
 is never opened, listed, walked or snapshotted (it holds the credential).
@@ -236,22 +238,104 @@ def trace_write_paths(
     return sorted(found)
 
 
-def _tokens(part: str) -> Optional[List[str]]:
-    """Split one command part into words after the documented wrappers (and env) are removed; None if it does not split."""
+_ENV_UNSET_OPTIONS = ("-u", "--unset")
+_ENV_CHDIR_OPTIONS = ("-C", "--chdir")
+_ENV_SPLIT_OPTIONS = ("-S", "--split-string")
+_DEV_PATHS = ("/dev/null", "/dev/stdout", "/dev/stderr")
+_WRAPPER_NAMES = ("timeout", "time", "nice", "nohup", "stdbuf", "command", "builtin", "noglob")
+_QUOTED = re.compile(r"'([^'\n]*)'|\"([^\"\n]*)\"")
+_SED_WRITE_OPERAND = re.compile(r"(?:^|[;{}/\s])[0-9$,]*[wW]\s+(\S+)")
+_REDIRECT_BARE = re.compile(r"(?:[0-9]*|&)>{1,2}\|?\Z")
+_REDIRECT_ATTACHED = re.compile(r"(?:[0-9]*|&)>{1,2}\|?(.+)\Z")
+_REDIRECT_INPUT = re.compile(r"[0-9]*<{1,3}\Z")
+_REDIRECT_INPUT_ATTACHED = re.compile(r"[0-9]*<{1,3}.+\Z")
+_FD_TARGET = re.compile(r"(?:[0-9]+|-)\Z")
+
+
+def _strip_prefix(words: List[str]) -> Tuple[List[str], List[str]]:
+    """Drop leading NAME=value words and env words (with their options); return (words, env directory changes).
+
+    The values of env's -u and -C options belong to the option and never hide the program. The value of -C or
+    --chdir is returned as a directory change. A -S string is split and read as the command it holds.
+    """
+    words = list(words)
+    chdirs: List[str] = []
+    while words:
+        if _ASSIGNMENT.match(words[0]):
+            words = words[1:]
+            continue
+        if os.path.basename(words[0]) != "env":
+            break
+        index = 1
+        spliced = None
+        while index < len(words):
+            word = words[index]
+            if word in _ENV_CHDIR_OPTIONS and index + 1 < len(words):
+                chdirs.append(words[index + 1])
+                index += 2
+            elif word.startswith("--chdir="):
+                chdirs.append(word[len("--chdir="):])
+                index += 1
+            elif word.startswith("-C") and len(word) > 2 and not word.startswith("--"):
+                chdirs.append(word[2:])
+                index += 1
+            elif word in _ENV_UNSET_OPTIONS and index + 1 < len(words):
+                index += 2
+            elif word in _ENV_SPLIT_OPTIONS and index + 1 < len(words):
+                try:
+                    spliced = shlex.split(words[index + 1]) + words[index + 2:]
+                except ValueError:
+                    spliced = words[index + 2:]
+                break
+            elif word.startswith("-") or _ASSIGNMENT.match(word):
+                index += 1
+            else:
+                break
+        words = spliced if spliced is not None else words[index:]
+    return words, chdirs
+
+
+def _split_part(part: str) -> Optional[Tuple[List[str], List[str]]]:
+    """Split one command part into (words, env directory changes) after wrappers, assignments and env are removed.
+
+    Returns None when the part does not split. A part holding only assignments gives an empty word list. A
+    leading parenthesis or brace of a subshell group is not part of the program name.
+    """
     try:
         words = shlex.split(pc_allowlist.strip_wrappers(part))
     except ValueError:
         return None
-    if words and os.path.basename(words[0]) == "env":
-        index = 1
-        while index < len(words) and (words[index].startswith("-") or _ASSIGNMENT.match(words[index])):
-            index += 1
-        words = words[index:]
-    return words
+    chdirs: List[str] = []
+    for _round in range(8):
+        words, found = _strip_prefix(words)
+        chdirs.extend(found)
+        if not words:
+            break
+        stripped = pc_allowlist.strip_wrappers(shlex.join(words))
+        if stripped == shlex.join(words):
+            break
+        try:
+            words = shlex.split(stripped)
+        except ValueError:
+            return None
+    if words:
+        words[0] = words[0].lstrip("({")
+        if words[0] == "":
+            words = words[1:]
+    return words, chdirs
+
+
+def _tokens(part: str) -> Optional[List[str]]:
+    """Split one command part into words after the documented wrappers, leading assignments and env are removed.
+
+    None if the part does not split; an empty list if nothing but assignments was there.
+    """
+    split = _split_part(part)
+    return None if split is None else split[0]
 
 
 def _write_program(words: Sequence[str]) -> Optional[str]:
-    """The name of the write-capable use of a program in these words, or None. A listing only, never a verdict."""
+    """The name of the write-capable use of a program in these words, or None."""
     if not words:
         return None
     program = os.path.basename(words[0])
@@ -280,35 +364,241 @@ def _write_program(words: Sequence[str]) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------------------------
+# Write escapes: an executed write-capable part that names a place the approved roots cannot contain
+# ---------------------------------------------------------------------------------------------
+
+
+def _escapes(word: str, roots: Sequence[str], ignore: Sequence[str]) -> bool:
+    """True when the word names a place the approved roots cannot be shown to contain.
+
+    A tilde word, a word holding $HOME or ${HOME}, an absolute path whose realpath is outside every root (the
+    paths in ignore and the null and standard-stream devices are not places), or a relative path with a dot-dot
+    segment. For an option or an assignment form the value after the first equals sign is judged.
+    """
+    value = word
+    if word.startswith("-") or _ASSIGNMENT.match(word):
+        if "=" not in word:
+            return False
+        value = word.split("=", 1)[1]
+    if value.startswith("~") or "$HOME" in value or "${HOME}" in value:
+        return True
+    if value.startswith("/"):
+        if value in ignore or value in _DEV_PATHS:
+            return False
+        real = os.path.realpath(value)
+        return not any(_inside(real, root) for root in roots)
+    return ".." in value.split("/")
+
+
+def _path_like(text: str) -> bool:
+    """A string literal that reads as a path: no whitespace and a slash start, a tilde, $HOME or a dot-dot segment."""
+    if text == "" or any(ch.isspace() for ch in text):
+        return False
+    if text.startswith("~") or "$HOME" in text or "${HOME}" in text:
+        return True
+    if text.startswith("/"):
+        return len(text) > 1 and text[1] != "/"
+    return "/" in text and ".." in text.split("/")
+
+
+def _script_positions(program: str, rest: Sequence[str]) -> Tuple[set, set]:
+    """Positions in rest of program text (never judged as a path) and of awk field separators (never judged)."""
+    scripts: set = set()
+    ignored: set = set()
+    index = 0
+    have = False
+    if program in ("python", "python3"):
+        if "-c" in rest:
+            position = list(rest).index("-c") + 1
+            if position < len(rest):
+                scripts.add(position)
+        return scripts, ignored
+    if program in ("perl", "ruby", "node", "php"):
+        for number, word in enumerate(rest):
+            if word in ("-e", "-E", "-r") and number + 1 < len(rest):
+                scripts.add(number + 1)
+        return scripts, ignored
+    if program in ("awk", "gawk", "mawk"):
+        while index < len(rest):
+            word = rest[index]
+            if word in ("-F", "--field-separator"):
+                ignored.add(index + 1)
+                index += 2
+            elif word in ("-v", "--assign", "-i", "--include", "-l", "--load"):
+                index += 2
+            elif word in ("-f", "--file"):
+                have = True
+                index += 2
+            elif word in ("-e", "--source"):
+                have = True
+                scripts.add(index + 1)
+                index += 2
+            elif word.startswith("--source="):
+                have = True
+                scripts.add(index)
+                index += 1
+            elif word.startswith("-") and len(word) > 1:
+                index += 1
+            else:
+                if not have:
+                    scripts.add(index)
+                    have = True
+                index += 1
+        return scripts, ignored
+    if program == "sed":
+        while index < len(rest):
+            word = rest[index]
+            if word in ("-e", "--expression"):
+                have = True
+                scripts.add(index + 1)
+                index += 2
+            elif word.startswith("--expression="):
+                have = True
+                scripts.add(index)
+                index += 1
+            elif word in ("-f", "--file"):
+                have = True
+                index += 2
+            elif word.startswith("-") and len(word) > 1:
+                index += 1
+            else:
+                if not have:
+                    scripts.add(index)
+                    have = True
+                index += 1
+    return scripts, ignored
+
+
+def _script_literals(label: str, rest: Sequence[str], scripts: set) -> List[str]:
+    """The path-like quoted literals of a python3 -c, awk or sed script, and the file operand of a sed w command."""
+    if label not in ("python3-c", "awk", "sed-write"):
+        return []
+    found: List[str] = []
+    for position in sorted(scripts):
+        if position >= len(rest):
+            continue
+        text = rest[position]
+        for match in _QUOTED.finditer(text):
+            literal = match.group(1) if match.group(1) is not None else match.group(2)
+            if _path_like(literal):
+                found.append(literal)
+        if label == "sed-write":
+            for operand in _SED_WRITE_OPERAND.findall(text):
+                if _path_like(operand):
+                    found.append(operand)
+    return found
+
+
+def _redirections(rest: Sequence[str]) -> Tuple[List[str], set]:
+    """The output redirection targets in these words, and the positions of every redirection operator and target.
+
+    A target starting with an ampersand and a descriptor number (2>&1, >&2) is a duplication and is no target.
+    Input redirections and here-documents only contribute their positions.
+    """
+    targets: List[str] = []
+    used: set = set()
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if _REDIRECT_BARE.match(word) and index + 1 < len(rest):
+            targets.append(rest[index + 1])
+            used.update((index, index + 1))
+            index += 2
+            continue
+        if _REDIRECT_INPUT.match(word):
+            used.update((index, index + 1))
+            index += 2
+            continue
+        attached = _REDIRECT_ATTACHED.match(word)
+        if attached is not None:
+            targets.append(attached.group(1))
+            used.add(index)
+        elif _REDIRECT_INPUT_ATTACHED.match(word):
+            used.add(index)
+        index += 1
+    kept: List[str] = []
+    for target in targets:
+        if target.startswith("&"):
+            if _FD_TARGET.match(target[1:]) or target[1:] == "":
+                continue
+            target = target[1:]
+        kept.append(target)
+    return kept, used
+
+
 def bash_mentions(
     events: Sequence[Dict[str, Any]], approved_abs: Sequence[str], ignore: Sequence[str] = ()
 ) -> Dict[str, Any]:
-    """List what executed Bash commands mention: absolute path words outside the roots and write-capable programs.
+    """List what executed Bash commands mention and count the write escapes among them.
 
-    The paths in ignore (the helper itself) are not counted as mentions.
+    Listed for the reviewer: absolute path words outside the roots (outside_path_tokens) and the write-capable
+    programs by name (write_programs). Decided here: write_escapes, an executed part that is write-capable (a
+    program _write_program labels, or an output redirection) and names a place the roots cannot be shown to
+    contain: a tilde word, a word holding $HOME, a dot-dot segment, an absolute path outside the roots, a quoted
+    path literal in a python3 -c, awk or sed script, or a cd earlier in the same command (or an env -C directory)
+    that escaped. A script body is never judged as a path, only its path-like quoted literals and the file
+    operand of a sed w command. Read-only commands may name any path and stay mentions. Code that computes its
+    target at run time is not resolved; the pinned allowlist and the snapshot diff are the other nets.
 
-    Counts and program names only, never a path. This is a listing for the reviewer and never an input to
-    breaches(): a read-only command may name any path, and a real write by any program still shows in the
-    snapshot diff.
+    The paths in ignore (the helper itself) are not counted as mentions or as escapes. Counts and program names
+    only, never a path.
     """
     roots = [os.path.normpath(root) for root in approved_abs]
+    real_roots = [os.path.realpath(root) for root in approved_abs]
     outside = 0
     unparsed = 0
     programs: Dict[str, int] = {}
+    escape_programs: Dict[str, int] = {}
+    escape_count = 0
     commands = executed_bash_commands(events)
     for command in commands:
+        cwd_escaped = False
         for part in pc_allowlist.split_compound(command):
-            words = _tokens(part)
-            if words is None:
+            split = _split_part(part)
+            if split is None:
                 unparsed += 1
                 continue
+            words, chdirs = split
             for word in words:
                 if word.startswith("/") and word not in ignore and not any(_inside(os.path.normpath(word), root) for root in roots):
                     outside += 1
             label = _write_program(words)
             if label is not None:
                 programs[label] = programs.get(label, 0) + 1
-    return {"commands": len(commands), "outside_path_tokens": outside, "unparsed_parts": unparsed, "write_programs": programs}
+            if not words:
+                continue
+            program = os.path.basename(words[0])
+            rest = list(words[1:])
+            if program == "cd":
+                targets = [word.rstrip(")") for word in rest if not (word.startswith("-") and word != "-")]
+                if not targets or targets[0] == "-" or _escapes(targets[0], real_roots, ignore):
+                    cwd_escaped = True
+                continue
+            redirects, redirect_positions = _redirections(rest)
+            if label is None and not redirects:
+                continue
+            scripts, separators = _script_positions(program, rest)
+            skipped = scripts | separators | redirect_positions
+            plain = [word for number, word in enumerate(rest) if number not in skipped]
+            escaping = (
+                cwd_escaped
+                or any(_escapes(directory, real_roots, ignore) for directory in chdirs)
+                or any(_escapes(word, real_roots, ignore) for word in plain)
+                or any(_escapes(target, real_roots, ignore) for target in redirects)
+                or any(_escapes(literal, real_roots, ignore) for literal in _script_literals(label or "", rest, scripts))
+            )
+            if escaping:
+                name = label if label is not None else "redirect"
+                escape_programs[name] = escape_programs.get(name, 0) + 1
+                escape_count += 1
+    return {
+        "commands": len(commands),
+        "outside_path_tokens": outside,
+        "unparsed_parts": unparsed,
+        "write_programs": programs,
+        "write_escapes": {"count": escape_count, "programs": escape_programs},
+    }
 
 
 # ---------------------------------------------------------------------------------------------
@@ -328,13 +618,17 @@ def default_memory_path(config_dir: str, project: str) -> str:
 
 
 def memory_probe(config_dir: str, project: str) -> str:
-    """Return absent, present or unknown from a single lstat; the config folder is never opened, listed or walked."""
+    """Return absent or present from a single lstat; the config folder is never opened, listed or walked.
+
+    A missing path (or one whose parent is not a folder) is absent. Any other error is a failure to read and
+    raises CheckError, so an unreadable reading can never stand for a clean one (WR-05).
+    """
     try:
         os.lstat(default_memory_path(config_dir, project))
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return "absent"
     except OSError:
-        return "unknown"
+        raise CheckError("the default memory folder could not be examined") from None
     return "present"
 
 
@@ -805,7 +1099,13 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
             streams[name] = "unreadable"
 
     trace: set = set()
-    mentions: Dict[str, Any] = {"commands": 0, "outside_path_tokens": 0, "unparsed_parts": 0, "write_programs": {}}
+    mentions: Dict[str, Any] = {
+        "commands": 0,
+        "outside_path_tokens": 0,
+        "unparsed_parts": 0,
+        "write_programs": {},
+        "write_escapes": {"count": 0, "programs": {}},
+    }
     executed_commands: List[str] = []
     for name in stages:
         events = events_by_stage.get(name)
@@ -817,12 +1117,16 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
             mentions[key] += found[key]
         for program, count in found["write_programs"].items():
             mentions["write_programs"][program] = mentions["write_programs"].get(program, 0) + count
+        mentions["write_escapes"]["count"] += found["write_escapes"]["count"]
+        for program, count in found["write_escapes"]["programs"].items():
+            mentions["write_escapes"]["programs"][program] = mentions["write_escapes"]["programs"].get(program, 0) + count
         executed_commands.extend(executed_bash_commands(events))
 
     states = []
     for name in [SETUP_STATE] + stages:
-        if os.path.isfile(os.path.join(raw, name + ".git.json")):
-            states.append(load_git_state(raw, name))
+        if not os.path.isfile(os.path.join(raw, name + ".git.json")):
+            raise CheckError("a git state file is missing")  # a missing file must not remove a comparison
+        states.append(load_git_state(raw, name))
 
     log_path = os.path.join(root, "wrapper", "calls.log")
     log_text = _read_bytes(log_path, "the wrapper log").decode("utf-8", "replace") if os.path.isfile(log_path) else ""
@@ -859,11 +1163,13 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
 def breaches(facts: Mapping[str, Any]) -> List[Tuple[str, int]]:
     """Return (id, count) for each isolation or git breach, empty when there is none.
 
-    A write outside the approved roots is a snapshot path, an executed Write or Edit path, or a present default
-    auto-memory folder (one each). A git mutation is a state change, a staged entry or an executed mutating form.
+    A write outside the approved roots is a snapshot path, an executed Write or Edit path, an executed
+    write-capable Bash part that names a place outside the roots, or a present default auto-memory folder (one
+    each). A git mutation is a state change, a staged entry or an executed mutating form.
     """
     found: List[Tuple[str, int]] = []
     writes = int(facts["write_boundary"]["count"]) + int(facts["trace_writes"]["count"])
+    writes += int(facts["bash_mentions"]["write_escapes"]["count"])
     if facts["memory_probe"] == "present":
         writes += 1
     if writes > 0:
