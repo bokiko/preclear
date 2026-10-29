@@ -20,7 +20,11 @@ f, else None), target (raw link target bytes for l, else None).
 
 capture_git_status runs only "git --no-optional-locks status" (with and without -z) and
 returns the raw NUL form, which stays in the run root, and the plain text form, which is
-the only candidate for evidence. tree_manifest refuses a root at or under any path in its
+the only candidate for evidence. Every harness git call against the model-writable project
+carries GIT_HARDENING (core.fsmonitor and core.untrackedCache forced off), and a capture
+given the gitdir digest recorded at setup starts no process at all once the project's git
+folder differs from it: git runs commands named in the repository's own configuration, so
+the harness never runs git in a repository the model has changed (CR-03). tree_manifest refuses a root at or under any path in its
 refuse_under argument (the harness-owned Claude config directory holds credentials).
 
 CLI: python3 -E -s -B pc_manifest.py ROOT [--jsonl]
@@ -58,7 +62,12 @@ GIT_ENV_OVERRIDES = {
     "GIT_OPTIONAL_LOCKS": "0",
 }
 _GIT_ENV_REMOVED = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
-_GIT_STATUS_BEFORE_Z = ["--no-optional-locks", "status", "--porcelain=v1"]
+# Forced off on every git call against the project: the repository's own .git/config is writable by the
+# model, and a core.fsmonitor command is run by git status as the harness user.
+GIT_HARDENING = ("-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false")
+_GIT_STATUS_BEFORE_Z = list(GIT_HARDENING) + ["--no-optional-locks", "status", "--porcelain=v1"]
+# The two top-level entries of the project's .git folder a plain git status may rewrite.
+GITDIR_DIGEST_LEAVES_OUT = (b"index", b"index.lock")
 _GIT_STATUS_AFTER_Z = ["--untracked-files=all", "--ignore-submodules=none"]
 GIT_TIMEOUT_SECONDS = 120
 
@@ -69,6 +78,21 @@ def _git_environment():
         env.pop(name, None)
     env.update(GIT_ENV_OVERRIDES)
     return env
+
+
+class GitDirChanged(ManifestError):
+    """The project's git folder differs from the recorded setup digest; no git command was started."""
+
+
+def gitdir_digest(project_dir):
+    """The sha256 hex of the project's .git folder, without the index and index.lock entries.
+
+    It is the value pc_checks.git_state has always stored as gitdir_digest. A missing or non-folder .git
+    raises ManifestError through tree_manifest.
+    """
+    entries = tree_manifest(os.path.join(project_dir, ".git"))
+    kept = [entry for entry in entries if entry["path"] not in GITDIR_DIGEST_LEAVES_OUT]
+    return hashlib.sha256(jsonl_bytes(kept)).hexdigest()
 
 
 def _run_git_status(git, project_dir, with_z):
@@ -91,8 +115,11 @@ def _run_git_status(git, project_dir, with_z):
     return result.stdout
 
 
-def capture_git_status(project_dir, git):
+def capture_git_status(project_dir, git, pinned_gitdir=None):
     """Run git status read-only and return (raw NUL bytes, plain text bytes).
+
+    PINNED_GITDIR is the gitdir digest recorded at setup. When it is given and the project's git folder no
+    longer matches it, GitDirChanged is raised before any process starts.
 
     The first call is the NUL form named in SKILL.md Step 3, the second the same command
     without -z (git's quoted porcelain v1 form). Only --no-optional-locks status is ever
@@ -100,6 +127,8 @@ def capture_git_status(project_dir, git):
     only; only the text form is a candidate for evidence, because the leak gate refuses
     NUL bytes. A non-zero exit raises ManifestError.
     """
+    if pinned_gitdir is not None and gitdir_digest(project_dir) != pinned_gitdir:
+        raise GitDirChanged("the git folder differs from the setup state; git was not run")
     raw = _run_git_status(git, project_dir, True)
     text = _run_git_status(git, project_dir, False)
     return raw, text

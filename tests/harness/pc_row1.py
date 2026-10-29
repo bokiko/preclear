@@ -373,9 +373,14 @@ def paths_for(run_root: str) -> Dict[str, Optional[str]]:
 
 
 def _excluded(path: bytes) -> bool:
-    """True for entries a boundary snapshot leaves out: raw, snaps, stage-prefixed folders, the project's .git."""
+    """True for entries a boundary snapshot leaves out: raw, snaps and the project's .git.
+
+    raw and snaps are the run's own record, guarded at every boundary by pc_checks.capture_guard. A
+    stage-prefixed top-level folder is no longer left out (the filing makes those only after the last
+    snapshot), so one made by the model is listed as a write outside the approved roots.
+    """
     top = path.split(b"/", 1)[0]
-    if top in (b"raw", b"snaps") or top.startswith(b"stage"):
+    if top in (b"raw", b"snaps"):
         return True
     return path == b"project/.git" or path.startswith(b"project/.git/")
 
@@ -388,6 +393,9 @@ def _listing(names: Sequence[str]) -> bytes:
     return "".join(name + "\n" for name in names).encode("utf-8", "surrogateescape")
 
 
+STATUS_NOT_RUN = "git status was not run: the git folder differs from the setup state"
+
+
 def take_snapshot(
     paths: Mapping[str, Optional[str]],
     name: str,
@@ -396,17 +404,27 @@ def take_snapshot(
 ) -> List[str]:
     """Write snaps/<name> and return the names of model-written trees whose copy was skipped.
 
-    The folder holds sha.txt and manifest.jsonl of the run root (without raw, snaps, any stage-prefixed
-    top-level folder and the project's .git), status.txt and status.raw from git status, ledgers-ls.txt and
+    The folder holds sha.txt and manifest.jsonl of the run root (without raw, snaps and the project's .git;
+    a stage-prefixed top-level folder is listed like any other), status.txt and status.raw from git status, ledgers-ls.txt and
     bindings-ls.txt, a copy of each ledger markdown file and, when present, copies of project/.preclear
     (as preclear) and the auto-memory folder (as auto-memory). A symlink or special file inside one of those
     two trees skips that one copy only; the manifest still lists the entry. A taken name is FileExistsError.
+
+    git status is gated by the gitdir digest recorded at setup (pc_checks.pinned_gitdir): once the project's
+    .git folder differs from it, git is not started (a command planted in the repository's own configuration
+    would run), status.raw is empty and status.txt holds the one fixed line STATUS_NOT_RUN. The first snapshot
+    of a run has no state file yet and is unpinned.
     """
     run_root = str(paths["run_root"])
     entries = [e for e in pc_manifest.tree_manifest(run_root, tuple(refuse_under)) if not _excluded(e["path"])]
     dest = os.path.join(str(paths["snaps"]), name)
     pc_manifest.write_snapshot(dest, entries)
-    raw_status, text_status = pc_manifest.capture_git_status(str(paths["project"]), git)
+    try:
+        raw_status, text_status = pc_manifest.capture_git_status(
+            str(paths["project"]), git, pc_checks.pinned_gitdir(str(paths["raw"]))
+        )
+    except pc_manifest.GitDirChanged:
+        raw_status, text_status = b"", (STATUS_NOT_RUN + "\n").encode("utf-8")
     pc_runroot.write_exclusive(os.path.join(dest, "status.raw"), raw_status, 0o600)
     pc_runroot.write_exclusive(os.path.join(dest, "status.txt"), text_status, 0o600)
     ledgers = str(paths["ledgers"])
@@ -853,6 +871,9 @@ def run_stage(
         (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"),
         0o600,
     )
+    # The guard comes last, after the record, so that the record is part of what the next boundary compares: a
+    # record the model rewrites during the next stage differs from the digest taken here (WR-01).
+    pc_checks.capture_guard(paths, spec.name)
     return StageResult(
         spec.name,
         session_id,
@@ -1015,14 +1036,16 @@ MESSAGE_NOTHING_FILED = "nothing is filed; the raw files and snapshots stay in t
 _BREACH_TEXT = {
     pc_checks.BREACH_WRITES: "writes outside approved roots",
     pc_checks.BREACH_GIT: "git mutations",
+    pc_checks.BREACH_RECORD: "changes to the run's own record files",
 }
 
 
 def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) -> Optional[pc_rows.RowOutcome]:
     """Run the mechanical checks over the run root as it is on disk; a breach is exit 11 and files nothing.
 
-    Only a concrete write outside the approved roots or a git mutation is a breach (HARN-09). Every other
-    fact (denials, ledger changes, helper-call disagreement, Bash path mentions) is left for the reviewer.
+    A concrete write outside the approved roots (a Bash write escape included), a git mutation or a change to
+    the run's own record files is a breach (HARN-09). Every other fact (denials, ledger changes, helper-call
+    disagreement, read-only Bash path mentions) is left for the reviewer.
     The lines hold counts and ids only, never a path. A run root the checks cannot read is a broken harness
     and is also exit 11, because a run whose isolation cannot be shown must not be filed.
     """
@@ -1104,7 +1127,8 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
     paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
     take_snapshot(paths, SNAPSHOT_SETUP, vcs)
     pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs)
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
+    pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
+    entry =pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
     if entry is None:
         raise pc_spike.SpikeError("the row is not in the registry")
     s1_prompt, s2_prompt = read_stage_prompts(ctx.repo_root, str(paths["ledger_a"]))

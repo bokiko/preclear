@@ -107,6 +107,12 @@ class Seeded(object):
             self.ctx.model,
         )
 
+    def guard_setup(self) -> None:
+        """Write the setup guard the way run_row does, so that run_stage has a previous boundary to compare."""
+        import pc_checks
+
+        pc_checks.capture_guard(self.paths, "setup")
+
 
 class SeedTests(unittest.TestCase):
     def test_a_seed_creates_exactly_the_documented_layout(self) -> None:
@@ -275,6 +281,8 @@ class SnapshotTests(unittest.TestCase):
         with open(os.path.join(p["auto_memory"], "note.md"), "wb") as handle:
             handle.write(b"memory body\n")
         os.makedirs(os.path.join(seeded.run_root, "stage-extra"))
+        with open(os.path.join(seeded.run_root, "stage-extra", "note.txt"), "wb") as handle:
+            handle.write(b"a model-made stage-prefixed folder\n")
         skipped = self.snapshot(seeded, "snap-0-setup")
         self.assertEqual(list(skipped), [])
         snap = os.path.join(p["snaps"], "snap-0-setup")
@@ -287,8 +295,8 @@ class SnapshotTests(unittest.TestCase):
         for path in paths:
             self.assertFalse(path.startswith("raw"), "raw entry listed")
             self.assertFalse(path.startswith("snaps"), "snaps entry listed")
-            self.assertFalse(path.startswith("stage"), "stage entry listed")
             self.assertFalse(path.startswith("project/.git/"), ".git entry listed")
+        self.assertIn("stage-extra/note.txt", paths, "a stage-prefixed folder is no longer hidden from the snapshot")
         self.assertIn(PLAN_RELATIVE, paths)
         calls = [line for line in sha_lines if line.endswith("  wrapper/calls.log")]
         self.assertEqual(len(calls), 1)
@@ -337,6 +345,7 @@ class TracerTests(unittest.TestCase):
         ctx, p, session = seeded.ctx, seeded.paths, seeded.session
         spec = rows().find_entry(rows().build_registry(), "row", ROW1).stages[0]
         prompt = m.read_stage_prompts(seeded.rig.repo, p["ledger_a"])[0]
+        seeded.guard_setup()
         result = m.run_stage(ctx, p, spec, session, prompt, False, None, 120)
         self.assertTrue(result.ok, result.problem)
         calls = seeded.rig.calls()
@@ -396,6 +405,7 @@ class TracerTests(unittest.TestCase):
         seeded = Seeded()
         ctx, p = seeded.ctx, seeded.paths
         spec = rows().find_entry(rows().build_registry(), "row", ROW1).stages[0]
+        seeded.guard_setup()
         m.run_stage(ctx, p, spec, seeded.session, "prompt", False, None, 120)
         with self.assertRaises(pc_spend.SpendRefused):
             m.run_stage(ctx, p, spec, seeded.session, "prompt", False, None, 120)
