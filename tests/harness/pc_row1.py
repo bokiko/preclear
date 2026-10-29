@@ -388,6 +388,9 @@ def _listing(names: Sequence[str]) -> bytes:
     return "".join(name + "\n" for name in names).encode("utf-8", "surrogateescape")
 
 
+STATUS_NOT_RUN = "git status was not run: the git folder differs from the setup state"
+
+
 def take_snapshot(
     paths: Mapping[str, Optional[str]],
     name: str,
@@ -401,12 +404,22 @@ def take_snapshot(
     bindings-ls.txt, a copy of each ledger markdown file and, when present, copies of project/.preclear
     (as preclear) and the auto-memory folder (as auto-memory). A symlink or special file inside one of those
     two trees skips that one copy only; the manifest still lists the entry. A taken name is FileExistsError.
+
+    git status is gated by the gitdir digest recorded at setup (pc_checks.pinned_gitdir): once the project's
+    .git folder differs from it, git is not started (a command planted in the repository's own configuration
+    would run), status.raw is empty and status.txt holds the one fixed line STATUS_NOT_RUN. The first snapshot
+    of a run has no state file yet and is unpinned.
     """
     run_root = str(paths["run_root"])
     entries = [e for e in pc_manifest.tree_manifest(run_root, tuple(refuse_under)) if not _excluded(e["path"])]
     dest = os.path.join(str(paths["snaps"]), name)
     pc_manifest.write_snapshot(dest, entries)
-    raw_status, text_status = pc_manifest.capture_git_status(str(paths["project"]), git)
+    try:
+        raw_status, text_status = pc_manifest.capture_git_status(
+            str(paths["project"]), git, pc_checks.pinned_gitdir(str(paths["raw"]))
+        )
+    except pc_manifest.GitDirChanged:
+        raw_status, text_status = b"", (STATUS_NOT_RUN + "\n").encode("utf-8")
     pc_runroot.write_exclusive(os.path.join(dest, "status.raw"), raw_status, 0o600)
     pc_runroot.write_exclusive(os.path.join(dest, "status.txt"), text_status, 0o600)
     ledgers = str(paths["ledgers"])

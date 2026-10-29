@@ -825,13 +825,13 @@ class GitHardeningTests(unittest.TestCase):
             manifest().capture_git_status(repo, "git")
             checks().git_state(repo, "git")
         self.assertEqual(manifest().GIT_HARDENING, tuple(HARDENING), "the shared options")
-        self.assertEqual(len(recorder.commands), 5, "two status captures and three state reads")
+        self.assertEqual(len(recorder.commands), 7, "two direct status captures, then three reads and two more captures")
         for command in recorder.commands:
             self.assertEqual(command[1:3], ["-C", repo], "the project is named first")
             self.assertEqual(command[3:7], HARDENING, "both options come right after the project")
             if "status" in command:
                 self.assertLess(command.index("--no-optional-locks"), command.index("status"), "lock option first")
-        self.assertEqual(sum(1 for command in recorder.commands if "status" in command), 2, "with and without -z")
+        self.assertEqual(sum(1 for command in recorder.commands if "status" in command), 4, "with and without -z, twice")
         for verb in ("rev-parse", "symbolic-ref", "for-each-ref"):
             self.assertEqual(sum(1 for command in recorder.commands if verb in command), 1, "one read: " + verb)
 

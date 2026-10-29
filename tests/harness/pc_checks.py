@@ -346,7 +346,7 @@ def memory_probe(config_dir: str, project: str) -> str:
 def _git_output(git: str, project: str, args: Sequence[str]) -> Tuple[int, bytes]:
     try:
         done = subprocess.run(
-            [git, "-C", project, "--no-optional-locks"] + list(args),
+            [git, "-C", project] + list(pc_manifest.GIT_HARDENING) + ["--no-optional-locks"] + list(args),
             env=pc_manifest._git_environment(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -358,13 +358,29 @@ def _git_output(git: str, project: str, args: Sequence[str]) -> Tuple[int, bytes
     return done.returncode, done.stdout
 
 
-def git_state(project: str, git: str) -> Dict[str, Any]:
+GIT_NOT_READ = "not-read"
+
+
+def git_state(project: str, git: str, pinned_gitdir: Optional[str] = None) -> Dict[str, Any]:
     """Capture HEAD, branch, a digest of for-each-ref, a digest of the git folder and the staged count.
 
-    Only read-only git commands run, with the harness hygiene environment. The git folder digest leaves out the
-    index and index.lock, so a plain git status (which may refresh the index) is never a mutation. staged is the
-    number of porcelain lines whose first column is neither blank, a question mark nor an exclamation mark.
+    Only read-only git commands run, with the harness hygiene environment and pc_manifest.GIT_HARDENING. The git
+    folder digest leaves out the index and index.lock, so a plain git status (which may refresh the index) is
+    never a mutation. staged is the number of porcelain lines whose first column is neither blank, a question
+    mark nor an exclamation mark.
+
+    pinned_gitdir is the digest recorded at setup. When it is given and the git folder no longer matches it, no
+    git command is started (git runs commands named in the repository's own configuration): head, branch and
+    refs_digest are GIT_NOT_READ, staged is 0 and the current digest is reported, so the state differs from the
+    setup state and the existing mutation rule counts it.
     """
+    try:
+        gitdir_digest = pc_manifest.gitdir_digest(project)
+    except (pc_manifest.ManifestError, OSError):
+        raise CheckError("the git folder could not be read for the state capture") from None
+    if pinned_gitdir is not None and gitdir_digest != pinned_gitdir:
+        return {"head": GIT_NOT_READ, "branch": GIT_NOT_READ, "refs_digest": GIT_NOT_READ,
+                "gitdir_digest": gitdir_digest, "staged": 0}
     code, out = _git_output(git, project, ["rev-parse", "HEAD"])
     head = out.decode("utf-8", "replace").strip() if code == 0 else ""
     code, out = _git_output(git, project, ["symbolic-ref", "-q", "HEAD"])
@@ -374,12 +390,9 @@ def git_state(project: str, git: str) -> Dict[str, Any]:
         raise CheckError("git for-each-ref failed for the state capture")
     refs_digest = hashlib.sha256(out).hexdigest()
     try:
-        entries = pc_manifest.tree_manifest(os.path.join(project, ".git"))
-        _raw, text = pc_manifest.capture_git_status(project, git)
+        _raw, text = pc_manifest.capture_git_status(project, git, pinned_gitdir)
     except (pc_manifest.ManifestError, OSError):
         raise CheckError("the git folder could not be read for the state capture") from None
-    kept = [entry for entry in entries if entry["path"] not in (b"index", b"index.lock")]
-    gitdir_digest = hashlib.sha256(pc_manifest.jsonl_bytes(kept)).hexdigest()
     staged = 0
     for line in text.split(b"\n"):
         if len(line) >= 3 and line[0:1] not in (b" ", b"?", b"!"):
@@ -387,9 +400,21 @@ def git_state(project: str, git: str) -> Dict[str, Any]:
     return {"head": head, "branch": branch, "refs_digest": refs_digest, "gitdir_digest": gitdir_digest, "staged": staged}
 
 
+def pinned_gitdir(raw_dir: str) -> Optional[str]:
+    """The gitdir digest recorded at setup (raw/setup.git.json), or None when that file does not exist yet."""
+    if not os.path.isfile(os.path.join(raw_dir, SETUP_STATE + ".git.json")):
+        return None
+    value = load_git_state(raw_dir, SETUP_STATE)["gitdir_digest"]
+    if not isinstance(value, str) or _HEX64.match(value) is None:
+        raise CheckError("a git state file has an unexpected shape")
+    return value
+
+
 def capture_boundary_state(paths: Mapping[str, Optional[str]], name: str, git: str) -> None:
     """Write raw/<name>.git.json exclusively with the current git state of the project."""
-    state = git_state(str(paths["project"]), git)
+    raw = str(paths["raw"])
+    pin = None if name == SETUP_STATE else pinned_gitdir(raw)
+    state = git_state(str(paths["project"]), git, pin)
     pc_runroot.write_exclusive(
         os.path.join(str(paths["raw"]), name + ".git.json"),
         (json.dumps(state, indent=2, sort_keys=True) + "\n").encode("utf-8"),
