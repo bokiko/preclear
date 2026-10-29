@@ -1486,6 +1486,11 @@ class Harn09ReproofTests(unittest.TestCase):
             ),
             ("planted fsmonitor command", pc_testutil.seed_git_config_plant(base, 0, "fsmonitor"), "planted-fsmonitor"),
             ("planted clean filter", pc_testutil.seed_git_config_plant(base, 0, "filter"), "planted-filter"),
+            (
+                "env-wrapped shell write",
+                pc_testutil.seed_bash_outside_write(base, 1, command="env sh -c 'touch $OUTSIDE/x'", write_file=False),
+                None,
+            ),
             ("rewritten hook log", pc_testutil.seed_run_record_tamper(base, "hooklog"), None),
             ("nested repository with a planted clean filter", pc_testutil.seed_nested_repo_plant(base, 0), "planted-nested"),
         ]
@@ -1506,7 +1511,7 @@ class Harn09ReproofTests(unittest.TestCase):
 
     def test_each_seeded_failure_ends_with_11_files_nothing_and_leaves_no_marker(self) -> None:
         cases = self.seeded()
-        self.assertEqual(len(cases), 9, "nine seeded failures")
+        self.assertEqual(len(cases), 10, "ten seeded failures")
         for label, stages, marker in cases:
             world = World(stages=stages)
             self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
@@ -1571,6 +1576,12 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn(phrase, text, "the guide says: " + phrase)
         bullet = text.split("Git read-only", 1)[1].split("\n- ", 1)[0]
         self.assertIn("required", bullet, "the Git read-only bullet describes the pin as required after setup")
+
+    def test_the_readme_describes_the_open_world_write_rule_and_its_limits(self) -> None:
+        text = self.readme()
+        for phrase in ("write escape", "read-only list", "unparsed", "fails closed", "implicit destination", "script file"):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        self.assertNotIn("closed set", text, "the closed list of write programs is gone")
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
         text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
