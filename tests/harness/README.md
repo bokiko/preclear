@@ -359,7 +359,7 @@ run root gives the same facts.
   printf, echo, test and its bracket forms, find, sed, awk, gawk, mawk, grep, sort, git, diff, cut, tr, set,
   and the helper itself) and passes that program's gate: find without an output flag, a delete or an exec of a
   command that is not itself read-only; sed with the quiet flag and no in-place edit, program file or w
-  command; awk without system, close, getline or a print redirected to a file or a pipe; sort without an
+  command; awk without a system or close call, a getline from a pipe or a print redirected to a file or a pipe; sort without an
   output option; git with a read verb after its global options; and no output redirection (a duplication such
   as 2>&1 and the null device are not redirections). Every other part is write-capable, whatever its program:
   an interpreter, a shell with a command string, rm, ln, tar, curl, xargs, eval, mktemp, or a program started
@@ -367,9 +367,23 @@ run root gives the same facts.
   as a write outside the approved roots. Named places are: a plain word, a whitespace-separated token inside a
   command string, a path-like token inside a quoted literal of a script, the operand of a sed w command (also
   with no space after the w), a redirection target, an env or find directory change, and a cd that escaped
-  earlier in the same command. The places themselves are a tilde, the home variable, a dot-dot segment and an
-  absolute path outside the roots. Read-only parts that name the same places are listed as outside path tokens
-  and decide nothing.
+  earlier in the same command. The places themselves are a tilde, the home variable, a dot-dot path that does
+  not resolve inside the roots and an absolute path outside the roots. Read-only parts that name the same
+  places are listed as outside path tokens and decide nothing.
+  Every command starts in the project folder, and a relative word with a dot-dot segment is resolved against
+  the folder the command works in, so a write to the memory folder through a dot-dot path from the project is
+  not an escape. A cd with a literal target inside the roots moves that folder; a cd that leaves the roots, a
+  bare cd, a cd to a dash and a home target leave it unknown, and every later write-capable part of the command
+  is an escape. The resolution is done over literal segments only: a dot-dot that follows a variable, a
+  substitution, a glob or a brace list is still an escape, because such a segment can stand for any number of
+  segments, and a cd to such a target leaves the folder unknown. A folder kept between separate Bash calls by
+  an earlier cd is not known (a named limit). A path attached to a short option is judged like any word: the
+  text after the option letter is, and so is the text from the first slash or tilde on when only a cluster of
+  one to four option letters stand before it. One ambiguity is counted: a short name straight after an option
+  letter, as in -Isrc/x, reads like a cluster followed by an absolute path. The awk keywords system and close
+  count as calls (a parenthesis follows) and getline counts after a pipe, so the same words in a regular
+  expression or a string are harmless text. A double-bracket test at command position is one part, with its
+  double ampersand, double bar and parentheses; an unterminated one is unparsed.
   The rule fails closed. An env option it does not know (a combined flag such as the one that joins the
   ignore-environment flag to the split-string flag, or an option that takes a value it cannot see) makes the
   whole part unparsed, and an unparsed part that holds an escaping word counts as a write escape under the
