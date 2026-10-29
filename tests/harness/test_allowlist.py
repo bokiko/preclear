@@ -334,12 +334,16 @@ class CorpusScopeTests(unittest.TestCase):
                     everything.append(os.path.join(current, name))
         scoped = pa.load_trace_calls(ROOT)
         scoped_traces = sorted(set(call["trace"] for call in scoped))
+        # The evidence tree also holds rerun folders (tests/evidence/rerun-*); the corpus is pinned to
+        # the publication folder, so the unscoped walk is restricted to that prefix before comparing.
         walked = sorted(
-            os.path.relpath(path, ROOT).replace(os.sep, "/")
-            for path in everything
-            if os.path.isfile(os.path.join(os.path.dirname(path), "tools.txt"))
+            relative
+            for relative in (os.path.relpath(path, ROOT).replace(os.sep, "/") for path in everything)
+            if relative.startswith(prefix)
+            and os.path.isfile(os.path.join(ROOT, os.path.dirname(relative), "tools.txt"))
         )
-        self.assertEqual(walked, scoped_traces, "every traced folder under the evidence is in the publication folder")
+        self.assertEqual(walked, scoped_traces, "the scoped loader equals the walk restricted to the publication folder")
+        self.assertLess(len(walked), len(everything), "the evidence tree holds traces outside the publication folder")
         self.assertTrue(all(trace.startswith(prefix) for trace in scoped_traces))
 
     def test_canonical_commands_are_unchanged_by_the_scope(self):

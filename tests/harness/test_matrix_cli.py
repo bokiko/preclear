@@ -321,8 +321,10 @@ class DryRunTests(unittest.TestCase):
         cls.home = os.path.join(cls.base, "h")
         cls.env = cli_env(cls.base, [cls.bin], harness_home=cls.home)
 
+    # The gate refuses a destination that already exists (exit 17) and the repository holds a real
+    # rerun folder, so every dry run here pins the clock to a date that has no folder.
     def run_ok(self, *args: str) -> str:
-        code, out, err = run_cli(list(args), self.env)
+        code, out, err = run_main(list(args), self.env, clock=lambda: FIXED_DATE)
         self.assertEqual(code, 0, out + err)
         self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
         return out
@@ -369,7 +371,9 @@ class DryRunTests(unittest.TestCase):
 
     def test_a_dry_run_with_an_injected_row_counts_its_exact_decimal_total(self) -> None:
         registry = rows().build_registry(extra=[injected_row("row0-three-caps", ("0.10", "0.10", "0.10"))])
-        code, out, err = run_main(["--dry-run", "--row", "row0-three-caps"], self.env, registry=registry)
+        code, out, err = run_main(
+            ["--dry-run", "--row", "row0-three-caps"], self.env, registry=registry, clock=lambda: FIXED_DATE
+        )
         self.assertEqual(code, 0, err)
         self.assertIn("row0-three-caps: 3 stages, 3 sessions", out)
         self.assertIn("worst case 0.30", out)
@@ -377,7 +381,7 @@ class DryRunTests(unittest.TestCase):
     def test_a_dry_run_starts_no_process_of_any_kind_and_creates_nothing(self) -> None:
         with mock.patch("subprocess.Popen", side_effect=AssertionError("a process was started")):
             for args in (["--dry-run", "--all"], ["--dry-run", "--row", "row1-wrong-binding"], ["--list"]):
-                code, out, err = run_main(args, self.env)
+                code, out, err = run_main(args, self.env, clock=lambda: FIXED_DATE)
                 self.assertEqual(code, 0, err)
         self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
         self.assertFalse(os.path.exists(self.home))
@@ -385,7 +389,7 @@ class DryRunTests(unittest.TestCase):
 
     def test_a_real_run_without_a_budget_is_refused_with_exit_18_before_any_process(self) -> None:
         with mock.patch("subprocess.Popen", side_effect=AssertionError("a process was started")):
-            code, out, err = run_main(["--row", "row1-wrong-binding"], self.env)
+            code, out, err = run_main(["--row", "row1-wrong-binding"], self.env, clock=lambda: FIXED_DATE)
         self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED)
         self.assertIn("worst case 2.00", out)
         self.assertFalse(os.path.exists(self.home))
