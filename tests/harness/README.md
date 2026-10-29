@@ -326,12 +326,18 @@ run root gives the same facts.
   roots; a call that was denied did not run and is not listed. The default auto-memory folder under the
   harness config folder is looked at with a single lstat, and the config folder itself is never opened, listed
   or walked. A snapshot only sees stage boundaries, so a write made and undone inside one stage is covered
-  only by the executed-path scan.
+  only by the executed-path scan. Every top-level name of the run root is listed, a model-made folder whose
+  name starts with stage included; only the raw captures, the snapshots and the project's git folder are left
+  out of the manifest, and the first two are covered by the run record guard below.
 - Git read-only. HEAD, the branch, a digest of the refs and a digest of the git folder without its index
   are captured at setup and after every stage and compared; staged entries are counted from
   the porcelain text, and executed Bash commands that mutate (add, commit, branch with a name, symbolic-ref
   with two arguments, a worktree add or remove, any output flag and the other mutating verbs) are counted. A
-  denied call and an index refresh by a plain status are not counted.
+  denied call and an index refresh by a plain status are not counted. Every git call the harness makes
+  against the project carries core.fsmonitor=false and core.untrackedCache=false, so a command planted in the
+  project's git configuration is never run by the harness. The digest of the git folder without its index,
+  taken at setup, is a pin: once the folder differs from it, the harness starts no git command in the project,
+  notes in the snapshot that status was not run, and the difference counts as a git mutation.
 - Helper calls, four counts per stage from structure only: Bash calls that name the wrapper, calls executed
   (the call lines of the stage's slice of the wrapper log), calls denied, and compound commands that were
   refused and name the wrapper. When the stream and the log agree, attempted equals executed plus denied plus
@@ -340,14 +346,33 @@ run root gives the same facts.
 - Ledger digests. Ledger A, ledger B, the binding file, the ledger-roots file and the checkpoint log are
   compared between the first and the last snapshot and reported unchanged or changed by name. A change is a
   finding for the reviewer.
-- Bash path mentions and write-capable programs (python with a command, awk, sed with a write, find with an
-  output flag, mkdir, tee and the like) are listed with counts and names. They are listed and not judged.
+- Bash write escapes and mentions. An executed write-capable part of a Bash command (python with a command,
+  awk, sed with a write, find with an output flag or an exec, git with an output flag, mkdir, tee, cp, mv, dd,
+  touch, install, or any output redirection) that names a path outside the approved roots, a tilde, the home
+  variable, a dot-dot segment, a quoted path inside a python, awk or sed script, or that follows a change of
+  folder that did, is a write escape and counts as a write outside the approved roots. Read-only commands that
+  name the same places are listed as outside path tokens and decide nothing. The rule does not decide code that
+  builds its path at run time, other variable expansions, or a working folder kept between separate Bash
+  calls; the pinned allowlist and the binary's own permission layer are the first net, and the snapshot diff
+  and the Write and Edit trace are the others.
+- The run record guard. A guard file is written into the raw folder at setup and after every stage, holding
+  the digest of every raw file except the append-only hook log, the tree digest of every snapshot folder, and
+  the hook log's size and digest with a flag saying whether the bytes recorded at the previous boundary are
+  still its start. Two consecutive guards are compared: a recorded raw file or snapshot that changed or is
+  gone, a new raw name the harness does not write in that window, a new snapshot folder, or a rewritten hook
+  log is a change to the run's own record. A well-formed line appended to the hook log cannot be told from the
+  hook's own append; the guard proves that earlier lines were not rewritten.
 - Session facts: whether the init and result session ids equal the requested one, the denial ids per stage,
-  and three yes or no questions about the first status result.
+  and three yes or no questions about the first status result. The first asks whether the helper's session
+  line is among the first five lines of the first status result, because the stub prints its brand line
+  first and the tool result merges both streams; the other two ask whether the result holds the first
+  characters of the work session and whether it names ledger B. The first baseline folder,
+  rerun-2026-10-29-claude-sonnet-5-5, was filed under an earlier rule that looked only at the first
+  character and records no for the first question; it is not edited, and a later run records the new answer.
 
-Denials are counted facts. Only a concrete write outside the approved roots or a git mutation ends a
-run with exit code 11 and files nothing; the raw bytes and the snapshots stay in the run root. Everything else
-is a fact for the reviewer.
+Denials are counted facts. Only a concrete write outside the approved roots (a Bash write escape included),
+a git mutation or a change to the run record ends a run with exit code 11 and files nothing; the raw bytes
+and the snapshots stay in the run root. Everything else is a fact for the reviewer.
 
 ### What a run files
 
@@ -357,6 +382,10 @@ sanitizer that was built before any spend, the whole tree is scanned by the leak
 deny entries, and promote creates the new folder `tests/evidence/rerun-<date>-<model>` exclusively and once.
 A folder that already exists is refused with exit 17 and is never reused; a refusal by the sanitizer (exit 15)
 or by the gate (exit 14) files nothing. Nothing under `tests/evidence` is ever overwritten or removed.
+Filing, live or by `--refile`, is also refused with exit 11 when any stage record shows a problem or an
+isolation assertion that did not hold (a stage that did not finish cleanly), and nothing at all is created;
+it is refused with exit 15 when the sanitizer's deny entries were not built. Promote itself raises when it is
+not given the deny entries unless its caller opts into the default ones, which only its command line does.
 
 The folder holds a README and one folder per row. The README labels the run a new baseline on the pinned model
 and build, quotes the row total and the run total from the usage file, says the run is not a replication of
@@ -366,7 +395,9 @@ the prompts, the short and full traces, the measurements, the wrapper log and on
 plus the files of this harness: the provenance files (Claude Code version, model id, isolation mode, harness
 version, settings), the usage per stage with each call's own cost and the row total, the mechanical checks, the
 work turn's prompt and full trace, the resume line with the third stage's files, and in each snapshot a
-manifest next to its digest list.
+manifest next to its digest list. The usage file also lists, per stage, cumulative-consistent (whether the
+cumulative total equals the earlier total plus the call's own cost: yes, no or unknown), and a warning line for
+each stage where it reads no.
 
 Every file the harness writes itself holds facts, counts and ids, as `name: value` lines with yes and no for
 booleans. A value that could not be measured is written UNCONFIRMED and never left blank. None of these files
@@ -386,7 +417,8 @@ exits 10, never 0.
 refusal that came late (a taken name, the gate, a sanitizer error). It starts no claude, needs no budget,
 writes no ledger line, takes the evidence date and the model recorded in the run (not today's date) and calls
 the same filing function as a fresh run. A folder that is not a finished run folder under the runs root is
-refused with exit 2, and a destination that already exists with exit 17.
+refused with exit 2, a destination that already exists with exit 17, and a run the live path stopped (a stage
+that did not finish cleanly) with exit 11.
 
 ### Comparing a rerun with the committed row
 
