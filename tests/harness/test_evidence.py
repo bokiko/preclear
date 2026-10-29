@@ -676,6 +676,110 @@ class UsageTests(unittest.TestCase):
         self.assertIn("row total: 0.34", text, "0.3 plus 0.04 added as decimals")
 
 
+def copied(facts: dict) -> dict:
+    return json.loads(json.dumps(facts))
+
+
+class UsageConsistencyTests(unittest.TestCase):
+    """IN-01: usage.txt shows the cumulative-consistent flag behind the row total, and warns on a no."""
+
+    def lines_of(self, filed) -> list:
+        return filed.read("usage.txt").splitlines()
+
+    def test_the_default_run_shows_yes_for_each_stage_in_order_and_no_warning(self) -> None:
+        import re
+
+        lines = self.lines_of(default_filed())
+        flags = [line for line in lines if line.startswith("cumulative-consistent ")]
+        self.assertEqual(
+            flags,
+            ["cumulative-consistent s1: yes", "cumulative-consistent s2: yes", "cumulative-consistent s3: yes"],
+            "one flag per stage in stage order",
+        )
+        self.assertEqual([line for line in lines if line.startswith("warning")], [], "no warning line")
+        first = max(index for index, line in enumerate(lines) if line.startswith("stage "))
+        self.assertLess(first, lines.index(flags[0]), "the flags follow the stage lines")
+        self.assertLess(lines.index(flags[-1]), lines.index("row total: 0.13"), "and come before the row total")
+        pattern = re.compile(UsageTests.LINE)
+        stage_lines = [line for line in lines if line.startswith("stage ")]
+        self.assertEqual(len(stage_lines), 3, "the stage lines are unchanged in number")
+        for line in stage_lines:
+            self.assertIsNotNone(pattern.match(line), "a stage line keeps its documented fields")
+        self.assertIn("row total: 0.13", lines)
+        self.assertIn("run total: 0.13", lines)
+
+    def test_a_cumulative_total_that_disagrees_gives_a_no_and_exactly_one_warning_naming_the_stage(self) -> None:
+        stages = with_result(pc_testutil.default_row1_stages(), 1, total_cost_usd=0.20)
+        filed = Filed(stages)
+        lines = self.lines_of(filed)
+        self.assertIn("cumulative-consistent s2: no", lines, "the flag reads no")
+        self.assertIn("cumulative-consistent s1: yes", lines)
+        warnings = [line for line in lines if line.startswith("warning")]
+        self.assertEqual(len(warnings), 1, "one warning line")
+        self.assertIn("s2", warnings[0], "it names the stage")
+        self.assertIsNone(verdict_pattern().search("\n".join(lines)), "no line holds a verdict word")
+
+    def test_a_record_without_the_key_shows_unconfirmed_and_no_warning(self) -> None:
+        run = Unfiled()
+        path = os.path.join(run.run_root, "raw", "s2.record.json")
+        record = json.loads(read_text(path))
+        del record["cumulative_consistent"]
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        self.assertEqual(run.file().code, 0, "the run still files")
+        lines = read_text(os.path.join(run.destination, ROW1, "usage.txt")).splitlines()
+        self.assertIn("cumulative-consistent s2: UNCONFIRMED", lines)
+        self.assertEqual([line for line in lines if line.startswith("warning")], [], "no warning for a missing key")
+
+
+class MechanicalFactLineTests(unittest.TestCase):
+    """EVID-04, D-09: the filed counters and the checklist hold the numbers the exit rule uses."""
+
+    def parts(self):
+        import pc_checks
+
+        run = default_filed().run
+        data = evidence().load_stage_data(run.run_root)
+        facts = pc_checks.compute_facts(run.run_root, run.ctx.config_dir)
+        return data, facts
+
+    def test_the_default_run_lists_both_counters_in_the_write_boundary_section(self) -> None:
+        filed = default_filed()
+        section = parse_sections(filed.read("mechanical-checks.md"))["Write boundary"]
+        self.assertIn("bash-write-escapes: 0", section)
+        self.assertIn("run-record-changes: 0", section)
+
+    def test_the_rendered_lines_show_the_counts_of_the_facts(self) -> None:
+        data, facts = self.parts()
+        changed = copied(facts)
+        changed["bash_mentions"]["write_escapes"] = {"count": 2, "programs": {"mkdir": 2}}
+        changed["guard"] = {"count": 3, "kinds": {"raw-entry-changed": 3}}
+        text = evidence().render_mechanical_checks(data, changed).decode("utf-8")
+        section = parse_sections(text)["Write boundary"]
+        self.assertIn("bash-write-escapes: 2", section)
+        self.assertIn("run-record-changes: 3", section)
+
+    def test_the_checklist_writes_number_equals_the_count_the_exit_rule_uses(self) -> None:
+        import re
+
+        import pc_checks
+
+        data, facts = self.parts()
+        changed = copied(facts)
+        changed["write_boundary"]["count"] = 1
+        changed["trace_writes"]["count"] = 1
+        changed["bash_mentions"]["write_escapes"] = {"count": 2, "programs": {"mkdir": 2}}
+        changed["memory_probe"] = "present"
+        line = [item for item in evidence().checklist_lines(data, changed) if "writes outside approved roots" in item]
+        self.assertEqual(len(line), 1, "one writes line")
+        match = re.search(r"writes outside approved roots: ([0-9]+);", line[0])
+        self.assertIsNotNone(match, "the line carries the total")
+        self.assertEqual(int(match.group(1)), 5, "1 snapshot path, 1 tool path, 2 Bash writes and the memory folder")
+        self.assertIn("Bash writes 2", line[0], "the Bash writes are named")
+        used = dict(pc_checks.breaches(changed))[pc_checks.BREACH_WRITES]
+        self.assertEqual(int(match.group(1)), used, "the number a reviewer reads is the number breaches() uses")
+
+
 class TraceTests(unittest.TestCase):
     def test_the_short_trace_has_the_committed_shape(self) -> None:
         import re
