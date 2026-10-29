@@ -1608,6 +1608,153 @@ class WriteEscapeOpenWorldTests(OpenWorldBase):
         self.assertNotIn(self.outside, json.dumps(found), "no path in the facts")
 
 
+class CheckMixin(object):
+    """Table helpers shared by the Task 1 classes of plan 03-11."""
+
+    def check_zero_table(self, table, what):
+        for number, command in enumerate(table):
+            found = self.mentions(command)
+            self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}}, "%s zero case %d: %s" % (what, number, command))
+
+
+class WriteEscapeDotDotTests(CheckMixin, OpenWorldBase):
+    """A dot-dot path is resolved against the folder the command works in (CR-01, D-03)."""
+
+    INSIDE = [
+        "mkdir -p ../auto-memory", "mkdir ../ckpt/sub", "printf '%s\\n' hi > ../auto-memory/note.md",
+        "echo hi >> ../auto-memory/log.md", "cp a ../auto-memory/b", "mktemp -p ../auto-memory",
+        "cd ../auto-memory && mkdir -p sub", "cd ../auto-memory && printf x > n.md",
+        "cd ../auto-memory && mkdir ../ckpt/x", "cd sub && mkdir ../x", "mkdir sub/../other",
+        "env -C ../auto-memory mkdir ../ckpt/y", "python3 -c \"open('../auto-memory/x.md').read()\"",
+        "sed -n 'w ../ckpt/out.txt' f", "find ../auto-memory -name x -exec rm {} \\;",
+        "awk '/system/ {print}' ../auto-memory/notes.md",
+        "awk '{printf \"%s -> %d\\n\", $1, NR}' ../auto-memory/notes.md",
+        "awk '{print ($1 > 3)}' ../auto-memory/notes.md",
+    ]
+    OUTSIDE = [
+        ("mkdir -p ../../outside", "mkdir"), ("printf x > ../wrapper/x", "redirect"),
+        ("printf x > ../raw/x", "redirect"), ("mkdir ..", "mkdir"), ("touch ../ckpt/../x", "touch"),
+        ("cd sub && mkdir ../../x", "mkdir"), ("cd ../auto-memory && mkdir ../../x", "mkdir"),
+        ("cd ../auto-memory/.. && touch x", "touch"), ("env -C ../auto-memory mkdir ../../x", "mkdir"),
+        ("cd OUT && mkdir ../auto-memory", "mkdir"), ("cd && mkdir ../auto-memory", "mkdir"),
+        ("python3 -c \"open('../../x','w').write('x')\"", "python3-c"),
+        ("mkdir \"$PWD/../x\"", "mkdir"), ("mkdir $(pwd)/../x", "mkdir"), ("mkdir */../x", "mkdir"),
+        ("mkdir ?/../x", "mkdir"), ("mkdir [a]/../x", "mkdir"), ("mkdir {a,b}/../x", "mkdir"),
+        ("mkdir `pwd`/../x", "mkdir"), ("mkdir $d/../x", "mkdir"), ("mkdir ${d}/../x", "mkdir"),
+        ("mkdir ../auto-memory/$d/../../x", "mkdir"), ("mkdir PRJ/$d/../x", "mkdir"),
+        ("python3 -c \"open('$PWD/../x','w').write('x')\"", "python3-c"),
+    ]
+    UNKNOWN_FOLDER = [
+        "cd $d && mkdir ../x", "cd \"$PWD\" && mkdir ../x", "cd $(pwd) && mkdir ../x", "cd sub* && mkdir ../x",
+        "cd ../auto-memory/$d && mkdir ../../x", "env -C $d mkdir ../x",
+    ]
+
+    def test_a_dot_dot_path_that_resolves_inside_the_roots_is_not_an_escape(self) -> None:
+        self.check_zero_table(self.INSIDE, "inside")
+
+    def test_the_inside_dot_dot_writes_are_still_listed_under_their_labels(self) -> None:
+        listed = self.mentions("mkdir -p ../auto-memory")["write_programs"]
+        self.assertEqual(listed, {"mkdir": 1}, "the write-capable part is listed")
+        self.assertEqual(self.mentions("printf x > ../auto-memory/n.md")["write_programs"], {"redirect": 1})
+        self.assertEqual(self.mentions("sed -n 'w ../ckpt/out.txt' f")["write_programs"], {"sed-write": 1})
+        self.assertEqual(self.mentions("python3 -c \"open('../auto-memory/x.md')\"")["write_programs"], {"python3-c": 1})
+
+    def test_a_dot_dot_path_that_resolves_outside_or_follows_an_expansion_is_one_escape(self) -> None:
+        self.check_table(self.OUTSIDE, "outside")
+
+    def test_a_cd_or_env_directory_with_an_expansion_leaves_the_folder_unknown(self) -> None:
+        for number, command in enumerate(self.UNKNOWN_FOLDER):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {"mkdir": 1}}, "unknown folder %d" % number)
+        self.check_zero_table(["cd $d && mkdir x", "cd $d && ls ../x", "cd sub && mkdir ../x"], "unknown folder, plain")
+
+    def test_the_resolution_follows_a_link_and_does_not_cut_the_text(self) -> None:
+        os.symlink(self.outside, os.path.join(self.project, "link"))
+        self.assertEqual(self.found("mkdir link/../x"), {"count": 1, "programs": {"mkdir": 1}}, "through the link")
+        self.assertEqual(self.found("mkdir sub/../x"), {"count": 0, "programs": {}}, "a plain folder name")
+
+    def test_the_first_approved_root_is_the_start_folder(self) -> None:
+        events = stream([bash("mkdir ../auto-memory"), bash("mkdir x")])
+        ordered = checks().bash_mentions(events, [self.project, self.ckpt, self.memory])
+        self.assertEqual(ordered["write_escapes"]["count"], 0, "project first: the memory folder is inside")
+        empty = checks().bash_mentions(stream([bash("mkdir ../auto-memory")]), [])
+        self.assertEqual(empty["write_escapes"]["count"], 1, "no start folder: a dot-dot word escapes")
+        plain = checks().bash_mentions(stream([bash("mkdir x")]), [])
+        self.assertEqual(plain["write_escapes"]["count"], 0, "and a plain word does not")
+
+
+class WriteEscapeAttachedOptionTests(CheckMixin, OpenWorldBase):
+    """A path attached to a short option is judged like any word (CR-05, D-03)."""
+
+    ESCAPING = [
+        ("env sort -oOUT/x f", "sort"), ("env tar -xf a.tar -COUT", "tar"), ("env tar -xvCOUT f", "tar"),
+        ("env tar -czfOUT/a.tgz d", "tar"), ("env cc -oOUT/x f.c", "cc"), ("env git format-patch -oOUT", "git"),
+        ("env cp -tOUT f", "cp"), ("env install -tOUT f", "install"), ("sort --output=OUT/x f", "sort"),
+        ("env sort -o~/x f", "sort"), ("env cp -t$HOME f", "cp"), ("env cc -Isrc/x f.c", "cc"),
+    ]
+    INSIDE = [
+        "env sort -o PRJ/x f", "env cp -tPRJ f", "env tar -xf a.tar -CPRJ/sub", "env tar -xvCPRJ/sub f",
+        "env cc -oout f.c", "env tar -xzf a.tgz", "env mkdir -pv sub", "env cp -a src dst",
+        "env git format-patch -o../ckpt", "env cc -o../ckpt/out f.c", "env cc -Iinclude/x -o out f.c",
+        "env sort -n5 f", "grep -e OUT/hosts f", "ls -I OUT",
+    ]
+
+    def test_each_attached_option_form_is_one_escape_under_its_label(self) -> None:
+        self.check_table(self.ESCAPING, "attached option")
+
+    def test_relative_attached_values_and_read_only_parts_are_zero(self) -> None:
+        self.check_zero_table(self.INSIDE, "attached option inside")
+
+    def test_a_write_capable_part_with_an_attached_value_is_listed(self) -> None:
+        self.assertEqual(self.mentions("env cc -oout f.c")["write_programs"], {"cc": 1})
+
+
+class ReadOnlyGateTextTests(CheckMixin, OpenWorldBase):
+    """Harmless script text and a test group are not writes (WR-04)."""
+
+    HARMLESS_AWK = [
+        "awk '/system/ {print}' OUT/hosts", "awk '/close/ {print}' OUT/hosts", "awk '{print \"system\"}' OUT/hosts",
+        "awk '{print \"system(x)\"}' OUT/hosts", "awk '/getline/' OUT/hosts",
+        "awk '{ while ((getline line < \"OUT/g\") > 0) print line }' f",
+    ]
+    CALLS = [
+        "awk 'BEGIN{system(\"touch OUT/x\")}'", "awk 'BEGIN{system (\"touch OUT/x\")}'",
+        "awk 'BEGIN{close(\"OUT/x\")}'", "awk 'BEGIN{\"touch OUT/x\" | getline}'",
+    ]
+
+    def test_awk_words_in_a_regular_expression_or_a_string_are_a_mention(self) -> None:
+        for number, command in enumerate(self.HARMLESS_AWK):
+            found = self.mentions(command)
+            self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}}, "harmless awk %d" % number)
+            self.assertEqual(found["write_programs"], {}, "harmless awk %d is not listed" % number)
+
+    def test_awk_calls_are_still_write_escapes(self) -> None:
+        for number, command in enumerate(self.CALLS):
+            self.assertEqual(self.found(command), {"count": 1, "programs": {"awk": 1}}, "awk call %d" % number)
+
+    def test_a_double_bracket_test_is_one_part(self) -> None:
+        found = self.mentions("[[ -f ../auto-memory/x && -s ../auto-memory/x ]] && echo ok")
+        self.assertEqual(found["write_escapes"]["count"], 0)
+        self.assertEqual(found["write_programs"], {}, "no part starts with -s")
+        found = self.mentions("[[ -f OUT/x && -s OUT/x ]] && echo ok")
+        self.assertEqual(found["write_escapes"]["count"], 0)
+        self.assertEqual(found["outside_path_tokens"], 2)
+        self.check_zero_table([
+            "[[ ( -f a || -f b ) && -s c ]]", "if [[ -f a || -f b ]]; then wc -c a; fi",
+            "[[ a =~ ^[[:alpha:]]+$ && -f b ]] && echo ok",
+        ], "test group")
+
+    def test_a_command_after_the_closing_brackets_is_still_a_part(self) -> None:
+        self.check_table([
+            ("[[ -f a ]] && rm OUT/x", "rm"), ("if [[ -f a || -f b ]]; then rm OUT/x; fi", "rm"),
+            ("echo [[ && rm OUT/x", "rm"),
+        ], "after the group")
+
+    def test_an_unterminated_group_is_unparsed(self) -> None:
+        found = self.mentions("[[ -f a && rm OUT/x")
+        self.assertEqual(found["write_escapes"], {"count": 1, "programs": {"unparsed": 1}})
+        self.assertEqual(found["unparsed_parts"], 1)
+
+
 class OpenWorldRunTests(unittest.TestCase):
     """The open-world write rule at run level: each escaping form ends run_row with 11 and nothing filed."""
 
@@ -1621,10 +1768,14 @@ class OpenWorldRunTests(unittest.TestCase):
         "mktemp -d", "awk -f prog.awk f", "sed -n -f s.sed f",
         "cat <<EOF\n$(touch OUT/x)\nEOF", "ls $(touch OUT/x)", "echo `rm OUT/x`", "cat <(touch OUT/x)",
         "if [ -e a ]; then rm OUT/x; fi",
+        "env sort -oOUT/x f", "env tar -xf a.tar -COUT", "mkdir -p ../../outside", "printf x > ../raw/x",
+        "cd sub && mkdir ../../x", "mkdir \"$PWD/../x\"", "mkdir $(pwd)/../x", "mkdir */../x", "cd $d && mkdir ../x",
     ]
     HARMLESS = ["awk '{print}' OUT/hosts", "cat OUT/hosts", "find OUT -name x -exec ls {} \\;", "sed -n '/w/p' f",
                 "env sh -c 'touch x'", "mktemp -p .", "cat > f <<'EOF'\nmkdir OUT/x\nEOF", "cat '>' OUT/hosts",
-                "ls\n# rm OUT/x", "if [ -e a ]; then wc -c a; fi"]
+                "ls\n# rm OUT/x", "if [ -e a ]; then wc -c a; fi",
+                "mkdir -p ../auto-memory", "printf x > ../auto-memory/n.md", "cd ../auto-memory && mkdir -p sub",
+                "[[ -f ../auto-memory/x && -s ../auto-memory/x ]] && echo ok", "awk '/system/ {print}' OUT/hosts"]
 
     def check_breach(self, run) -> None:
         self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
@@ -1830,6 +1981,18 @@ class WriteEscapeCorpusTests(OpenWorldBase):
         self.assertGreaterEqual(parsed, 348, "Bash calls parsed")
         self.assertGreaterEqual(judged, 231, "Bash calls judged")
         self.assertIsNone(first, "a command that ran is judged a write escape: %s" % first)
+
+    def test_every_judged_or_not_run_memory_folder_command_of_the_traces_is_no_write_escape(self) -> None:
+        found = 0
+        failing = []
+        for name, call, kind in self.walk():
+            if kind == "flagged" or "../auto-memory" not in call["command"]:
+                continue
+            found += 1
+            if self.judged(call["command"])["count"] != 0:
+                failing.append("%s call %d" % (name, call["number"]))
+        self.assertGreaterEqual(found, 9, "the memory-folder commands are found by text")
+        self.assertEqual(failing, [], "a memory-folder command is judged a write escape")
 
     def test_the_refused_temporary_folder_write_is_not_judged_and_is_an_escape_when_handed_to_the_rule(self) -> None:
         control = [call for name, call, kind in self.walk()

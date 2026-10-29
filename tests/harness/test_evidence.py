@@ -1493,6 +1493,11 @@ class Harn09ReproofTests(unittest.TestCase):
             ),
             ("rewritten hook log", pc_testutil.seed_run_record_tamper(base, "hooklog"), None),
             ("nested repository with a planted clean filter", pc_testutil.seed_nested_repo_plant(base, 0), "planted-nested"),
+            (
+                "attached-option write",
+                pc_testutil.seed_bash_outside_write(base, 1, command="env sort -o$OUTSIDE/x f", write_file=False),
+                None,
+            ),
         ]
 
     def test_the_clean_control_files_through_the_driver_and_exits_0(self) -> None:
@@ -1511,7 +1516,7 @@ class Harn09ReproofTests(unittest.TestCase):
 
     def test_each_seeded_failure_ends_with_11_files_nothing_and_leaves_no_marker(self) -> None:
         cases = self.seeded()
-        self.assertEqual(len(cases), 10, "ten seeded failures")
+        self.assertEqual(len(cases), 11, "eleven seeded failures")
         for label, stages, marker in cases:
             world = World(stages=stages)
             self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
@@ -1589,6 +1594,12 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn(phrase, text, "the guide says: " + phrase)
         self.assertIn("body of an unquoted heredoc is scanned", text, "an unquoted body is scanned")
         self.assertIn("quoted heredoc is data", text, "a quoted body is data")
+
+    def test_the_readme_describes_the_dot_dot_resolution_the_attached_options_and_the_test_group(self) -> None:
+        text = self.readme()
+        for phrase in ("starts in the project folder", "attached to a short option", "is one part"):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        self.assertNotIn("the home variable, a dot-dot segment and an absolute path", text, "the old blanket rule is gone")
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
         text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
