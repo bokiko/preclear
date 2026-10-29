@@ -2303,6 +2303,13 @@ class WriteEscapeCorpusTests(OpenWorldBase):
         self.assertGreaterEqual(judged, 231, "Bash calls judged")
         self.assertIsNone(first, "a command that ran is judged a write escape: %s" % first)
 
+    def test_no_command_that_ran_in_a_committed_trace_is_a_git_mutation(self) -> None:
+        commands = [call["command"] for _name, call, kind in self.walk() if kind == "judged"]
+        self.assertGreaterEqual(len(commands), 231, "Bash calls judged")
+        found = checks().git_mutations([], [self.concrete(command) for command in commands])
+        self.assertEqual(found["executed"], 0, "an executed command is a git mutation, config-command included")
+        self.assertEqual(found["forms"], [], "no form")
+
     def test_every_judged_or_not_run_memory_folder_command_of_the_traces_is_no_write_escape(self) -> None:
         found = 0
         failing = []

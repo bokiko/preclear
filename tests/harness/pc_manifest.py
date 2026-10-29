@@ -94,15 +94,17 @@ class NestedRepository(GitDirChanged):
 def nested_git_present(project_dir):
     """True when an entry named .git (a folder, a file or a link) exists below the top level of PROJECT_DIR.
 
-    The project is walked once without following links. The top-level .git entry is skipped whatever its kind,
-    because a linked worktree has a .git file. An error while walking, such as a folder that cannot be read,
-    returns True: the walk fails closed.
+    The names below the top level are compared without regard to case: on a case-insensitive file system git
+    opens .GIT or .Git as a git folder (third-pass WR-01), so those names are nested repositories too, while
+    lookalikes such as .gitignore and .github are not. The project is walked once without following links. The
+    top-level .git entry is skipped by its exact name, whatever its kind, because a linked worktree has a .git
+    file. An error while walking, such as a folder that cannot be read, returns True: the walk fails closed.
     """
     try:
         for dirpath, dirnames, filenames in os.walk(project_dir, onerror=_raise):
             top = dirpath == project_dir
             for name in list(dirnames) + list(filenames):
-                if name == ".git" and not top:
+                if name.lower() == ".git" and not top:
                     return True
             if top and ".git" in dirnames:
                 dirnames.remove(".git")

@@ -89,7 +89,7 @@ class RowSpec(NamedTuple):
 
 
 class RunContext(NamedTuple):
-    """Everything a row runner needs; run_root, sanitizer and deny_entries are filled by the runner."""
+    """Everything a row runner needs; run_root, sanitizer, deny_entries and setup_pin are filled by the runner."""
 
     repo_root: str
     env: Dict[str, str]
@@ -106,6 +106,7 @@ class RunContext(NamedTuple):
     budget: Decimal
     banner: Optional[str]
     version: Optional[str]
+    setup_pin: Optional[str] = None  # the gitdir digest at setup, held in memory by the runner (third-pass WR-02)
 
 
 class RowOutcome(NamedTuple):
