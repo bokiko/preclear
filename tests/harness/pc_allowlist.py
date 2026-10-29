@@ -94,19 +94,24 @@ def _separator_at(command: str, index: int) -> str:
     return ""
 
 
-def split_compound(command: str) -> List[str]:
-    """Split a command into its parts on the documented separators, outside quotes."""
-    parts: List[str] = []
+def split_compound_connected(command: str) -> List[Tuple[str, str]]:
+    """Split a command into its parts on the documented separators, outside quotes, each with its separator.
+
+    Every pair is (part, the separator that follows the part); the last part of a text that does not end in a
+    separator is paired with an empty string. A part that is empty after stripping is dropped and its separator
+    is not recorded. split_compound is exactly the parts of this list, so there is one splitter.
+    """
+    parts: List[Tuple[str, str]] = []
     buf: List[str] = []
     quote = ""
     index = 0
     size = len(command)
 
-    def flush() -> None:
+    def flush(separator: str) -> None:
         part = "".join(buf).strip(_ASCII_WS)
         del buf[:]
         if part:
-            parts.append(part)
+            parts.append((part, separator))
 
     while index < size:
         ch = command[index]
@@ -138,13 +143,18 @@ def split_compound(command: str) -> List[str]:
             continue
         separator = _separator_at(command, index)
         if separator:
-            flush()
+            flush(separator)
             index += len(separator)
             continue
         buf.append(ch)
         index += 1
-    flush()
+    flush("")
     return parts
+
+
+def split_compound(command: str) -> List[str]:
+    """Split a command into its parts on the documented separators, outside quotes."""
+    return [part for part, _separator in split_compound_connected(command)]
 
 
 def has_expansion(part: str) -> bool:

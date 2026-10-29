@@ -15,7 +15,9 @@ What is a breach (decided by breaches(), nothing else):
                                     is write-capable unless its program is on READ_ONLY_PROGRAMS and passes its
                                     gate, so any program, wrapper or command string counts; a dot-dot path is
                                     resolved against the folder the command works in, which starts as the
-                                    project, and a path attached to a short option is judged like any word),
+                                    project and moves only on a cd that is certain to run in the main shell
+                                    and to succeed, and the text after each option letter of a short option
+                                    is judged like any word),
                                     or the default auto-memory folder being present
   * git-mutations                   a change of HEAD, branch, refs or the git folder (the index excluded), a
                                     staged entry, or an executed mutating git command (a -c, --exec-path or
@@ -272,7 +274,16 @@ _AWK_CALL = re.compile(r"\b(?:system|close)\s*\(|\|&?\s*getline\b")
 # A segment holding one of these could stand for any number of segments (a variable, a substitution, a glob, a
 # brace list); the pre-pass marker for a substitution holds a dollar sign, so this one test covers it.
 _NONLITERAL = re.compile(r"[$`*?\[{]")
-_ATTACHED_CLUSTER = re.compile(r"-[A-Za-z]{1,4}([/~].*)\Z", re.DOTALL)
+_SORT_CLUSTER = re.compile(r"-[A-Za-z]*o")
+_OPTION_RUN = re.compile(r"[A-Za-z]*")
+# The working folder of a unit is a real path while known, None when strict (not known at all: every dot-dot word
+# is an escape) and this marker when loose (a cd target held an expansion: a dot-dot word is resolved against the
+# start folder, as at the start of the command).
+_LOOSE = "<loose>"
+# The marker part the pre-pass leaves for an unquoted parenthesis; its dollar sign makes it non-literal.
+_GROUP_MARK = "$group"
+_CONNECTORS = ("&&", "||", "|", "|&")
+_PIPE_OR_OR = ("||", "|", "|&")
 _AWK_PRINT = re.compile(r"\bprintf?\b")
 _SED_FILE_FLAG = re.compile(r"-[nEerzsu]*f")
 _LETTERS = re.compile(r"-[A-Za-z]+\Z")
@@ -837,13 +848,72 @@ def _blank_strings(text: str) -> str:
     return "".join(out)
 
 
+def _awk_suspect(program: str) -> bool:
+    """True when the string blanker could have misread the program: a double quote stands after a slash or a hash.
+
+    The blanker reads a quote wrongly only when the quote sits inside a regular expression or a comment; that
+    regular expression or comment is opened by a slash or a hash before the quote, and until the first misread
+    quote the blanker is right, so the opening slash or hash lies outside every string it blanked and is still
+    visible in the blanked text. A program with no double quote after a visible slash or hash has no hiding place.
+    """
+    last = program.rfind('"')
+    if last < 0:
+        return False
+    head = _blank_strings(program)[:last]
+    return "/" in head or "#" in head
+
+
+def _awk_views(program: str) -> List[str]:
+    """The texts a program is read as: the blanked program, and the raw program text when it is suspect."""
+    views = [_blank_strings(program)]
+    if _awk_suspect(program):
+        views.append(program)
+    return views
+
+
+def _quote_pairs(program: str) -> List[str]:
+    """The path-like text between every two consecutive double quotes (each pair overlaps the next), whole and cut."""
+    marks = [index for index, ch in enumerate(program) if ch == '"']
+    found: List[str] = []
+    for first, second in zip(marks, marks[1:]):
+        literal = program[first + 1:second]
+        found.extend([literal] + _cut(literal))
+    return [item for item in found if _path_like(item)]
+
+
+def _awk_statement_flat(text: str, start: int) -> bool:
+    """The statement that starts at start read with the parenthesis depth ignored (a regular expression holds a stray one)."""
+    index = start
+    size = len(text)
+    while index < size:
+        ch = text[index]
+        if ch in ";}":
+            return False
+        if ch == "\n" and text[start:index].rstrip(" \t")[-1:] not in (",", "\\"):
+            return False
+        if ch == ">":
+            if text.startswith(">=", index):
+                index += 2
+                continue
+            return True
+        if ch == "|":
+            if text.startswith("||", index):
+                index += 2
+                continue
+            return True
+        index += 1
+    return False
+
+
 def _awk_statement_redirects(text: str, start: int) -> bool:
     """True when the print statement that starts at start (in blanked text) holds a redirect at depth zero.
 
     The statement runs to the next semicolon or closing brace at parenthesis depth zero, or to a newline at
     depth zero that does not follow a comma or a backslash. A greater-than that is not followed by an equals
     sign (also the double form), and a pipe that is not part of a double bar (also the pipe with an ampersand),
-    are redirects. A comparison inside parentheses, in a pattern or inside a string is not.
+    are redirects. A comparison inside parentheses, in a pattern or inside a string is not. When the depth is
+    still above zero at the end of the text (a stray open parenthesis, as a regular expression can hold), the
+    statement is read again with the depth ignored.
     """
     depth = 0
     index = start
@@ -871,20 +941,22 @@ def _awk_statement_redirects(text: str, start: int) -> bool:
                     continue
                 return True
         index += 1
-    return False
+    return depth > 0 and _awk_statement_flat(text, start)
 
 
 def _awk_redirects(program: str) -> bool:
-    """True when some print or printf statement of an awk program redirects to a file or a pipe."""
-    text = _blank_strings(program)
-    return any(_awk_statement_redirects(text, match.end()) for match in _AWK_PRINT.finditer(text))
+    """True when some print or printf statement of an awk program redirects to a file or a pipe (in any view)."""
+    for text in _awk_views(program):
+        if any(_awk_statement_redirects(text, match.end()) for match in _AWK_PRINT.finditer(text)):
+            return True
+    return False
 
 
 def _awk_ok(rest: Sequence[str]) -> bool:
     scripts, _ignored = _script_positions("awk", rest)
     for position in scripts:
         if position < len(rest) and (
-            _AWK_CALL.search(_blank_strings(rest[position])) or _awk_redirects(rest[position])
+            any(_AWK_CALL.search(view) for view in _awk_views(rest[position])) or _awk_redirects(rest[position])
         ):
             return False
     return True
@@ -893,7 +965,7 @@ def _awk_ok(rest: Sequence[str]) -> bool:
 def _sort_ok(rest: Sequence[str]) -> bool:
     if any(word == "-o" or word.startswith("-o") or word.startswith("--output") for word in rest if word.startswith("-")):
         return False
-    return not _cluster_has(rest, "o")
+    return not any(_SORT_CLUSTER.match(word) for word in rest)
 
 
 def _git_ok(rest: Sequence[str]) -> bool:
@@ -998,8 +1070,10 @@ class _Tally(object):
         # The folder every command starts in is the first approved root (the project); cwd is the working folder
         # of the unit being read (a real path while known, None when unknown) and flag is the escaped-cd flag.
         self.start: Optional[str] = self.real_roots[0] if self.real_roots else None
-        self.cwd: Optional[str] = self.start
+        self.cwd: Any = self.start
         self.flag = False
+        # True from the first reserved construct or parenthesis group of a unit to its end: no cd moves the folder.
+        self.compound = False
         self.outside = 0
         self.unparsed = 0
         self.programs: Dict[str, int] = {}
@@ -1017,30 +1091,41 @@ class _Tally(object):
         """A new command (or substitution body) starts in the start folder with the folder known and no flag."""
         self.cwd = self.start
         self.flag = False
+        self.compound = False
+
+    def folder(self, here: Any) -> Optional[str]:
+        """The folder a dot-dot word is resolved against: the start folder when loose, None when strict."""
+        return self.start if here == _LOOSE else here
 
     def escapes(self, word: str, here: Any = False) -> bool:
-        """Judge a word against the working folder (here replaces it when given: a real path or None)."""
-        return _escapes(word, self.real_roots, self.ignore, self.cwd if here is False else here)
+        """Judge a word against the working folder (here replaces it when given: a real path, None or the loose marker)."""
+        return _escapes(word, self.real_roots, self.ignore, self.folder(self.cwd if here is False else here))
 
-    def move(self, target: str, base: Optional[str]) -> Tuple[Optional[str], bool]:
-        """Where a directory change to target leads from base: (new folder or None when unknown, escaped).
+    def move(self, target: str, base: Any, certain: bool = True) -> Tuple[Any, bool]:
+        """Where a directory change to target leads from base: (new folder, escaped).
 
-        A target that escapes (a tilde, a home spelling, an outside place, a dot-dot that resolves outside or
-        cannot be resolved) is an escape. A target with a non-literal segment leaves the folder unknown without
-        an escape. A literal target is resolved with realpath and must stay inside a root.
+        The new folder is a real path, None (strict) or the loose marker. A target that escapes (a tilde, a home
+        spelling, an outside place, a dot-dot that resolves outside or cannot be resolved) is an escape and
+        leaves the folder strict. A target with a non-literal segment leaves the folder loose without an escape.
+        A relative literal target made while the folder is not known keeps that state. A literal target is
+        resolved with realpath and must stay inside a root; the folder moves only when the change is certain
+        (certain to run in the main shell and to succeed) and the folder exists now, else it is strict.
         """
         if self.escapes(target, base):
             return None, True
         if not _literal_segments(target):
-            return None, False
+            return _LOOSE, False
         if target.startswith("/"):
-            return os.path.realpath(target), False
-        if base is None:
-            return None, False
-        real = os.path.realpath(os.path.join(base, target))
-        if any(_inside(real, root) for root in self.real_roots):
+            real = os.path.realpath(target)
+        else:
+            if base is None or base == _LOOSE:
+                return base, False
+            real = os.path.realpath(os.path.join(base, target))
+            if not any(_inside(real, root) for root in self.real_roots):
+                return None, True
+        if certain and os.path.isdir(real):
             return real, False
-        return None, True
+        return None, False
 
     def raw_escapes(self, text: str) -> bool:
         """An unparsed text: any piece that reads as a path and escapes."""
@@ -1230,7 +1315,8 @@ def _prepass(command: str) -> Tuple[str, List[str]]:
     bodies of heredocs are cut out: a body whose delimiter has any quoting is data, a bare delimiter's body is
     scanned for command substitutions and backquote pairs. Each command substitution, backquote pair and
     process substitution outside single quotes (inside double quotes too) becomes a neutral word and its body is
-    queued. An unquoted parenthesis becomes a separator, and the force form of a redirection loses its bar.
+    queued. An unquoted parenthesis becomes a separator, a marker part and a separator (the marker tells the
+    unit reader that a group opened), and the force form of a redirection loses its bar.
     Raises _Unparsed for an unbalanced group or an unterminated heredoc.
     """
     out: List[str] = []
@@ -1315,7 +1401,7 @@ def _prepass(command: str) -> Tuple[str, List[str]]:
             out.append(">")
             index += 2
         elif ch in "()":
-            out.append(";")
+            out.append(";" + _GROUP_MARK + ";")
             index += 1
         elif ch == "\n":
             out.append(ch)
@@ -1441,19 +1527,32 @@ def _lead_words(text: str) -> str:
 
 
 def _attached_candidates(word: str) -> List[str]:
-    """The values attached to a short option: the text after the option letter, and the text from the first slash
-    or tilde on when only one to four letters (a cluster of option letters) stand before it."""
+    """The values attached to a short option: the text after each option letter of the leading run of letters.
+
+    A candidate that starts with a slash or a tilde is offered only when at most four letters stand before it
+    (so -Iinclude/x stays a relative value); any other candidate is offered whatever the run length. When
+    nothing is offered the text after the second character is.
+    """
     if not word.startswith("-") or word.startswith("--") or len(word) <= 2:
         return []
-    found = [word[2:]]
-    cluster = _ATTACHED_CLUSTER.match(word)
-    if cluster is not None:
-        found.append(cluster.group(1))
-    return found
+    run = len(_OPTION_RUN.match(word, 1).group(0))
+    found: List[str] = []
+    for number in range(run):
+        text = word[2 + number:]
+        if not text or (text[0] in "/~" and number + 1 > 4):
+            continue
+        found.append(text)
+    return found or [word[2:]]
 
 
-def _judge(words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str], tally: _Tally) -> None:
-    """Classify one parsed part, list it when it is write-capable, count it when it escapes; track the cd state."""
+def _judge(
+    words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str], tally: _Tally, certain: bool = False
+) -> None:
+    """Classify one parsed part, list it when it is write-capable, count it when it escapes; track the cd state.
+
+    certain says that a cd part is certain to run in the main shell and to succeed (see _read_unit); the folder
+    moves on a cd only then. An env -C directory moves the folder for its own part under the existence test alone.
+    """
     program = os.path.basename(words[0])
     rest = list(words[1:])
     if program == "cd":
@@ -1461,7 +1560,7 @@ def _judge(words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str]
         if not targets or targets[0] == "-":
             tally.cwd, tally.flag = None, True
         else:
-            moved, escaped = tally.move(targets[0], tally.cwd)
+            moved, escaped = tally.move(targets[0], tally.cwd, certain)
             tally.cwd, tally.flag = moved, tally.flag or escaped
         return
     writes = [target for target in redirects if target not in _DEV_PATHS]
@@ -1485,7 +1584,7 @@ def _judge(words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str]
     escaping = (
         escaping
         or any(tally.escapes(target) for target in redirects)
-        or (program == "mktemp" and _mktemp_unsafe(rest, tally.real_roots, tally.ignore, here))
+        or (program == "mktemp" and _mktemp_unsafe(rest, tally.real_roots, tally.ignore, tally.folder(here)))
     )
     for number, word in enumerate(rest):
         if escaping:
@@ -1494,6 +1593,8 @@ def _judge(words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str]
             continue
         if number in scripts:
             candidates = _literal_candidates(word)
+            if program in _AWK_NAMES and _awk_suspect(word):
+                candidates += _quote_pairs(word)
             if program == "sed":
                 candidates += _sed_operand_candidates(_sed_write_operands(word))
         else:
@@ -1506,14 +1607,37 @@ def _judge(words: Sequence[str], chdirs: Sequence[str], redirects: Sequence[str]
         tally.escaped(label)
 
 
+def _background(separators: Sequence[str], number: int) -> bool:
+    """True when the and-or list that holds part number ends with a single ampersand (it runs in the background)."""
+    index = number
+    while index < len(separators) and separators[index] in _CONNECTORS:
+        index += 1
+    return index < len(separators) and separators[index] == "&"
+
+
 def _read_unit(text: str, tally: _Tally) -> None:
-    """Judge the parts of one command text (the command itself or one substitution body) with its own cd flag."""
+    """Judge the parts of one command text (the command itself or one substitution body) with its own cd flag.
+
+    A cd moves the working folder only when it is certain to run in the main shell and to succeed: the next
+    separator is a double ampersand, the previous one is not a double bar, a pipe or a pipe with an ampersand,
+    its and-or list does not end with a single ampersand, and no reserved construct or parenthesis group has
+    opened earlier in the unit (the compound flag). Whether the target exists is judged by the tally.
+    """
     tally.begin()
-    for part in pc_allowlist.split_compound(text):
+    connected = pc_allowlist.split_compound_connected(text)
+    separators = [separator for _part, separator in connected]
+    for number, (part, after) in enumerate(connected):
+        before = separators[number - 1] if number else ""
+        if part == _GROUP_MARK:
+            tally.compound = True
+            continue
         read = _read_redirections(part)
         blanked = None if read is None else _lead_words(read[1])
+        if read is not None and blanked != read[1].lstrip():
+            tally.compound = True
         head = blanked.split(None, 1)[0] if blanked is not None and blanked.split() else ""
         if head in _RESERVED_STANDALONE or head in _RESERVED_HEADERS:
+            tally.compound = True
             continue
         split = None if blanked is None else _split_part(blanked)
         if read is None or split is None:
@@ -1533,7 +1657,10 @@ def _read_unit(text: str, tally: _Tally) -> None:
                 tally.listed("redirect")
                 tally.escaped("redirect")
             continue
-        _judge(words, chdirs, redirects, tally)
+        certain = (
+            after == "&&" and before not in _PIPE_OR_OR and not tally.compound and not _background(separators, number)
+        )
+        _judge(words, chdirs, redirects, tally, certain)
 
 
 def bash_mentions(
@@ -1555,18 +1682,33 @@ def bash_mentions(
     Every command (and every substitution body) starts in the project, the first approved root. A relative
     word with a dot-dot segment is resolved with realpath against the folder the command works in, but only
     when every segment up to its last dot-dot segment is literal (no variable, substitution, glob or brace
-    list, each of which could stand for any number of segments); otherwise it is an escape. A cd with a literal
-    target inside a root moves the folder; a cd that resolves outside every root, a bare cd, a cd to a dash and
-    a tilde or home target leave it unknown and make every later write-capable part an escape; a cd or env -C
-    target with a non-literal segment leaves it unknown without that flag. The text after the option letter of
-    a short option is judged too, and so is the text from the first slash or tilde on after a cluster of one to
-    four option letters. awk system and close count as calls (a parenthesis follows, after string literals are
-    blanked) and getline counts after a pipe; a double-bracket test at command position is one part.
+    list, each of which could stand for any number of segments); otherwise it is an escape.
+
+    A cd moves the folder only when it is certain to run in the main shell and certain to succeed: the next
+    separator is a double ampersand, the previous one is not a double bar, a pipe or a pipe with an ampersand,
+    its and-or list does not end with a single ampersand, no reserved construct (if, then, while, do, a for,
+    select or case header, fi, done, esac, a brace) and no parenthesis group has opened earlier in the command,
+    and the target resolves inside a root and is a folder when the command is judged. Every other literal cd
+    leaves the folder unknown and strict: every later dot-dot word is an escape. A cd that resolves outside
+    every root, a bare cd, a cd to a dash and a tilde or home target also make every later write-capable part an
+    escape. A cd or env -C target with a non-literal segment leaves the folder unknown and loose, without that
+    flag: a dot-dot word is then resolved against the start folder (the project); the residual is a variable
+    that stands for a folder outside the project. A folder is never carried from one Bash call to the next:
+    each call is judged from the project, in both directions. The text after each option letter of the leading
+    run of letters of a short option is judged too, and a candidate that starts with a slash or tilde counts
+    only when at most four letters precede it. awk system and close count as calls (a parenthesis follows, after
+    string literals are blanked) and getline counts after a pipe; a double-bracket test at command position is
+    one part.
 
     The sed w operand is found by a reader of the script (addresses, the s command with its flags, y, w and W;
     patterns and replacements are data), with an over-counting fallback for any construct it does not
     understand. A print or printf statement of an awk program is a redirect when it holds a greater-than or a
-    pipe at parenthesis depth zero, with string literals blanked; the redirect target is not read here.
+    pipe at parenthesis depth zero, with string literals blanked; the redirect target is not read here. A
+    program that holds a double quote after a slash or a hash (the blanker may then have read a quote inside a
+    regular expression or comment as a string) is also read as the raw program text, which over-counts a
+    pattern or division before a string literal that holds a greater-than, a pipe or a call word; a statement
+    whose parentheses never close is read again with the depth ignored; and its literal scan also reads the
+    text between every two consecutive double quotes.
 
     The rule fails closed: an env option it does not know makes the part unparsed, an unparsed part with an
     escaping word counts as an escape labelled unparsed, a mktemp part without an inside destination and an
