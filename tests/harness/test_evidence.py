@@ -1194,27 +1194,45 @@ def tripwire_env(run: "Unfiled") -> tuple:
 
 
 NOT_CLEAN_TEXT = "did not finish cleanly"
+STAGE_MISSING_TEXT = "a stage did not run"
+UNREADABLE_TEXT = "could not be read for filing"
+BREACH_TEXT = "breach"
+FIXED_LINES = {
+    NOT_CLEAN_TEXT: "the not-clean line",
+    STAGE_MISSING_TEXT: "the stage line",
+    UNREADABLE_TEXT: "the unreadable line",
+    BREACH_TEXT: "the breach line",
+}
+
+
+def assert_refused_for_nothing_filed(case: unittest.TestCase, run: "Unfiled", label: str, expected=NOT_CLEAN_TEXT) -> str:
+    """A refile of the run exits 11 and creates and starts nothing. expected is one fixed text or a tuple of
+    texts of which exactly one fixed line must be printed; the name of the line that fired is returned."""
+    import pc_spend
+
+    wanted = (expected,) if isinstance(expected, str) else tuple(expected)
+    wire, env = tripwire_env(run)
+    ledger = pc_spend.read_records(run.ctx.harness_home)
+    calls = len(run.rig.calls())
+    before = sorted(os.listdir(run.run_root))
+    code, text = refile(run, env=env)
+    case.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + text)
+    fired = [FIXED_LINES.get(item, item) for item in wanted if item in text]
+    case.assertEqual(len(fired), 1, label + ": one expected fixed line is printed: " + text)
+    case.assertNotIn(run.rig.base, text, label + ": no folder in the text")
+    case.assertEqual(rerun_folders(run.rig), [], label + ": no evidence folder")
+    case.assertEqual(sorted(os.listdir(run.run_root)), before, label + ": no stage folder in the run root")
+    case.assertEqual(len(run.rig.calls()), calls, label + ": no stage process was started")
+    case.assertEqual(pc_testutil.read_tripwire(wire), [], label + ": no claude was run")
+    case.assertEqual(pc_spend.read_records(run.ctx.harness_home), ledger, label + ": no ledger line was written")
+    return fired[0]
 
 
 class RefileCleanRunTests(unittest.TestCase):
     """CR-01: a run the live path refused cannot be refiled; the rule is the live path's own."""
 
     def assert_refused_for_nothing_filed(self, run: "Unfiled", label: str) -> None:
-        import pc_spend
-
-        wire, env = tripwire_env(run)
-        ledger = pc_spend.read_records(run.ctx.harness_home)
-        calls = len(run.rig.calls())
-        before = sorted(os.listdir(run.run_root))
-        code, text = refile(run, env=env)
-        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + text)
-        self.assertIn(NOT_CLEAN_TEXT, text, label + ": the fixed line")
-        self.assertNotIn(run.rig.base, text, label + ": no folder in the text")
-        self.assertEqual(rerun_folders(run.rig), [], label + ": no evidence folder")
-        self.assertEqual(sorted(os.listdir(run.run_root)), before, label + ": no stage folder in the run root")
-        self.assertEqual(len(run.rig.calls()), calls, label + ": no stage process was started")
-        self.assertEqual(pc_testutil.read_tripwire(wire), [], label + ": no claude was run")
-        self.assertEqual(pc_spend.read_records(run.ctx.harness_home), ledger, label + ": no ledger line was written")
+        assert_refused_for_nothing_filed(self, run, label)
 
     def test_a_chain_stopped_at_s2_by_an_error_subtype_cannot_be_refiled(self) -> None:
         stages = with_result(pc_testutil.default_row1_stages(), 1, subtype="error_during_execution")
@@ -1263,6 +1281,104 @@ class RefileCleanRunTests(unittest.TestCase):
         stages = with_result(pc_testutil.default_row1_stages(), 1, text="Checkpoint written. Nothing to resume.")
         run = Unfiled(stages)
         code, text = refile(run)
+        self.assertEqual(code, 0, "a run with no s3: " + text)
+
+
+def move_aside(run: "Unfiled", name: str) -> None:
+    """Move a raw file of the run root to a name beside it (tests never delete)."""
+    raw = os.path.join(run.run_root, "raw")
+    os.rename(os.path.join(raw, name), os.path.join(raw, name + ".moved"))
+
+
+def rewrite_chain(run: "Unfiled", **changes) -> None:
+    path = os.path.join(run.run_root, "raw", "chain.json")
+    record = json.loads(read_text(path))
+    record.update(changes)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def hand_stage(name: str, clean: bool = True) -> object:
+    record = {"problem": "" if clean else "stopped", "evaluation": row1().STATUS_PASS}
+    return evidence().StageData(name, record, b"", b"", "prompt", [])
+
+
+def hand_run(names: tuple, marker) -> object:
+    chain = None if marker is None else {"marker": marker}
+    return evidence().RunData({}, chain, [hand_stage(name) for name in names], {})
+
+
+class RefileChainTests(unittest.TestCase):
+    """CR-01 of the second pass: a run whose chain stopped early is neither filed nor refiled."""
+
+    def test_a_run_with_only_a_clean_s1_is_refused(self) -> None:
+        run = Unfiled()
+        for name in ("s2.record.json", "s3.record.json", "chain.json"):
+            move_aside(run, name)
+        self.assertEqual(assert_refused_for_nothing_filed(self, run, "s1 only", STAGE_MISSING_TEXT), "the stage line")
+
+    def test_s1_and_s2_with_a_found_marker_and_no_s3_is_refused(self) -> None:
+        run = Unfiled()
+        move_aside(run, "s3.record.json")
+        self.assertEqual(
+            assert_refused_for_nothing_filed(self, run, "no s3", STAGE_MISSING_TEXT), "the stage line"
+        )
+
+    def test_s3_present_with_a_marker_none_is_refused(self) -> None:
+        run = Unfiled()
+        rewrite_chain(run, marker=row1().MARKER_NONE, resume_line=None, resume_line_bytes=0)
+        fired = assert_refused_for_nothing_filed(
+            self, run, "s3 with marker none", (STAGE_MISSING_TEXT, BREACH_TEXT, UNREADABLE_TEXT)
+        )
+        self.assertIn(fired, ("the stage line", "the breach line", "the unreadable line"))
+
+    def test_s2_missing_is_refused(self) -> None:
+        run = Unfiled()
+        move_aside(run, "s2.record.json")
+        fired = assert_refused_for_nothing_filed(
+            self, run, "s2 missing", (STAGE_MISSING_TEXT, BREACH_TEXT, UNREADABLE_TEXT)
+        )
+        self.assertIn(fired, ("the stage line", "the breach line", "the unreadable line"))
+
+    def test_a_chain_record_that_is_absent_or_holds_another_marker_is_refused(self) -> None:
+        run = Unfiled()
+        move_aside(run, "chain.json")
+        assert_refused_for_nothing_filed(
+            self, run, "no chain record", (STAGE_MISSING_TEXT, BREACH_TEXT, UNREADABLE_TEXT)
+        )
+        run = Unfiled()
+        rewrite_chain(run, marker="something-else")
+        assert_refused_for_nothing_filed(
+            self, run, "another marker", (STAGE_MISSING_TEXT, BREACH_TEXT, UNREADABLE_TEXT)
+        )
+
+    def test_the_rule_itself_over_hand_built_runs(self) -> None:
+        found, none = row1().MARKER_FOUND, row1().MARKER_NONE
+        ev = evidence()
+        self.assertIsNone(ev._unfileable(hand_run(("s1", "s2"), none)), "s1, s2, marker none")
+        self.assertIsNone(ev._unfileable(hand_run(("s1", "s2", "s3"), found)), "s1, s2, s3, marker found")
+        stage_line = ev.MESSAGE_STAGE_MISSING
+        self.assertIn(STAGE_MISSING_TEXT, stage_line)
+        cases = {
+            "s1 alone": hand_run(("s1",), none),
+            "s1 alone with a found marker": hand_run(("s1",), found),
+            "s1, s2, found, no s3": hand_run(("s1", "s2"), found),
+            "s1, s2, s3, marker none": hand_run(("s1", "s2", "s3"), none),
+            "s1 and s3": hand_run(("s1", "s3"), found),
+            "all three, no chain": hand_run(("s1", "s2", "s3"), None),
+            "s1, s2, another marker": hand_run(("s1", "s2"), "other"),
+        }
+        for label, data in sorted(cases.items()):
+            self.assertEqual(ev._unfileable(data), stage_line, label)
+        unclean = ev.RunData({}, None, [hand_stage("s1", clean=False)], {})
+        self.assertIn(NOT_CLEAN_TEXT, ev._unfileable(unclean), "the per-stage rule still comes first")
+        self.assertIn(UNREADABLE_TEXT, ev._unfileable(ev.RunData({}, None, [], {})), "no stages")
+
+    def test_the_controls_still_refile(self) -> None:
+        code, text = refile(Unfiled())
+        self.assertEqual(code, 0, "the clean default run: " + text)
+        stages = with_result(pc_testutil.default_row1_stages(), 1, text="Checkpoint written. Nothing to resume.")
+        code, text = refile(Unfiled(stages))
         self.assertEqual(code, 0, "a run with no s3: " + text)
 
 
@@ -1418,6 +1534,12 @@ class ReadmeTests(unittest.TestCase):
             self.assertIn(phrase, section, "the subsection still says: " + phrase)
         for phrase in ("did not finish cleanly", "cumulative-consistent", "deny entries"):
             self.assertIn(phrase, section, "the subsection says: " + phrase)
+
+    def test_the_readme_says_a_refile_needs_the_whole_chain(self) -> None:
+        text = self.readme()
+        self.assertIn("a stage did not run", text, "the guide names the refusal")
+        self.assertNotIn("a finished run folder", text, "the old phrase is gone")
+        self.assertIn("whole chain", text, "the guide says the chain must be whole")
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
         text = self.readme().split("## Replacement tokens", 1)[1].split("\n## ", 1)[0]
