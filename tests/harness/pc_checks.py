@@ -15,6 +15,9 @@ What is a breach (decided by breaches(), nothing else):
                                     auto-memory folder being present
   * git-mutations                   a change of HEAD, branch, refs or the git folder (the index excluded), a
                                     staged entry, or an executed mutating git command
+  * run-record-changes              a change to the run's own record files: a raw file or a snapshot that
+                                    changed or vanished between two boundaries, an unexpected new name in raw/
+                                    or snaps/, or an earlier part of the hook log rewritten (plan 03-07)
 
 Denials, changed ledgers, a helper-call disagreement and read-only Bash path mentions are facts for the
 reviewer and never a breach. Messages are fixed text with counts, ids and state names only, never a path.
@@ -31,6 +34,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -48,6 +52,19 @@ SETUP_STATE = "setup"
 
 BREACH_WRITES = "writes-outside-approved-roots"
 BREACH_GIT = "git-mutations"
+BREACH_RECORD = "run-record-changes"
+
+# The boundaries at which the run root's own record is guarded, in order (the same order as SNAPSHOT_ORDER).
+GUARD_ORDER: Tuple[str, ...] = ("setup", "s1", "s2", "s3")
+HOOKLOG_NAME = "hooklog.jsonl"
+VIOLATION_RAW_CHANGED = "raw-entry-changed"
+VIOLATION_RAW_UNEXPECTED = "raw-entry-unexpected"
+VIOLATION_SNAPSHOT_CHANGED = "snapshot-changed"
+VIOLATION_SNAPSHOT_UNEXPECTED = "snapshot-unexpected"
+VIOLATION_HOOKLOG = "hooklog-rewritten"
+_GUARD_KINDS = ("dir", "link", "other")
+_PREFIX_STATES = ("n/a", "yes", "no")
+_GUARD_KEYS = ("hooklog", "raw", "snaps")
 
 OUTSIDE_RUN_ROOT = "outside-run-root"
 CORRELATED_YES = "yes"
@@ -1049,6 +1066,170 @@ def session_facts(
 
 
 # ---------------------------------------------------------------------------------------------
+# The run root's own record: raw/ and snaps/ are guarded at every boundary (WR-01)
+# ---------------------------------------------------------------------------------------------
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError:
+        raise CheckError("a run-root file could not be read for the guard") from None
+    return digest.hexdigest()
+
+
+def _kind_of(path: str) -> str:
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        raise CheckError("a run-root entry could not be examined for the guard") from None
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISDIR(mode):
+        return "dir"
+    if stat.S_ISLNK(mode):
+        return "link"
+    return "other"
+
+
+def _hooklog_state(raw_dir: str, previous: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Size, digest and the prefix flag of the append-only hook log against the previous boundary's record."""
+    path = os.path.join(raw_dir, HOOKLOG_NAME)
+    regular = os.path.lexists(path) and _kind_of(path) == "file"
+    data = _read_bytes(path, "the hook log") if regular else b""
+    state = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(), "prefix_intact": "n/a"}
+    if previous is None:
+        return state
+    before = previous["hooklog"]
+    if before["size"] == 0:
+        intact = regular or not os.path.lexists(path)
+    elif not regular or len(data) < before["size"]:
+        intact = False
+    else:
+        intact = hashlib.sha256(data[: before["size"]]).hexdigest() == before["sha256"]
+    state["prefix_intact"] = "yes" if intact else "no"
+    return state
+
+
+def capture_guard(paths: Mapping[str, Optional[str]], name: str) -> None:
+    """Write raw/<name>.guard.json exclusively: the digest of every raw file, the tree digest of every snapshot.
+
+    raw maps each name in raw/ (except the append-only hook log) to the sha256 of the file, or to dir, link or
+    other for anything that is not a regular file. snaps maps each name in snaps/ to the sha256 of the jsonl
+    manifest of that folder's tree (a plain file there gets its own sha256). hooklog holds the size, the sha256
+    and a prefix flag: n/a at setup, yes when the bytes recorded at the previous boundary are still the start of
+    the file, no after a rewrite, a truncation, a deletion or a replacement by a link. A boundary after setup
+    needs the previous boundary's guard (CheckError otherwise). Only reads; the one write is exclusive.
+    """
+    if name not in GUARD_ORDER:
+        raise CheckError("an unknown guard boundary")
+    index = GUARD_ORDER.index(name)
+    raw_dir, snaps_dir = str(paths["raw"]), str(paths["snaps"])
+    previous = load_guard(raw_dir, GUARD_ORDER[index - 1]) if index > 0 else None
+    raw: Dict[str, str] = {}
+    try:
+        raw_names = sorted(os.listdir(raw_dir))
+        snap_names = sorted(os.listdir(snaps_dir))
+    except OSError:
+        raise CheckError("the run root could not be listed for the guard") from None
+    for entry in raw_names:
+        if entry == HOOKLOG_NAME:
+            continue
+        full = os.path.join(raw_dir, entry)
+        kind = _kind_of(full)
+        raw[entry] = _sha256_file(full) if kind == "file" else kind
+    snaps: Dict[str, str] = {}
+    for entry in snap_names:
+        full = os.path.join(snaps_dir, entry)
+        kind = _kind_of(full)
+        if kind == "dir":
+            try:
+                snaps[entry] = hashlib.sha256(pc_manifest.jsonl_bytes(pc_manifest.tree_manifest(full))).hexdigest()
+            except (pc_manifest.ManifestError, OSError):
+                raise CheckError("a snapshot could not be read for the guard") from None
+        else:
+            snaps[entry] = _sha256_file(full) if kind == "file" else kind
+    guard = {"raw": raw, "snaps": snaps, "hooklog": _hooklog_state(raw_dir, previous)}
+    pc_runroot.write_exclusive(
+        os.path.join(raw_dir, name + ".guard.json"),
+        (json.dumps(guard, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        0o600,
+    )
+
+
+def _digest_or_kind(value: Any) -> bool:
+    return isinstance(value, str) and (_HEX64.match(value) is not None or value in _GUARD_KINDS)
+
+
+def load_guard(raw_dir: str, name: str) -> Dict[str, Any]:
+    """Read raw/<name>.guard.json strictly: exact keys and types, 64 lowercase hex digests, else CheckError."""
+    guard = _read_json(os.path.join(raw_dir, name + ".guard.json"), "a guard file")
+    if not isinstance(guard, dict) or sorted(guard) != list(_GUARD_KEYS):
+        raise CheckError("a guard file has an unexpected shape")
+    for part in ("raw", "snaps"):
+        mapping = guard[part]
+        if not isinstance(mapping, dict) or not all(isinstance(k, str) and _digest_or_kind(v) for k, v in mapping.items()):
+            raise CheckError("a guard file has an unexpected shape")
+    log = guard["hooklog"]
+    if not isinstance(log, dict) or sorted(log) != ["prefix_intact", "sha256", "size"]:
+        raise CheckError("a guard file has an unexpected shape")
+    if isinstance(log["size"], bool) or not isinstance(log["size"], int) or log["size"] < 0:
+        raise CheckError("a guard file has an unexpected shape")
+    if not isinstance(log["sha256"], str) or _HEX64.match(log["sha256"]) is None or log["prefix_intact"] not in _PREFIX_STATES:
+        raise CheckError("a guard file has an unexpected shape")
+    return guard
+
+
+def _window_names(name: str) -> set:
+    """The raw names the harness itself writes between the previous boundary's guard and this one."""
+    index = GUARD_ORDER.index(name)
+    previous = GUARD_ORDER[index - 1]
+    allowed = set([previous + ".guard.json"])
+    for suffix in (".prompt", ".stdout", ".stderr", ".git.json", ".record.json"):
+        allowed.add(name + suffix)
+    if previous != "setup":
+        allowed.add(previous + ".record.json")
+    if previous == "s2":
+        allowed.add("chain.json")
+    return allowed
+
+
+def guard_violations(previous: Mapping[str, Any], current: Mapping[str, Any], name: str) -> List[str]:
+    """Compare two consecutive guards; one kind name per offending entry (pure).
+
+    A recorded raw file or snapshot that changed or is gone, a new raw name the harness does not write in this
+    window, a new snapshot folder other than the one this boundary takes, and a hook log whose earlier bytes
+    were rewritten. The hook log may grow: the hook appends to it during a stage.
+    """
+    if name not in GUARD_ORDER or name == GUARD_ORDER[0]:
+        raise CheckError("an unknown guard window")
+    allowed = _window_names(name)
+    own_snapshot = SNAPSHOT_ORDER[GUARD_ORDER.index(name)]
+    found: List[str] = []
+    for entry in sorted(previous["raw"]):
+        if current["raw"].get(entry) != previous["raw"][entry]:
+            found.append(VIOLATION_RAW_CHANGED)
+    for entry in sorted(current["raw"]):
+        if entry not in previous["raw"] and entry not in allowed:
+            found.append(VIOLATION_RAW_UNEXPECTED)
+    for entry in sorted(previous["snaps"]):
+        if current["snaps"].get(entry) != previous["snaps"][entry]:
+            found.append(VIOLATION_SNAPSHOT_CHANGED)
+    for entry in sorted(current["snaps"]):
+        if entry not in previous["snaps"] and entry != own_snapshot:
+            found.append(VIOLATION_SNAPSHOT_UNEXPECTED)
+    if current["hooklog"]["prefix_intact"] == "no":
+        found.append(VIOLATION_HOOKLOG)
+    return found
+
+
+# ---------------------------------------------------------------------------------------------
 # Facts and breaches
 # ---------------------------------------------------------------------------------------------
 
@@ -1070,7 +1251,7 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
     """Return every fact about a run root as plain values, reading only files in the run root.
 
     Nothing is taken from reply text, so the same call after a failed filing gives the same facts. The names:
-    snapshots, stages, streams, write_boundary, trace_writes, bash_mentions, memory_probe, git, ledgers,
+    snapshots, stages, streams, write_boundary, trace_writes, bash_mentions, memory_probe, git, guard, ledgers,
     helper_calls, session and denials.
     """
     root = os.path.realpath(run_root)
@@ -1128,6 +1309,13 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
             raise CheckError("a git state file is missing")  # a missing file must not remove a comparison
         states.append(load_git_state(raw, name))
 
+    boundaries = [SETUP_STATE] + stages
+    guards = [load_guard(raw, name) for name in boundaries]
+    guard_kinds: Dict[str, int] = {}
+    for number in range(1, len(guards)):
+        for kind in guard_violations(guards[number - 1], guards[number], boundaries[number]):
+            guard_kinds[kind] = guard_kinds.get(kind, 0) + 1
+
     log_path = os.path.join(root, "wrapper", "calls.log")
     log_text = _read_bytes(log_path, "the wrapper log").decode("utf-8", "replace") if os.path.isfile(log_path) else ""
     wrapper = os.path.join(root, "wrapper", "checkpoint")
@@ -1153,6 +1341,7 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
         "bash_mentions": mentions,
         "memory_probe": memory_probe(config_dir, project),
         "git": {"states": states, "mutations": git_mutations(states, executed_commands)},
+        "guard": {"count": sum(guard_kinds.values()), "kinds": guard_kinds},
         "ledgers": ledger_digests(os.path.join(snaps, names[0]), os.path.join(snaps, names[-1])),
         "helper_calls": helper,
         "session": session,
@@ -1177,4 +1366,7 @@ def breaches(facts: Mapping[str, Any]) -> List[Tuple[str, int]]:
     mutations = int(facts["git"]["mutations"]["total"])
     if mutations > 0:
         found.append((BREACH_GIT, mutations))
+    changes = int(facts["guard"]["count"])
+    if changes > 0:
+        found.append((BREACH_RECORD, changes))
     return found
