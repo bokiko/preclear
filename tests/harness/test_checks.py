@@ -811,7 +811,7 @@ class RefileFactsTests(unittest.TestCase):
             self.assertEqual(sorted(state), GIT_KEYS, "state file " + name)
         paths = {"project": os.path.join(run.run_root, "project"), "raw": raw}
         with self.assertRaises(FileExistsError):
-            checks().capture_boundary_state(paths, "s1", shutil.which("git"))
+            checks().capture_boundary_state(paths, "s1", shutil.which("git"), stored_pin(run.run_root))
 
     def test_the_facts_follow_a_second_look_after_the_run_ended(self) -> None:
         run = Run(pc_testutil.seed_git_commit(pc_testutil.default_row1_stages(), 1))
@@ -953,17 +953,17 @@ class GitHardeningTests(unittest.TestCase):
         c = checks()
         raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
         os.makedirs(raw)
-        self.assertIsNone(c.pinned_gitdir(raw, True), "at setup the pin does not exist yet")
+        self.assertIsNone(c.pinned_gitdir(raw, True, None), "at setup the pin does not exist yet")
         with self.assertRaises(c.CheckError, msg="after setup a missing file is refused, not unpinned"):
-            c.pinned_gitdir(raw, False)
+            c.pinned_gitdir(raw, False, digest("2"))
         state = {"head": "h", "branch": "b", "refs_digest": digest("1"), "gitdir_digest": digest("2"), "staged": 0}
         with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
             json.dump(state, handle)
-        self.assertEqual(c.pinned_gitdir(raw, False), digest("2"), "the stored digest")
+        self.assertEqual(c.pinned_gitdir(raw, False, digest("2")), digest("2"), "the stored digest")
         with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
             handle.write("not json")
         with self.assertRaises(c.CheckError, msg="a malformed file is refused"):
-            c.pinned_gitdir(raw, False)
+            c.pinned_gitdir(raw, False, digest("2"))
 
     def test_a_planted_clean_filter_driver_never_runs_once_the_pin_is_taken(self) -> None:
         control, guarded = make_repo(), make_repo()
@@ -982,7 +982,7 @@ class GitHardeningTests(unittest.TestCase):
     def test_a_pinned_snapshot_of_an_untouched_repository_runs_normally(self) -> None:
         run = Run(pc_testutil.default_row1_stages())
         paths = pc_row1.paths_for(run.run_root)
-        pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+        pc_row1.take_snapshot(paths, "snap-9-extra", real_git(), pin=stored_pin(run.run_root))
         with open(os.path.join(run.run_root, "snaps", "snap-9-extra", "status.txt"), "rb") as handle:
             text = handle.read()
         self.assertNotIn(pc_row1.STATUS_NOT_RUN.encode("utf-8"), text, "real status output, not the fixed line")
@@ -1007,50 +1007,58 @@ def move_pin_aside(run_root: str) -> None:
 
 
 class PinRequiredTests(unittest.TestCase):
-    """WR-03 of the second pass: the pin is required after setup; a missing file refuses and never unpins."""
+    """WR-03 of the second pass, moved to the in-memory contract of WR-02: the pin is required after setup."""
 
-    def test_the_boundary_is_a_required_argument(self) -> None:
+    def test_the_boundary_and_the_value_are_required_arguments(self) -> None:
         c = checks()
         raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
         os.makedirs(raw)
-        self.assertIsNone(c.pinned_gitdir(raw, True), "setup, no file")
+        self.assertIsNone(c.pinned_gitdir(raw, True, None), "setup, no file")
         state = {"head": "h", "branch": "b", "refs_digest": digest("1"), "gitdir_digest": digest("2"), "staged": 0}
         with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
             json.dump(state, handle)
-        self.assertIsNone(c.pinned_gitdir(raw, True), "setup, with a file: the pin is not used at setup")
-        self.assertEqual(c.pinned_gitdir(raw, False), digest("2"), "after setup the stored digest")
+        self.assertIsNone(c.pinned_gitdir(raw, True, None), "setup, with a file: the pin is not used at setup")
+        self.assertEqual(c.pinned_gitdir(raw, False, digest("2")), digest("2"), "after setup the stored digest")
         with self.assertRaises(TypeError, msg="no caller can reach the unpinned path by omission"):
             c.pinned_gitdir(raw)
+        with self.assertRaises(TypeError, msg="the value is required too"):
+            c.pinned_gitdir(raw, False)
 
-    def test_a_missing_pin_file_refuses_and_starts_no_process(self) -> None:
+    def test_a_missing_pin_file_with_a_good_value_refuses_and_starts_no_process(self) -> None:
         c = checks()
         run = Run(pc_testutil.default_row1_stages())
+        pin = stored_pin(run.run_root)
         move_pin_aside(run.run_root)
         paths = pc_row1.paths_for(run.run_root)
         with unittest.mock.patch("subprocess.run", forbid_processes):
-            with self.assertRaises(c.CheckError, msg="a snapshot after setup needs the pin"):
-                pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
-            with self.assertRaises(c.CheckError, msg="a boundary state after setup needs the pin"):
-                c.capture_boundary_state(paths, "s9", real_git())
+            with self.assertRaises(c.CheckError, msg="a snapshot after setup needs the file"):
+                pc_row1.take_snapshot(paths, "snap-9-extra", real_git(), pin=pin)
+            with self.assertRaises(c.CheckError, msg="a boundary state after setup needs the file"):
+                c.capture_boundary_state(paths, "s9", real_git(), pin)
         self.assertFalse(os.path.exists(os.path.join(run.run_root, "snaps", "snap-9-extra")), "no partial snapshot")
 
     def test_the_setup_boundary_still_works_on_a_bare_run_root(self) -> None:
         c = checks()
         rig, paths = bare_paths()
         pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git(), setup=True)
-        c.capture_boundary_state(paths, c.SETUP_STATE, real_git())
+        pin = c.capture_boundary_state(paths, c.SETUP_STATE, real_git(), None)
         state = read_json(os.path.join(paths["raw"], "setup.git.json"))
         self.assertEqual(sorted(state), GIT_KEYS, "the setup state was written")
-        pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+        pc_row1.take_snapshot(paths, "snap-9-extra", real_git(), pin=pin)
         self.assertTrue(os.path.isdir(os.path.join(paths["snaps"], "snap-9-extra")), "a pinned snapshot runs")
 
     def test_a_pinned_snapshot_without_the_keyword_is_not_a_setup_snapshot(self) -> None:
         rig, paths = bare_paths()
-        with self.assertRaises(checks().CheckError, msg="the keyword defaults to false"):
+        with self.assertRaises(checks().CheckError, msg="the keyword defaults to false and the pin to none"):
             pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git())
 
     def test_the_end_to_end_row_with_the_pin_removed_ends_with_a_check_error(self) -> None:
         stages = pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0)
+        with self.assertRaises(checks().CheckError):
+            Run(stages)
+
+    def test_the_end_to_end_row_with_the_pin_rewritten_ends_with_a_check_error(self) -> None:
+        stages = pc_testutil.seed_pin_rewritten(pc_testutil.default_row1_stages(), 0)
         with self.assertRaises(checks().CheckError):
             Run(stages)
 
@@ -1183,16 +1191,16 @@ class NestedRepositoryTests(unittest.TestCase):
         git_in(paths["project"], "init", "-q", os.path.join(paths["project"], "inner"))
         with unittest.mock.patch("subprocess.run", forbid_processes):
             with self.assertRaises(c.CheckError, msg="a nested repository at setup is refused"):
-                c.capture_boundary_state(paths, c.SETUP_STATE, real_git())
+                c.capture_boundary_state(paths, c.SETUP_STATE, real_git(), None)
 
     def test_the_snapshot_notes_the_nested_repository_with_a_fixed_line(self) -> None:
         rig, paths = bare_paths()
         pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git(), setup=True)
         c = checks()
-        c.capture_boundary_state(paths, c.SETUP_STATE, real_git())
+        pin = c.capture_boundary_state(paths, c.SETUP_STATE, real_git(), None)
         git_in(paths["project"], "init", "-q", os.path.join(paths["project"], "inner"))
         with unittest.mock.patch("subprocess.run", forbid_processes):
-            pc_row1.take_snapshot(paths, "snap-9-extra", real_git())
+            pc_row1.take_snapshot(paths, "snap-9-extra", real_git(), pin=pin)
         with open(os.path.join(paths["snaps"], "snap-9-extra", "status.txt"), "r", encoding="utf-8") as handle:
             self.assertEqual(handle.read().strip(), pc_row1.STATUS_NOT_RUN_NESTED, "the fixed nested not-run line")
         self.assertNotEqual(pc_row1.STATUS_NOT_RUN_NESTED, pc_row1.STATUS_NOT_RUN, "a line of its own")
@@ -1507,7 +1515,6 @@ class WriteEscapeOpenWorldTests(OpenWorldBase):
         "test -e OUT/f",
         "git -C OUT status",
         "git --no-optional-locks status --porcelain",
-        "git -C OUT -c core.x=y status",
         "ls ~",
         "shasum -a 256 ../x",
         "sed -n '/w/p' f",
@@ -1755,6 +1762,300 @@ class ReadOnlyGateTextTests(CheckMixin, OpenWorldBase):
         self.assertEqual(found["unparsed_parts"], 1)
 
 
+class SedScriptReaderTests(CheckMixin, OpenWorldBase):
+    """The sed w operand is found by a reader of the script, not by an anchored pattern (CR-02, WR-04)."""
+
+    ESCAPING = [
+        ("sed -n 's/a/b/gw OUT/x' f", "sed-write"), ("sed -n 's/a/b/pw OUT/x' f", "sed-write"),
+        ("sed -n '1!w OUT/x' f", "sed-write"), ("sed -n '1!wOUT/x' f", "sed-write"),
+        ("sed -n '$!w OUT/x' f", "sed-write"), ("sed -n '/x/!w OUT/x' f", "sed-write"),
+        ("sed -n '/x/Iw OUT/x' f", "sed-write"), ("sed -n '\\,x,w OUT/x' f", "sed-write"),
+        ("sed -n '/a/s//b/gw OUT/x' f", "sed-write"), ("sed -n --expression='w OUT/x' f", "sed-write"),
+        ("sed -n -e p -e 'w OUT/x' f", "sed-write"), ("sed -n '2,4w OUT/x' f", "sed-write"),
+        ("sed -n '2~3w OUT/x' f", "sed-write"), ("sed -n '/a/,/b/w OUT/x' f", "sed-write"),
+        ("sed -n 'y/a/b/;w OUT/x' f", "sed-write"), ("sed -n 's/a/b/;w OUT/x' f", "sed-write"),
+        ("sed -n 'wOUT/x' f", "sed-write"), ("sed -n '1,3wOUT/x' f", "sed-write"),
+        ("sed -n '/re/wOUT/x' f", "sed-write"), ("sed -n 'k;w OUT/x' f", "sed-write"),
+        ("sed -n '1,+2w OUT/x' f", "sed-write"), ("sed -n '{w OUT/x\n}' f", "sed-write"),
+    ]
+    READ_ONLY = [
+        "sed -n 's/ w /x/p' OUT/f", "sed -n 's/x/w/p' OUT/f", "sed -n '/w/p' OUT/f", "sed -n '/^wait/p' OUT/f",
+        "sed -n '/a w b/p' OUT/f", "sed -n 'y/w/x/;p' OUT/f", "sed -n 's/a/b/g;p' OUT/f", "sed -n '1,3p' OUT/f",
+        "sed -n '$p' OUT/f", "sed -n '/x/!p' OUT/f", "sed -n 's/\\//w/gp' OUT/f", "sed -n 's/a/ w \\/x\\/y/p' OUT/f",
+    ]
+
+    def test_each_form_of_the_review_and_the_range_step_and_y_forms_is_one_write_escape(self) -> None:
+        self.check_table(self.ESCAPING, "sed write")
+
+    def test_a_w_inside_a_pattern_a_replacement_or_a_y_part_is_data_and_read_only(self) -> None:
+        for number, command in enumerate(self.READ_ONLY):
+            found = self.mentions(command)
+            self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}}, "read-only sed %d" % number)
+            self.assertEqual(found["write_programs"], {}, "read-only sed %d is not listed" % number)
+
+    def test_an_operand_inside_the_roots_is_listed_and_not_counted(self) -> None:
+        for command in ("sed -n 'w out.txt' f", "sed -n 'w ../ckpt/out.txt' f", "sed -n 's/a/b/gw out.txt' f"):
+            found = self.mentions(command)
+            self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}}, command)
+            self.assertEqual(found["write_programs"], {"sed-write": 1}, command)
+
+    def test_the_older_sed_cases_still_hold(self) -> None:
+        self.assertEqual(self.found("sed -n '/w/p' f"), {"count": 0, "programs": {}})
+        self.assertEqual(self.found("sed -n 's/x/w/p' f"), {"count": 0, "programs": {}})
+
+
+class AwkProgramReaderTests(CheckMixin, OpenWorldBase):
+    """The awk redirect test reads the program as awk does (CR-03, WR-04)."""
+
+    ESCAPING = [
+        ("awk 'BEGIN{print \"a;b\" > \"OUT/x\"}'", "awk"), ("awk '{print $1, \"a;b\" >> \"OUT/x\"}' f", "awk"),
+        ("awk 'BEGIN{print \"}\" > \"OUT/x\"}'", "awk"), ("awk 'BEGIN{print 1,\n 2 > \"OUT/x\"}'", "awk"),
+        ("awk -v o=OUT/x '{print \"a;b\" > o}' f", "awk"), ("awk '{print \"a;b\" | \"tee OUT/x\"}' f", "awk"),
+        ("awk 'BEGIN{printf(\"%s\\n\", \"a;b\") > \"OUT/x\"}'", "awk"),
+        ("awk '{print \"a\" > \"OUT/x\"; print \"b;\"}' f", "awk"), ("awk 'BEGIN{\"touch OUT/x\" | getline}'", "awk"),
+        ("awk 'BEGIN{print \"x\" |& \"tee OUT/x\"}'", "awk"), ("awk 'BEGIN{print \"x\" > \"OUT/f\"}'", "awk"),
+        ("awk '{print | \"tee OUT/f\"}'", "awk"),
+    ]
+    READ_ONLY = [
+        "awk '{ if (length($0) > 80) print NR }' OUT/f", "awk 'length>80' OUT/f", "awk '{print ($1 > 3)}' OUT/f",
+        "awk '{print $1, ($2 >= 3), ($3 || $4)}' OUT/f", "awk '{printf \"%s -> %d\\n\", $1, NR}' OUT/f",
+        "awk '{print \"a -> b\"}' OUT/f", "awk '{print \"a;b\"}' OUT/f", "awk '/system/ {print}' OUT/f",
+        "awk -F '>' '{print $1}' OUT/f", "awk -v t=\">\" '{print $1 t $2}' OUT/f",
+        "awk '{ while ((getline line < \"OUT/g\") > 0) print line }' f",
+        "awk '/^## /{if(h)print n, h; h=$0; n=0} {n+=length($0)+1; if(length($0)>m)m=length($0)} END{print n, h}' OUT/f",
+    ]
+
+    def test_each_redirect_after_a_semicolon_brace_or_newline_is_one_write_escape(self) -> None:
+        self.check_table(self.ESCAPING, "awk redirect")
+
+    def test_comparisons_strings_and_conditions_are_read_only_and_not_listed(self) -> None:
+        for number, command in enumerate(self.READ_ONLY):
+            found = self.mentions(command)
+            self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}}, "read-only awk %d" % number)
+            self.assertEqual(found["write_programs"], {}, "read-only awk %d is not listed" % number)
+
+    def test_a_redirect_to_a_variable_is_listed_as_write_capable_inside_the_roots(self) -> None:
+        found = self.mentions("awk -v o=out.txt '{print \"a;b\" > o}' f")
+        self.assertEqual(found["write_escapes"], {"count": 0, "programs": {}})
+        self.assertEqual(found["write_programs"], {"awk": 1})
+
+
+class GitCommandConfigTests(CheckMixin, OpenWorldBase):
+    """Git configuration that runs a command is a mutation whatever the key (CR-04, D-03)."""
+
+    MUTATING = [
+        "env git -c core.fsmonitor='touch x' status", "git -c core.fsmonitor=false status",
+        "git -c color.ui=always status", "git -c core.x=y status", "git -c core.pager status",
+        "git -c include.path=PRJ/cfg status", "git -c include.path=PRJ/cfg log", "git -c alias.x='!touch x' x",
+        "git -c diff.external='sh -c \"touch x\"' diff", "git -c core.hooksPath=h status",
+        "git -c filter.f.clean=x status", "git -C OUT -c core.fsmonitor=x status",
+        "git --no-optional-locks -c color.ui=always status", "git -c color.ui=always -c core.pager=x log",
+        "git -c", "git --exec-path=OUT status", "git --exec-path status", "git --config-env=core.fsmonitor=V status",
+        "git --config-env core.fsmonitor=V status",
+    ]
+    READING = ["git status", "git -C dir status", "git --no-optional-locks status", "git log -c", "git show -c HEAD",
+               "git diff -c"]
+
+    def test_every_dash_c_before_the_verb_and_the_exec_path_and_config_env_options_are_a_mutation(self) -> None:
+        for number, command in enumerate(self.MUTATING):
+            found = checks().git_mutations([], [self.text(command)])
+            self.assertEqual(found["executed"], 1, "mutating case %d: %s" % (number, command))
+            self.assertEqual(found["forms"], ["config-command"], "mutating case %d: %s" % (number, command))
+            self.assertEqual(found["total"], 1, "mutating case %d" % number)
+            self.assertEqual(self.mentions(command)["unparsed_parts"], 0, "mutating case %d is not unparsed" % number)
+
+    def test_a_dash_c_after_the_verb_and_the_plain_forms_count_nothing_and_stay_read_only(self) -> None:
+        for number, command in enumerate(self.READING):
+            self.assertEqual(checks().git_mutations([], [self.text(command)])["executed"], 0, "reading case %d" % number)
+            found = self.mentions(command)
+            self.assertEqual(found["write_programs"], {}, "reading case %d is read-only" % number)
+            self.assertEqual(found["unparsed_parts"], 0, "reading case %d is not unparsed" % number)
+
+    def test_the_read_only_gate_refuses_a_command_running_configuration(self) -> None:
+        for command in ("git -c color.ui=always status", "git --exec-path=PRJ/h status", "git --config-env=a=B log"):
+            self.assertEqual(self.mentions(command)["write_programs"], {"git": 1}, command)
+
+    def test_an_outside_directory_beside_a_dash_c_is_a_mutation_and_one_write_escape(self) -> None:
+        self.assertEqual(self.found("git -C OUT status"), {"count": 0, "programs": {}}, "a plain read stays a mention")
+        self.assertEqual(self.found("git -C OUT -c core.x=y status"), {"count": 1, "programs": {"git": 1}})
+        self.assertEqual(checks().git_mutations([], [self.text("git -C OUT -c core.x=y status")])["executed"], 1)
+
+
+class NestedRepositoryCaseTests(unittest.TestCase):
+    """WR-01: the nested walk compares names below the top level without regard to case."""
+
+    TRUE_NAMES = (".GIT", ".Git", ".gIT")
+    FALSE_NAMES = (".gitignore", ".github", ".gitattributes", ".gitmodules", "git", ".git-old")
+
+    def project(self) -> str:
+        return os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-nested-")), "project")
+
+    def case_sensitive(self) -> bool:
+        probe = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-case-")), "Probe")
+        os.makedirs(probe)
+        return not os.path.exists(probe.lower())
+
+    def test_a_name_that_differs_only_in_case_is_a_nested_repository_and_a_lookalike_is_not(self) -> None:
+        present = manifest().nested_git_present
+        for name in self.TRUE_NAMES:
+            for kind in ("folder", "file", "link"):
+                project = self.project()
+                folder = os.path.join(project, "sub")
+                os.makedirs(folder)
+                entry = os.path.join(folder, name)
+                if kind == "folder":
+                    os.makedirs(entry)
+                elif kind == "file":
+                    with open(entry, "w", encoding="utf-8") as handle:
+                        handle.write("gitdir: elsewhere\n")
+                else:
+                    os.symlink(self.project(), entry)
+                self.assertTrue(present(project), "%s as a %s" % (name, kind))
+        for name in self.FALSE_NAMES:
+            project = self.project()
+            os.makedirs(os.path.join(project, "sub", name))
+            self.assertFalse(present(project), "lookalike " + name)
+
+    def test_the_top_level_entry_is_still_skipped_by_its_exact_name(self) -> None:
+        present = manifest().nested_git_present
+        for kind in ("folder", "file", "link"):
+            project = self.project()
+            os.makedirs(project)
+            entry = os.path.join(project, ".git")
+            if kind == "folder":
+                os.makedirs(entry)
+            elif kind == "file":
+                with open(entry, "w", encoding="utf-8") as handle:
+                    handle.write("gitdir: elsewhere\n")
+            else:
+                os.symlink(self.project(), entry)
+            self.assertFalse(present(project), "top-level .git as a " + kind)
+
+    def test_a_nested_repository_with_a_renamed_git_folder_never_runs_its_filter(self) -> None:
+        if self.case_sensitive():
+            self.skipTest("the scratch file system is case-sensitive")
+        markers = [os.path.join(marker_folder(), "marker") for _ in range(3)]
+        control, guarded, stated = [make_nested_plant(marker) for marker in markers]
+        for repo in (control, guarded, stated):
+            os.rename(os.path.join(repo, "sub", ".git"), os.path.join(repo, "sub", ".GIT"))
+        harness_shaped_status(control)
+        self.assertTrue(os.path.exists(markers[0]), "the control proves the plant runs through a renamed git folder")
+        pin = manifest().gitdir_digest(guarded)
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(manifest().NestedRepository, msg="the capture refuses before a process starts"):
+                manifest().capture_git_status(guarded, real_git(), pin)
+            state = checks().git_state(stated, real_git(), manifest().gitdir_digest(stated))
+        self.assertFalse(os.path.exists(markers[1]), "capture_git_status never ran the filter")
+        self.assertFalse(os.path.exists(markers[2]), "git_state never ran the filter")
+        self.assertEqual(state["head"], checks().GIT_NOT_READ, "the not-read text")
+
+    def test_the_end_to_end_row_with_a_renamed_nested_git_folder_ends_with_11(self) -> None:
+        if self.case_sensitive():
+            self.skipTest("the scratch file system is case-sensitive")
+        run = Run(pc_testutil.seed_nested_repo_plant(pc_testutil.default_row1_stages(), 0, ".GIT"))
+        self.assertFalse(os.path.exists(os.path.join(run.rig.outside, "planted-nested")), "the planted command never ran")
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        self.assertNotIn(run.rig.base, "\n".join(run.outcome.lines), "no path in the text")
+        self.assertEqual(len(run.rig.calls()), 1, "the second stage was never launched")
+
+
+def stored_pin(run_root: str) -> str:
+    """The setup digest a run stored, read the way the harness no longer does."""
+    return read_json(os.path.join(run_root, "raw", "setup.git.json"))["gitdir_digest"]
+
+
+def write_pin_file(raw: str, value) -> None:
+    state = {"head": "h", "branch": "b", "refs_digest": digest("1"), "gitdir_digest": value, "staged": 0}
+    with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
+        json.dump(state, handle)
+
+
+class PinHeldInMemoryTests(unittest.TestCase):
+    """WR-02: the setup digest is held in memory and compared with the pin file before any git call."""
+
+    def raw_folder(self) -> str:
+        raw = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-checks-")), "raw")
+        os.makedirs(raw)
+        return raw
+
+    def test_pinned_gitdir_compares_the_file_with_the_value_held_in_memory(self) -> None:
+        c = checks()
+        raw = self.raw_folder()
+        self.assertIsNone(c.pinned_gitdir(raw, True, None), "setup: no pin yet")
+        self.assertIsNone(c.pinned_gitdir(raw, True, digest("2")), "setup: whatever is passed")
+        with self.assertRaises(c.CheckError, msg="a missing file"):
+            c.pinned_gitdir(raw, False, digest("2"))
+        write_pin_file(raw, digest("2"))
+        self.assertEqual(c.pinned_gitdir(raw, False, digest("2")), digest("2"), "the matching file")
+        for bad in (None, "", "xyz", 5, digest("2")[:-1], digest("2").upper() + "0"):
+            with self.assertRaises(c.CheckError, msg="a missing or malformed in-memory value: %r" % (bad,)):
+                c.pinned_gitdir(raw, False, bad)
+        with self.assertRaises(c.CheckError, msg="a file whose digest differs from the value held"):
+            c.pinned_gitdir(raw, False, digest("3"))
+        with open(os.path.join(raw, "setup.git.json"), "w", encoding="utf-8") as handle:
+            handle.write("not json")
+        with self.assertRaises(c.CheckError, msg="a malformed file"):
+            c.pinned_gitdir(raw, False, digest("2"))
+
+    def test_capture_boundary_state_returns_the_setup_digest_and_needs_the_pin_after_setup(self) -> None:
+        c = checks()
+        rig, paths = bare_paths()
+        pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git(), setup=True)
+        pin = c.capture_boundary_state(paths, c.SETUP_STATE, real_git(), None)
+        self.assertEqual(pin, read_json(os.path.join(paths["raw"], "setup.git.json"))["gitdir_digest"], "the digest it wrote")
+        with self.assertRaises(TypeError, msg="the pin is a required argument"):
+            c.capture_boundary_state(paths, "s9", real_git())
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(c.CheckError, msg="a missing value after setup"):
+                c.capture_boundary_state(paths, "s9", real_git(), None)
+        c.capture_boundary_state(paths, "s9", real_git(), pin)
+        self.assertTrue(os.path.isfile(os.path.join(paths["raw"], "s9.git.json")), "the pinned capture runs")
+
+    def test_a_snapshot_with_a_file_that_differs_from_the_pin_is_refused_before_anything_starts(self) -> None:
+        c = checks()
+        run = Run(pc_testutil.default_row1_stages())
+        paths = pc_row1.paths_for(run.run_root)
+        pin = stored_pin(run.run_root)
+        write_pin_file(paths["raw"], digest("9"))
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(c.CheckError, msg="the snapshot refuses"):
+                pc_row1.take_snapshot(paths, "snap-9-extra", real_git(), pin=pin)
+            with self.assertRaises(c.CheckError, msg="the boundary state refuses"):
+                c.capture_boundary_state(paths, "s9", real_git(), pin)
+        self.assertFalse(os.path.exists(os.path.join(run.run_root, "snaps", "snap-9-extra")), "no snapshot folder")
+        self.assertFalse(os.path.exists(os.path.join(paths["raw"], "s9.git.json")), "no state file")
+
+    def test_a_pin_file_rewritten_to_a_planted_state_is_refused_and_the_filter_never_runs(self) -> None:
+        c = checks()
+        run = Run(pc_testutil.default_row1_stages())
+        paths = pc_row1.paths_for(run.run_root)
+        pin = stored_pin(run.run_root)
+        markers = [os.path.join(marker_folder(), "marker") for _ in range(2)]
+        project = str(paths["project"])
+        plant_filter(project, markers[0])
+        os.utime(os.path.join(project, "CLAUDE.md"), None)
+        planted = manifest().gitdir_digest(project)
+        self.assertNotEqual(planted, pin, "the plant changed the git folder")
+        write_pin_file(paths["raw"], planted)
+        with unittest.mock.patch("subprocess.run", forbid_processes):
+            with self.assertRaises(c.CheckError, msg="the snapshot refuses a rewritten file"):
+                pc_row1.take_snapshot(paths, "snap-9-extra", real_git(), pin=pin)
+            with self.assertRaises(c.CheckError, msg="the boundary state refuses it"):
+                c.capture_boundary_state(paths, "s9", real_git(), pin)
+        self.assertFalse(os.path.exists(markers[0]), "the planted filter never ran")
+        control = make_repo()
+        plant_filter(control, markers[1])
+        os.utime(os.path.join(control, "a.txt"), None)
+        manifest().capture_git_status(control, real_git(), manifest().gitdir_digest(control))
+        self.assertTrue(os.path.exists(markers[1]), "the control: a file trusted with the planted digest runs it")
+
+    def test_run_row_keeps_the_setup_digest_in_the_run_context(self) -> None:
+        import pc_rows
+
+        self.assertIn("setup_pin", pc_rows.RunContext._fields, "the context holds the pin")
+        self.assertIsNone(pc_rows.RunContext._field_defaults.get("setup_pin", "missing"), "defaulted to None")
+
+
 class OpenWorldRunTests(unittest.TestCase):
     """The open-world write rule at run level: each escaping form ends run_row with 11 and nothing filed."""
 
@@ -1770,12 +2071,21 @@ class OpenWorldRunTests(unittest.TestCase):
         "if [ -e a ]; then rm OUT/x; fi",
         "env sort -oOUT/x f", "env tar -xf a.tar -COUT", "mkdir -p ../../outside", "printf x > ../raw/x",
         "cd sub && mkdir ../../x", "mkdir \"$PWD/../x\"", "mkdir $(pwd)/../x", "mkdir */../x", "cd $d && mkdir ../x",
+        "sed -n 's/a/b/gw OUT/x' f", "sed -n '1!w OUT/x' f", "sed -n '/a/s//b/gw OUT/x' f",
+        "awk 'BEGIN{print \"a;b\" > \"OUT/x\"}'", "awk 'BEGIN{print \"}\" > \"OUT/x\"}'",
+        "awk 'BEGIN{print 1,\n 2 > \"OUT/x\"}'", "awk '{print \"a;b\" | \"tee OUT/x\"}' f",
+    ]
+    GIT_CONFIG = [
+        "env git -c core.fsmonitor='touch x' status", "git -c include.path=$PROJECT/cfg status",
+        "git -c color.ui=always status", "git --exec-path=helpers status",
     ]
     HARMLESS = ["awk '{print}' OUT/hosts", "cat OUT/hosts", "find OUT -name x -exec ls {} \\;", "sed -n '/w/p' f",
                 "env sh -c 'touch x'", "mktemp -p .", "cat > f <<'EOF'\nmkdir OUT/x\nEOF", "cat '>' OUT/hosts",
                 "ls\n# rm OUT/x", "if [ -e a ]; then wc -c a; fi",
                 "mkdir -p ../auto-memory", "printf x > ../auto-memory/n.md", "cd ../auto-memory && mkdir -p sub",
-                "[[ -f ../auto-memory/x && -s ../auto-memory/x ]] && echo ok", "awk '/system/ {print}' OUT/hosts"]
+                "[[ -f ../auto-memory/x && -s ../auto-memory/x ]] && echo ok", "awk '/system/ {print}' OUT/hosts",
+                "sed -n 's/ w /x/p' OUT/f", "awk '{print \"a -> b\"}' OUT/f", "awk '{print ($1 > 3)}' OUT/f",
+                "git log -c"]
 
     def check_breach(self, run) -> None:
         self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
@@ -1796,6 +2106,17 @@ class OpenWorldRunTests(unittest.TestCase):
     def test_every_escaping_form_ends_the_row_with_11_and_files_nothing(self) -> None:
         for command in self.ESCAPING:
             self.check_breach(self.run_of(command))
+
+    def test_every_command_running_git_configuration_ends_the_row_with_11_and_a_git_mutations_line(self) -> None:
+        for command in self.GIT_CONFIG:
+            run = self.run_of(command)
+            self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, command + ": " + "\n".join(run.outcome.lines))
+            text = "\n".join(run.outcome.lines)
+            self.assertRegex(text, r"isolation or git breach: git mutations: [1-9][0-9]*", "fixed text with the count")
+            self.assertNotIn("writes outside approved roots", text, "no write line for " + command)
+            self.assertNotIn(run.rig.base, text, "no path in the text")
+            self.assertEqual(len(run.rig.calls()), 2, "no later stage was launched")
+            self.assertFalse(os.path.exists(os.path.join(run.run_root, "raw", "s3.stdout")), "no third stage output")
 
     def test_the_harmless_forms_return_zero(self) -> None:
         for command in self.HARMLESS:
