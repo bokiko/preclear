@@ -243,8 +243,10 @@ a dry run, then one row.
   to the spend ledger, for a stage that was attempted. It prints counts only, starts no process and
   refuses an unknown or never-attempted stage with exit 2. It exists so that a retry has a hook that
   a person types; no task of this phase runs it.
-- `--refile RUNROOT` repeats the checks and the filing for a finished run folder, for zero tokens (see
-  "What a run files"). It cannot be combined with another selection or with `--dry-run`.
+- `--refile RUNROOT` repeats the checks and the filing for a run folder, for zero tokens (see
+  "What a run files"); the folder must hold the whole chain, and a run in which a stage did not run is
+  refused with exit 11 and nothing is created. It cannot be combined with another selection or with
+  `--dry-run`.
 
 The spend gate, in words. A stage is attempted once. A launch reserves the stage's cap in the ledger
 before any process starts, under a file lock, so two launches cannot both pass the same check. The
@@ -413,12 +415,15 @@ A row whose precondition is not met is filed as a folder named `SKIPPED-` follow
 no session was run and why, never reads as a result, passes through the same sanitizer and gate, and the run
 exits 10, never 0.
 
-`--refile RUNROOT` repeats the checks and the filing for a finished run folder, for zero tokens, after a
+`--refile RUNROOT` repeats the checks and the filing for a run folder, for zero tokens, after a
 refusal that came late (a taken name, the gate, a sanitizer error). It starts no claude, needs no budget,
 writes no ledger line, takes the evidence date and the model recorded in the run (not today's date) and calls
-the same filing function as a fresh run. A folder that is not a finished run folder under the runs root is
-refused with exit 2, a destination that already exists with exit 17, and a run the live path stopped (a stage
-that did not finish cleanly) with exit 11.
+the same filing function as a fresh run. A folder that is not a run folder with a run record under the runs
+root is refused with exit 2, a destination that already exists with exit 17, and a run the live path stopped
+with exit 11. The folder must hold the whole chain: the first two stages, and the third exactly when the
+second printed a resume line. A run in which a stage did not run (a crash, an interrupt or a harness error
+after the first call) is refused with exit 11, nothing is created and no destination name is used up, as is a
+stage that did not finish cleanly.
 
 ### Comparing a rerun with the committed row
 

@@ -17,7 +17,7 @@ Run it as python3 -E -s -B pc_matrix.py, never with -I, because the pc_ modules 
     --authorize-retry STAGE append one retry authorization line for a stage that was attempted (a
                             stage key such as row1-s2); a second attempt of a stage never starts
                             without it. Starts no process. A person types it; no task runs it.
-    --refile RUNROOT        repeat the checks and the filing for a finished run folder, for zero
+    --refile RUNROOT        repeat the checks and the filing for a run folder, for zero
                             tokens: no claude, no budget, no ledger line. The destination comes from
                             the evidence date and model recorded in the run folder.
 
@@ -557,7 +557,11 @@ def _file_skipped(
 
 
 def _usable_run_folder(text: Any, runs: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    """Return (the run folder's realpath, its run record) when text names a finished row 1 run folder, else None."""
+    """Return (the run folder's realpath, its run record) when text names a row 1 run folder with a run record, else None.
+
+    The run record, written at setup, is all that makes a folder usable here; whether the chain is complete and
+    every stage clean is judged by the filing, which refuses an incomplete chain with exit 11.
+    """
     import json
 
     if not isinstance(text, str) or text == "" or "\x00" in text or not os.path.isabs(text):
@@ -581,11 +585,12 @@ def _usable_run_folder(text: Any, runs: str) -> Optional[Tuple[str, Dict[str, An
 
 
 def _refile(text: str, env: Mapping[str, str], root: str, out: TextIO, err: TextIO) -> int:
-    """Repeat the checks and the filing for a finished run folder, for zero tokens (no claude, no ledger line).
+    """Repeat the checks and the filing for a run folder, for zero tokens (no claude, no ledger line).
 
     The destination is recomputed from the evidence date and the model recorded in the run folder, so a later day
     does not change it. A destination that exists is exit 17, a breach or an unreadable run folder is 11, and a
-    folder that is not usable is 2. The same pc_evidence.file_row as a fresh run does the filing.
+    folder that is not usable is 2. The same pc_evidence.file_row as a fresh run does the filing, and it also
+    refuses (11, nothing created) a run whose chain stopped early or whose stage did not finish cleanly.
     """
     import pc_row1  # imported late: pc_row1 imports this module's siblings
 
