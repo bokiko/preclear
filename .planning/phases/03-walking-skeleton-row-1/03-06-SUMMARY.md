@@ -76,7 +76,7 @@ metrics:
 ## The three unobserved questions
 
 1. Does a resumed 2.1.310 session fire the instruction-load hook again? Yes in this run: s2 logged project entries 2 (s1 had 1, s3 had 1), and the resumed stage's hook assertions are marked yes (hook), not "not asserted on resume".
-2. Does `--max-budget-usd` count a resumed session's cumulative cost? Not observable: no stage came near its cap. The related question of whether `total_cost_usd` is cumulative on resume is raised above and is not settled by the filed data.
+2. Does `--max-budget-usd` count a resumed session's cumulative cost? Not observable: no stage came near its cap. The related question of whether `total_cost_usd` is cumulative on resume is settled above by the code review: it is cumulative.
 3. Which result subtype does a limit hit have? Not observed: all three stages ended `success`.
 
 ## Checks run after the run

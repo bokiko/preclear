@@ -17,7 +17,7 @@ findings:
     title: "The harness's `git status` runs a command the model can plant in `.git/config`"
   - id: WR-01
     severity: warning
-    disposition: deferred
+    disposition: open
     title: "Three model-writable places in the run root are invisible to the snapshot"
   - id: WR-02
     severity: warning
@@ -33,7 +33,7 @@ findings:
     title: "Failures after the paid call carry no diagnosis, and a corrupted `.git` is not reported as a breach"
   - id: WR-05
     severity: warning
-    disposition: deferred
+    disposition: open
     title: "Two inputs fail open to \"no breach\""
   - id: WR-06
     severity: warning
@@ -83,6 +83,6 @@ findings:
 
 # Phase 03 review disposition
 
-First pass after wave 6 (the paid row 1 run). The three critical findings (CR-01 refile bypass, CR-02 Bash writes outside the run root never counted as a breach, CR-03 a `core.fsmonitor` command planted in the project's `.git/config` runs under the harness) are `open` and go to a gap-closure plan before the phase closes, together with WR-02 (the status check can never be yes on a real run), WR-03 (the deny-entries contract is enforced only by convention) and IN-01 (the cost question). Every other warning and info item is `deferred` to Phase 4 hardening. The reviewer settled the 03-06 open question: `total_cost_usd` on a resumed call is cumulative, so the harness row total of 0.2723 USD is correct and Phase 4 may project from it. The 03-06 summary records that resolution.
+First pass after wave 6 (the paid row 1 run). The three critical findings (CR-01 refile bypass, CR-02 Bash writes outside the run root never counted as a breach, CR-03 a `core.fsmonitor` command planted in the project's `.git/config` runs under the harness) are `open` and go to a gap-closure plan before the phase closes, together with WR-01 and WR-05 (the same write boundary as CR-02; bundled on the verifier's note), WR-02 (the status check can never be yes on a real run), WR-03 (the deny-entries contract is enforced only by convention) and IN-01 (the cost question). Every other warning and info item is `deferred` to Phase 4 hardening. The reviewer settled the 03-06 open question: `total_cost_usd` on a resumed call is cumulative, so the harness row total of 0.2723 USD is correct and Phase 4 may project from it. The 03-06 summary records that resolution.
 
 Of the 21 items deferred from Phase 2: WR-03 is closed; WR-05, WR-06, WR-12 and IN-01 are closed on the matrix path only (the spike driver is unchanged); WR-14 is closed in every caller but not at the root (this pass's WR-03); WR-09 is open and now load-bearing (this pass's WR-06); WR-04, 07, 08, 10, 11, 13 and IN-02 to IN-06, IN-08 to IN-10 stay open, WR-10 mitigated.
