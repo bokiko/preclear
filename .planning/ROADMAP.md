@@ -107,9 +107,10 @@ Plans:
   4. The row README ends with `Reviewer verdict: PENDING` and a checklist of mechanical facts, and no filed file from the harness contains an accepted, passed or failed verdict. (EVID-05)
   5. The read-only comparer prints per-row differences between the rerun and `tests/evidence/publication-2026-10-20/row1-wrong-binding`, and tree digests of both evidence trees are identical before and after it runs. `git diff` shows `SKILL.md`, `references/` and `tests/fixtures/` unchanged, `SKILL.md` is at or under 12,000 bytes, and all new code sits under `tests/harness/`. (EVID-06, HARN-13)
 
-**Plans:** 10/10 plans executed
+**Plans:** 11/11 plans executed
 
 Plans:
+- [x] 03-11-PLAN.md
 - [x] 03-09-PLAN.md
 - [x] 03-10-PLAN.md
 - [x] 03-07-PLAN.md
@@ -175,5 +176,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
-| 3. Walking Skeleton (Row 1) | 10/10 | In Progress | - |
+| 3. Walking Skeleton (Row 1) | 11/11 | In Progress | - |
 | 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
