@@ -383,15 +383,27 @@ run root gives the same facts.
   places are listed as outside path tokens and decide nothing.
   Every command starts in the project folder, and a relative word with a dot-dot segment is resolved against
   the folder the command works in, so a write to the memory folder through a dot-dot path from the project is
-  not an escape. A cd with a literal target inside the roots moves that folder; a cd that leaves the roots, a
-  bare cd, a cd to a dash and a home target leave it unknown, and every later write-capable part of the command
-  is an escape. The resolution is done over literal segments only: a dot-dot that follows a variable, a
-  substitution, a glob or a brace list is still an escape, because such a segment can stand for any number of
-  segments, and a cd to such a target leaves the folder unknown. A folder kept between separate Bash calls by
-  an earlier cd is not known (a named limit). A path attached to a short option is judged like any word: the
-  text after the option letter is, and so is the text from the first slash or tilde on when only a cluster of
-  one to four option letters stand before it. One ambiguity is counted: a short name straight after an option
-  letter, as in -Isrc/x, reads like a cluster followed by an absolute path. The awk keywords system and close
+  not an escape. A cd moves that folder only when it is certain to run in the main shell and certain to
+  succeed. That means it is joined to the next part by a double ampersand, it does not follow a double bar or
+  a pipe, its list does not end with a single ampersand (a background list), no if, loop, case or brace
+  construct and no parenthesis group has opened earlier in the command, and the target is inside the roots and
+  is a folder when the command is judged. Any other literal cd (after a semicolon, in a subshell, in a
+  pipeline, to a folder that is missing) leaves the folder unknown, and every later dot-dot word of the
+  command is an escape. A cd that leaves the roots, a bare cd, a cd to a dash and a home target also make every
+  later write-capable part of the command an escape. A cd or env -C to a variable, a substitution, a glob or a
+  brace list leaves the folder unknown in the other way: no escape flag is set, and a dot-dot word is then
+  resolved against the project folder, as at the start of the command. The named residual is a variable that
+  stands for a folder outside the project: its dot-dot word is not an escape when it resolves inside the
+  roots from the project. The resolution is done over literal segments only: a dot-dot that follows a
+  variable, a substitution, a glob or a brace list is still an escape, because such a segment can stand for
+  any number of segments. A folder is never carried from one Bash call to the next, so
+  every Bash call is judged from the project folder: a folder kept by an earlier cd is not known, and the
+  error can go either way (a named limit). A path
+  attached to a short option is judged like any word: the text after each option letter of its leading run of
+  letters is, and a start with a slash or a tilde counts only when at most four letters stand before it. One
+  ambiguity is counted: a short name straight after an option letter, as in -Isrc/x, reads like a cluster
+  followed by an absolute path. The sort gate refuses an o inside a cluster of letters, so such a sort part
+  is write-capable and listed. The awk keywords system and close
   count as calls (a parenthesis follows) and getline counts after a pipe, so the same words in a regular
   expression or a string are harmless text. A double-bracket test at command position is one part, with its
   double ampersand, double bar and parentheses; an unterminated one is unparsed.
@@ -406,7 +418,12 @@ run root gives the same facts.
   backslash, at parenthesis depth zero, and a greater-than, a double greater-than or a pipe at depth zero inside
   it is a redirect. A comparison in parentheses, in a condition, in a pattern or in a string is not. The
   redirect target is not read by the statement test: a redirect makes the part write-capable, and the target is
-  judged where it is a literal or a value word.
+  judged where it is a literal or a value word. A program that holds a double quote after a slash or a hash is
+  also read as the raw program text, because the string blanking may have taken a quote inside a regular
+  expression or a comment for a string; the raw reading over-counts a pattern, a division or a comment before
+  a string literal that holds a greater-than, a pipe or a call word. A statement whose parentheses never close
+  (a regular expression can hold the stray one) is read again with the depth ignored, and the literal scan of
+  such a program also reads the text between every two consecutive double quotes.
   The rule fails closed. An env option it does not know (a combined flag such as the one that joins the
   ignore-environment flag to the split-string flag, or an option that takes a value it cannot see) makes the
   whole part unparsed, and an unparsed part that holds an escaping word counts as a write escape under the

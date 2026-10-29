@@ -1901,7 +1901,7 @@ class WorkingFolderCertaintyTests(CheckMixin, OpenWorldBase):
     ]
     CERTAIN = [
         "cd sub && mkdir ../x", "cd PRJ/sub && mkdir ../x", "cd ../auto-memory && mkdir -p sub",
-        "mkdir y && cd sub && mkdir ../z; true; cd sub && mkdir ../x", "true & cd sub && mkdir ../x",
+        "mkdir y && cd sub && mkdir ../z; true; cd .. && cd sub && mkdir ../x", "true & cd sub && mkdir ../x",
         "cd sub && cd .. && mkdir ../auto-memory/x", "cd sub && mkdir ../x || true",
         "cd sub && ls | wc -l && mkdir ../x", "x=$(cd sub && mkdir ../y)", "env -C sub mkdir ../x",
         "cd sub && mkdir ../x\nmkdir ../y",
