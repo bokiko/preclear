@@ -1333,6 +1333,63 @@ class RaceTests(unittest.TestCase):
         self.assertEqual(filed, tree_bytes(os.path.join(run.run_root, "stage-2")), "from either stage")
 
 
+class Harn09ReproofTests(unittest.TestCase):
+    """HARN-09 re-proved at zero tokens through the driver (matrix.main), the entry a person types.
+
+    The scripted claude is the only claude; every case also checks its tripwire log. The cases are the routes the
+    verification and the review found: a snapshot-path write, a Write-tool path, a commit, a Bash write outside
+    the roots that was really written, a Bash expansion-form write, a planted fsmonitor command, a planted clean
+    filter and a rewritten hook log.
+    """
+
+    def seeded(self) -> list:
+        base = pc_testutil.default_row1_stages()
+        return [
+            ("snapshot-path write", pc_testutil.seed_outside_write(base, 1), None),
+            ("write-tool path", pc_testutil.seed_trace_write(base, 1), None),
+            ("commit", pc_testutil.seed_git_commit(base, 1), None),
+            ("bash write outside, really written", pc_testutil.seed_bash_outside_write(base, 1), None),
+            (
+                "bash expansion-form write",
+                pc_testutil.seed_bash_outside_write(base, 1, command="mkdir ~/x", write_file=False),
+                None,
+            ),
+            ("planted fsmonitor command", pc_testutil.seed_git_config_plant(base, 0, "fsmonitor"), "planted-fsmonitor"),
+            ("planted clean filter", pc_testutil.seed_git_config_plant(base, 0, "filter"), "planted-filter"),
+            ("rewritten hook log", pc_testutil.seed_run_record_tamper(base, "hooklog"), None),
+        ]
+
+    def test_the_clean_control_files_through_the_driver_and_exits_0(self) -> None:
+        world = World()
+        self.assertEqual(world.code, 0, world.text)
+        self.assertTrue(os.path.isdir(world.destination), "the dated folder was created")
+        self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
+        mechanical = read_text(os.path.join(world.row_dir, "mechanical-checks.md"))
+        self.assertIn("bash-write-escapes: 0", mechanical)
+        self.assertIn("run-record-changes: 0", mechanical)
+        self.assertIn("status-begins-with-session: yes", mechanical)
+        usage = read_text(os.path.join(world.row_dir, "usage.txt")).splitlines()
+        for stage in ("s1", "s2", "s3"):
+            self.assertIn("cumulative-consistent %s: yes" % stage, usage)
+        self.assertEqual([line for line in usage if line.startswith("warning")], [], "no warning line")
+
+    def test_each_seeded_failure_ends_with_11_files_nothing_and_leaves_no_marker(self) -> None:
+        cases = self.seeded()
+        self.assertEqual(len(cases), 8, "eight seeded failures")
+        for label, stages, marker in cases:
+            world = World(stages=stages)
+            self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
+            self.assertIn("isolation or git breach", world.text, label + ": a breach line is printed")
+            created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
+            self.assertEqual(created, [], label + ": nothing was created under tests/evidence")
+            self.assertNotIn(world.rig.base, world.text, label + ": no folder of the rig is printed")
+            self.assertEqual(world.rig.tripwire(), [], label + ": no other claude was started")
+            if marker is not None:
+                self.assertFalse(
+                    os.path.exists(os.path.join(world.rig.outside, marker)), label + ": the planted command never ran"
+                )
+
+
 class ReadmeTests(unittest.TestCase):
     def readme(self) -> str:
         here = os.path.dirname(os.path.abspath(__file__))
@@ -1343,6 +1400,23 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn("### What a run files", text, "the subsection")
         section = text.split("### What a run files", 1)[1].split("\n## ", 1)[0].split("\n### ", 1)[0]
         for phrase in ("rerun-", "SKIPPED-", "--refile", "zero tokens", VERDICT_LINE, "raw", "never filed"):
+            self.assertIn(phrase, section, "the subsection says: " + phrase)
+
+    def test_the_readme_states_the_new_rules(self) -> None:
+        text = self.readme()
+        for phrase in (
+            "write escape",
+            "run record guard",
+            "core.fsmonitor=false",
+            "first five lines",
+            "did not finish cleanly",
+            "cumulative-consistent",
+        ):
+            self.assertIn(phrase, text, "the guide says: " + phrase)
+        section = text.split("### What a run files", 1)[1].split("\n## ", 1)[0].split("\n### ", 1)[0]
+        for phrase in ("rerun-", "SKIPPED-", "--refile", "zero tokens", VERDICT_LINE, "raw", "never filed"):
+            self.assertIn(phrase, section, "the subsection still says: " + phrase)
+        for phrase in ("did not finish cleanly", "cumulative-consistent", "deny entries"):
             self.assertIn(phrase, section, "the subsection says: " + phrase)
 
     def test_the_replacement_tokens_name_the_scratch_token(self) -> None:
