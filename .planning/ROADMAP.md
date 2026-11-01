@@ -152,12 +152,79 @@ Plans:
   4. A new dated evidence folder holds a per-row digest table, the measured cost per row and a label that the run is a new baseline on the pinned model. It also holds the comparer's per-row differences against `tests/evidence/publication-2026-10-20/`, and every file passed the leak gate. Codex's per-row verdicts, from a review in a visible Herdr tab, are recorded in it before any acceptance claim is made. (RERUN-03, RERUN-04)
   5. `tests/harness/README.md` states the prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), the measured cost, the supported platforms and what a pass proves. `tests/acceptance.md` and `CHANGELOG.md` both point to it. (RERUN-05)
 
-**Plans:** 3 plans
+**Plans:** 21 plans
 
 Plans:
-- [ ] 04-01: Row waves A to D, one capability per wave: row 7 preflight, row 10 fallback expectation, row 11 model-initiated-call injector, then the remaining row hooks; each wave run once and attributed before the next (HARN-10, HARN-11, HARN-12)
-- [ ] 04-02: Row 7 three-run check with the Do-not-redo review table (RERUN-01); starts only after bokiko has confirmed the budget from the Phase 3 cost figure
-- [ ] 04-03: Clean-clone full-matrix baseline, per-row digest table and cost, comparer output, Codex review in a visible Herdr tab, harness README, CHANGELOG and acceptance pointers (RERUN-02, RERUN-03, RERUN-04, RERUN-05)
+**Wave 1**
+- [ ] 04-01-PLAN.md — Tracer: row 4a runs from its registry entry alone through a spec-driven engine, and row 1 moves onto the same path with a parity test against the committed Phase 3 row folder names (RERUN-02, RERUN-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 04-02-PLAN.md — The driver runs a campaign: dated labelled folder, attempts that never collide, repeatable row and layout selection, a loop that continues after a skipped or stopped row, exit aggregation and a per-invocation budget (RERUN-02, RERUN-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 04-03-PLAN.md — A stopped row is filed as a visible `STOPPED-` folder, and `pc_baseline.py` closes a dated folder with its README, digest table and usage table (RERUN-03)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 04-04-PLAN.md — Plain rows 5a and 5b through the engine: no wrapper, no ledger, a plain seed and a narrower allowlist (RERUN-02)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 04-05-PLAN.md — Row 6 plus the between-stage hook framework and the recorded boundary list (RERUN-02)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 04-06-PLAN.md — Row 7: a live `chmod` probe before any money, the 555 restriction hook, the printed-checkpoint chain, and the SKIPPED code when the denial is not effective (HARN-12, RERUN-01)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 04-07-PLAN.md — The Do-not-redo review: every printed entry paired with the `tool_use` ids that support it, entries with none listed as such (RERUN-01)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 04-08-PLAN.md — Wave A, paid, on bokiko's word: rows 5a, 5b, 6 and 7, filed and attributed before the next wave (HARN-12, RERUN-02)
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 04-09-PLAN.md — Git-shaped rows 8a, 8b, 8c and 9: no repository, detached HEAD, unborn branch and a linked worktree (RERUN-02)
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 04-10-PLAN.md — Row 10: hostile names and non-Latin text, the quoted-porcelain fallback as the expected outcome, no NUL-form exception, and the git-call correlation files (HARN-10, HARN-11, RERUN-02)
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [ ] 04-11-PLAN.md — Wave B, paid, on bokiko's word: rows 8a, 8b, 8c, 9 and 10 (HARN-10, RERUN-02)
+
+**Wave 12** *(blocked on Wave 11 completion)*
+- [ ] 04-12-PLAN.md — Row 11 injector: a logging git wrapper that fires on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls (HARN-11, RERUN-02)
+
+**Wave 13** *(blocked on Wave 12 completion)*
+- [ ] 04-13-PLAN.md — Row 12: a four-stage frozen-handoff chain with a harness-made external plan edit between stages (RERUN-02)
+
+**Wave 14** *(blocked on Wave 13 completion)*
+- [ ] 04-14-PLAN.md — Wave C, paid, on bokiko's word: rows 11 and 12 (HARN-11, RERUN-02)
+
+**Wave 15** *(blocked on Wave 14 completion)*
+- [ ] 04-15-PLAN.md — The helper rows 2, 3a, 3b, 3c and 4b plus the three layouts; every `--list` entry is implemented (RERUN-02)
+
+**Wave 16** *(blocked on Wave 15 completion)*
+- [ ] 04-16-PLAN.md — Wave D, paid, on bokiko's word: the three layouts and the helper rows (RERUN-02)
+
+**Wave 17** *(blocked on Wave 16 completion)*
+- [ ] 04-17-PLAN.md — Row 7 triple, paid, on bokiko's word: three independent chains with the review table and the closed folder (HARN-12, RERUN-01)
+
+**Wave 18** *(blocked on Wave 17 completion)*
+- [ ] 04-18-PLAN.md — Baseline machinery with no money: finalize, the all-rows comparer, the review brief, verdict-line recording and the pinned frozen digest (RERUN-03, RERUN-04)
+
+**Wave 19** *(blocked on Wave 18 completion)*
+- [ ] 04-19-PLAN.md — The clean-clone bootstrap: a never-used folder, a scrubbed environment, pre- and post-assertions that the private helper was unreachable, copy-back through the leak gate, also after a budget stop, where the finished rows are filed as a baseline labelled partial (RERUN-02)
+
+**Wave 20** *(blocked on Wave 19 completion)*
+- [ ] 04-20-PLAN.md — The full matrix once from a clean clone, paid, on bokiko's word: push the Phase 4 code, run all 21 chains, file the baseline folder (labelled partial if the budget ends the run first) and report the cost per row (RERUN-02, RERUN-03)
+
+**Wave 21** *(blocked on Wave 20 completion)*
+- [ ] 04-21-PLAN.md — README for a stranger with a cost block tied to the evidence, acceptance and changelog pointers, the Codex review in a visible Herdr tab filed as bokiko pasted it, verdict lines on his word, and the reference swap only on his word (RERUN-04, RERUN-05)
+
+**Cross-cutting constraints:**
+- Every filed file passed the sanitizer, the leak gate and promote with the deny entries; a leak-gate scan and a gitleaks scan of the folder report nothing; `check-words` finds no verdict vocabulary in a harness-authored file; every row README ends with `Reviewer verdict: PENDING`; the folder is an attribution run, not the baseline and not reviewed, and its `README.md`, `digest-table.md` and `usage-by-row.txt` come from `pc_baseline.py close` (RERUN-03 machinery, EVID-05)
+- If the run ends with a code that is not 0, 10, 11 or 19, or if any filing step was refused (14 to 18), the executor stops: it does not rerun, does not run `--authorize-retry`, and returns the printed fixed lines and the exit code to the orchestrator; a stopped row is reported with its reason word and counts and the retry is bokiko's decision
+- Nothing is spent before bokiko's own word in the conversation at the blocking-human checkpoint of Task 2: no agent message, summary or earlier approval stands in for it, and the checkpoint shows him the build, the rows, the stage split, the per-row and wave worst case, the projection from the one measured chain, the recommended budget amount, the no-retry rule and the green zero-token gate before he answers (D-01)
+- The skill, references, fixtures and committed evidence are unchanged against the base commit, SKILL.md is at most 12,000 bytes, every file this plan adds outside .planning lies under a labelled evidence folder, and the zero-token suite including the write-escape corpus over every committed trace is green with the new folder present
+
+*Plan count note: the earlier three-plan outline (04-01 row waves A to D, 04-02 the row 7 triple, 04-03 the clean-clone baseline and review) could not fit the 50 percent context target, the checker limits of three tasks and eight files per plan, and the rule that a human-gated paid run never shares a plan with implementation, so each outline plan was split by concern: the engine and driver, the row seeds and hooks in groups that share a seed shape, the review machinery, the baseline machinery and the clean-clone bootstrap, then one paid run per go-gated wave (A, B, C, D), the row 7 triple, the clean-clone matrix, and the review with the documents. The plans run in serial waves because they share the README, the row registry and the matrix driver, and each paid plan stops for bokiko's own go word and budget amount (D-01). No requirement or decision moved.*
 
 ## Standing Rules For Every Phase
 
@@ -178,4 +245,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
 | 3. Walking Skeleton (Row 1) | 12/12 | Complete    | 2026-10-29 |
-| 4. Full Matrix, Row 7 and Review | 0/3 | Not started | - |
+| 4. Full Matrix, Row 7 and Review | 0/21 | Not started | - |
