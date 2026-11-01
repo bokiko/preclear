@@ -87,6 +87,7 @@ _STAGE_DIR_MODE = 0o700
 _FILE_MODE = 0o644
 _GIT_TIMEOUT_SECONDS = 60
 
+
 class EvidenceError(Exception):
     """The run root does not hold what filing needs; messages are fixed text."""
 

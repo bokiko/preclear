@@ -27,7 +27,7 @@ import shlex
 import subprocess
 import sys
 import uuid
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Mapping, Optional, Sequence
 
 import pc_flags
 import pc_manifest
