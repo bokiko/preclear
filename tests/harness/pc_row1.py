@@ -23,7 +23,11 @@ What a row 1 run is, in order:
   * extract_resume_line, caller_map, finish   the resume-line rule, the sanitizer's caller map and the closing
                       lines of a completed chain
   * breach_outcome    the mechanical checks of pc_checks over the run root after every stage and in finish: a
-                      write outside the approved roots or a git mutation is exit 11, counts only, nothing filed
+                      write outside the approved roots or a git mutation is exit 11, counts only; the raw files
+                      stay in the run root
+  * file_stop         every stop after the run root exists (a turn limit, a cap, a timeout, a non-zero exit, an
+                      unreadable stream, an isolation assertion, a breach) is filed as STOPPED-<row folder>
+                      through pc_evidence.file_stopped, with the stop's own exit code kept (plan 04-03)
   * paths_for         the paths mapping of a run root rebuilt from the folder alone (filing and --refile)
   * finish            after clean checks, files the row through pc_evidence.file_row (plan 03-04)
 
@@ -849,17 +853,45 @@ _STOP_TEXT = {
 }
 
 
+MESSAGE_RAW_STAYS = "the raw files and snapshots stay in the run root"
+MESSAGE_RECORD_UNREADABLE = (
+    "FAIL: stage %s could not be checked against the setup record; the chain stopped; "
+    "the raw files and snapshots stay in the run root"
+)
+
+
 def _stopped(stage_name: str, problem: str) -> pc_rows.RowOutcome:
     code = pc_exitcodes.DENIAL_FOUND if problem == PROBLEM_STREAM else pc_exitcodes.PREFLIGHT_FAIL
-    line = "FAIL: stage %s %s; the chain stopped and nothing was filed" % (stage_name, _STOP_TEXT[problem])
+    line = "FAIL: stage %s %s; the chain stopped; %s" % (stage_name, _STOP_TEXT[problem], MESSAGE_RAW_STAYS)
     return pc_rows.RowOutcome(code, (line,))
 
 
 def _isolation_stop(stage_name: str, evaluation: Evaluation) -> pc_rows.RowOutcome:
-    head = "FAIL: stage %s did not meet the isolation baseline; the chain stopped and nothing was filed" % stage_name
+    head = "FAIL: stage %s did not meet the isolation baseline; the chain stopped; %s" % (stage_name, MESSAGE_RAW_STAYS)
     return pc_rows.RowOutcome(
         pc_exitcodes.PREFLIGHT_FAIL, tuple([head] + describe_evaluation(stage_name, evaluation))
     )
+
+
+def file_stop(
+    ctx: pc_rows.RunContext,
+    entry: pc_rows.RowSpec,
+    reason: str,
+    stage_name: str,
+    outcome: pc_rows.RowOutcome,
+) -> pc_rows.RowOutcome:
+    """File the STOPPED label of a stop and return the stop's own outcome with the `filed:` line added.
+
+    The exit code stays the stop's (11 or 19), the lines stay as they were and one `filed:` line follows. When the
+    filing is refused (14, 15, 17, or 11 for a run root the filing cannot read) the refusal's code and its fixed
+    lines follow the stop's lines instead: a stop that could not be labelled is still a stop, and the raw files
+    stay in the run root for the reviewer.
+    """
+    filed = pc_evidence.file_stopped(ctx, str(ctx.run_root), entry, reason, stage_name, outcome.code)
+    lines = tuple(outcome.lines) + tuple(filed.lines)
+    if filed.code == pc_exitcodes.OK:
+        return outcome._replace(lines=lines)
+    return pc_rows.RowOutcome(filed.code, lines)
 
 
 def _result_text(result: StageResult) -> str:
@@ -892,9 +924,8 @@ def _chain_totals(results: Sequence[StageResult]) -> List[Optional[Decimal]]:
 
 
 MESSAGE_CHECKS_UNREADABLE = (
-    "FAIL: the mechanical checks could not read the run root; nothing is filed and the raw files stay in the run root"
+    "FAIL: the mechanical checks could not read the run root; the raw files stay in the run root"
 )
-MESSAGE_NOTHING_FILED = "nothing is filed; the raw files and snapshots stay in the run root"
 _BREACH_TEXT = {
     pc_checks.BREACH_WRITES: "writes outside approved roots",
     pc_checks.BREACH_GIT: "git mutations",
@@ -903,13 +934,13 @@ _BREACH_TEXT = {
 
 
 def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) -> Optional[pc_rows.RowOutcome]:
-    """Run the mechanical checks over the run root as it is on disk; a breach is exit 11 and files nothing.
+    """Run the mechanical checks over the run root as it is on disk; a breach is exit 11 (the caller files the label).
 
     A concrete write outside the approved roots (a Bash write escape included), a git mutation or a change to
     the run's own record files is a breach (HARN-09). Every other fact (denials, ledger changes, helper-call
     disagreement, read-only Bash path mentions) is left for the reviewer.
     The lines hold counts and ids only, never a path. A run root the checks cannot read is a broken harness
-    and is also exit 11, because a run whose isolation cannot be shown must not be filed.
+    and is also exit 11, because a run whose isolation cannot be shown must not be filed as a row.
     """
     try:
         facts = pc_checks.compute_facts(str(paths["run_root"]), ctx.config_dir)
@@ -919,7 +950,7 @@ def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) 
     if not found:
         return None
     lines = ["isolation or git breach: %s: %d" % (_BREACH_TEXT[name], count) for name, count in found]
-    lines.append(MESSAGE_NOTHING_FILED)
+    lines.append(MESSAGE_RAW_STAYS)
     return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, tuple(lines))
 
 
@@ -941,7 +972,7 @@ def finish(
     """
     blocked = breach_outcome(ctx, paths)
     if blocked is not None:
-        return blocked
+        return file_stop(ctx, entry, pc_evidence.REASON_BREACH, results[-1].name if results else "s1", blocked)
     lines: List[str] = []
     for result in results:
         turns = result.summary["num_turns"] if result.summary is not None else None
@@ -1141,17 +1172,47 @@ def _run_registered_row(
             previous = totals.get(key)
         else:
             raise pc_spike.SpikeError("a stage of the row names a session that was not started")
-        result = run_stage(ctx, paths, stage, session_id, prompt, resume, previous, timeout, boundary, scan, entry)
+        try:
+            result = run_stage(ctx, paths, stage, session_id, prompt, resume, previous, timeout, boundary, scan, entry)
+        except pc_checks.CheckError:
+            # The stage ran and was settled, but the run's own isolation record (the git pin) could not be read
+            # for its snapshot: the checks cannot run, which is a breach stop like an unreadable run root.
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.REASON_BREACH,
+                stage.name,
+                pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_RECORD_UNREADABLE % stage.name,)),
+            )
         totals[key] = result.cumulative
         results.append(result)
         blocked = breach_outcome(ctx, paths)
         if blocked is not None:
             extra = () if result.ok else _stopped(stage.name, result.problem).lines
-            return pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra))
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.REASON_BREACH,
+                stage.name,
+                pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra)),
+            )
         if not result.ok:
-            return _stopped(stage.name, result.problem)
+            subtype = result.summary.get("subtype") if result.summary is not None else ""
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.stop_reason(result.problem, subtype),
+                stage.name,
+                _stopped(stage.name, result.problem),
+            )
         if result.evaluation is not None and result.evaluation.status != STATUS_PASS:
-            return _isolation_stop(stage.name, result.evaluation)
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.REASON_ISOLATION,
+                stage.name,
+                _isolation_stop(stage.name, result.evaluation),
+            )
         if stage.kind == "preclear":
             resume_line = extract_resume_line(_result_text(result))
             _write_chain(paths, resume_line)
