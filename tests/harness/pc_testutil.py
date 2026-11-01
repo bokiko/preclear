@@ -506,10 +506,19 @@ def default_row_stages(spec: Any) -> list:
     the exporter), a stage of kind preclear the row 1 /preclear script (a wrapper status call, a checkpoint, a
     memory file, one denied wrapper bind and a fenced resume line), and a stage of kind resume the row 1 resume
     script (a fresh session that loads the project CLAUDE.md and reads the checkpoint). The scripts are copies,
-    so a test may change one without touching the others. The list is as long as the spec's stage tuple.
+    so a test may change one without touching the others. The list is as long as the spec's stage tuple. A spec
+    whose allowlist profile is not the helper profile gets the scripts without the wrapper and memory-file ops.
     """
     templates = dict(zip(("work", "preclear", "resume"), default_row1_stages()))
-    return json.loads(json.dumps([templates[stage.kind] for stage in spec.stages]))
+    chosen = json.loads(json.dumps([templates[stage.kind] for stage in spec.stages]))
+    if getattr(spec, "tools_profile", "helper") != "helper":
+        # A row with no helper (a plain row) has no wrapper to call and no memory file to write: the scripts lose the
+        # ops that name the wrapper and the auto-memory folder, and keep the listing, the checkpoint and the replies.
+        for stage in chosen:
+            stage["ops"] = [
+                op for op in stage.get("ops", []) if "$WRAPPER" not in json.dumps(op) and "$AUTOMEM" not in json.dumps(op)
+            ]
+    return chosen
 
 
 def stages_with(stages: list, index: int, **changes: Any) -> list:

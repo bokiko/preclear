@@ -444,12 +444,53 @@ def build_allowed_tools(wrapper_path: str, verbs: Sequence[str]) -> Tuple[str, .
     return tuple(BASELINE_ALLOWED_TOOLS) + tuple(rules)
 
 
-def render_settings(auto_memory_dir: str, audit_hook_command: Optional[str] = None) -> Dict[str, Any]:
-    """Return the dict for --settings: the auto-memory directory (realpath) and an optional hook."""
+# Allowlist profiles of a row (plan 04-04). The words equal the constants of pc_rows (a test holds them equal); this
+# module does not import pc_rows so that both stay importable alone.
+PROFILE_HELPER = "helper"
+PROFILE_PLAIN = "plain"
+PROFILE_GIT = "git"
+_EXTRA_RULE = re.compile(r"[A-Za-z]+(?:\([A-Za-z0-9 ._:*-]+\))?\Z")
+
+
+def build_row_tools(profile: str, wrapper_path: str, extra: Sequence[str] = ()) -> Tuple[str, ...]:
+    """Return the --allowedTools rules of a row: its profile's rules, then the extra rules in the order given.
+
+    The helper profile is the baseline plus one rule per model-facing wrapper verb (build_allowed_tools); the plain
+    and git profiles are the baseline alone and never take a wrapper rule, so the wrapper path is not used for
+    them. An unknown profile, an extra rule that is not a plain tool rule (no comma, no new line, no slash, so no path to a
+    wrapper), a repeated rule or a rule already in the list is a ValueError.
+    """
+    if profile == PROFILE_HELPER:
+        rules = list(build_allowed_tools(wrapper_path, MODEL_FACING_WRAPPER_VERBS))
+    elif profile in (PROFILE_PLAIN, PROFILE_GIT):
+        rules = list(BASELINE_ALLOWED_TOOLS)
+    else:
+        raise ValueError("the allowlist profile is not known")
+    if isinstance(extra, str):
+        raise ValueError("extra rules must be a sequence of strings")
+    for rule in extra:
+        if not isinstance(rule, str) or _EXTRA_RULE.match(rule) is None:
+            raise ValueError("an extra rule is not a plain tool rule")
+        if rule in rules:
+            raise ValueError("an extra rule repeats a rule already in the list")
+        rules.append(rule)
+    return tuple(rules)
+
+
+def render_settings(
+    auto_memory_dir: str, audit_hook_command: Optional[str] = None, memory_enabled: bool = True
+) -> Dict[str, Any]:
+    """Return the dict for --settings: the auto-memory directory (realpath), the memory switch and an optional hook.
+
+    memory_enabled is true unless a row's memory policy says disabled (plan 04-04): the directory stays pinned in
+    both cases, so a stray write of a session that ignores the switch would still land inside the run root.
+    """
     _require_absolute(auto_memory_dir, "auto memory directory")
+    if type(memory_enabled) is not bool:
+        raise ValueError("memory_enabled must be a bool")
     settings: Dict[str, Any] = {
         "autoMemoryDirectory": os.path.realpath(auto_memory_dir),
-        "autoMemoryEnabled": True,
+        "autoMemoryEnabled": memory_enabled,
     }
     if audit_hook_command is not None:
         if not isinstance(audit_hook_command, str) or not audit_hook_command:

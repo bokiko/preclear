@@ -8,7 +8,7 @@ which of them this phase implements, and what each stage of an implemented row m
   * StageSpec, RowSpec    one stage (turns, cap as Decimal, session key) and one registry entry; an entry
                           also carries what makes a row runnable from the registry alone (plan 04-01): the
                           seed it names, the prompt files of its stages, the Setup paragraph of its README and
-                          its allowlist profile
+                          its allowlist profile with the extra rules it adds and its memory policy (plan 04-04)
   * RunContext, RowOutcome  the records the driver hands to a row runner and gets back
   * build_registry        the full registry, plus any rows a test injects
   * find_entry            exact, whole-id lookup; a prefix, another case or an odd value is None
@@ -28,10 +28,19 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tu
 ROW_CAP = Decimal("2.00")  # D-12: the most one row may cost, in US dollars
 ROW1 = "row1-wrong-binding"
 ROW4A = "row4a-unknown-backend"
+ROW5A = "row5a-no-memory"
+ROW5B = "row5b-disabled-memory"
 
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
 PROFILE_HELPER = "helper"
+# PROFILE_PLAIN is the baseline alone (no wrapper rule of any kind); a row adds its own extra rules in RowSpec.extra_tools.
+PROFILE_PLAIN = "plain"
+
+# Memory policies (RowSpec.memory): what the run settings say about Claude Code's auto-memory. In both the directory is
+# pinned inside the run root. MEMORY_PINNED is the Phase 3 setting (on); MEMORY_DISABLED turns it off (rows 5a and 5b).
+MEMORY_PINNED = "pinned"
+MEMORY_DISABLED = "disabled"
 
 LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
 
@@ -108,6 +117,8 @@ class RowSpec(NamedTuple):
     prompts: Tuple[Tuple[str, str], ...] = ()  # (stage name, repo-relative path) of the prompt file of a stage
     setup_text: str = ""  # the harness-authored Setup paragraph of the row README
     tools_profile: str = PROFILE_HELPER  # which allowlist the stages run with
+    extra_tools: Tuple[str, ...] = ()  # rules appended to the profile's list, in order (plan 04-04)
+    memory: str = MEMORY_PINNED  # MEMORY_PINNED or MEMORY_DISABLED: the memory switch of the run settings
 
 
 class RunContext(NamedTuple):
@@ -196,6 +207,50 @@ _ROW4A_PROMPTS: Tuple[Tuple[str, str], ...] = (
     ("s1", _S1_PROMPT),
     ("s2", _PUBLICATION_4A + "/s2-preclear-prompt.md"),
 )
+
+# Rows 5a and 5b (plain rows: no wrapper, no ledger, no binding): the committed two stages, auto-memory disabled.
+_PUBLICATION_5A = _PUBLICATION_ROOT + "/row5a-no-memory"
+_PUBLICATION_5B = _PUBLICATION_ROOT + "/row5b-disabled-memory"
+_PLAIN_PLAN_DATA = "tests/harness/data/plain-plan.md"
+_PLAIN_S1_PROMPT = "tests/harness/data/plain-s1-prompt.md"
+_PLAIN_EXTRA_TOOLS: Tuple[str, ...] = ("Bash(chmod:*)", "Bash(touch:*)")
+_ROW5_STAGES: Tuple[StageSpec, ...] = (
+    StageSpec("s1", WORK_TURN, "work", 15, Decimal("0.30"), 900, "new:A"),
+    StageSpec("s2", PRECLEAR_TURN, "preclear", 60, Decimal("1.30"), 1800, "resume:A"),
+)
+_PLAIN_COMMON_SOURCES: Tuple[Tuple[str, str], ...] = (
+    ("SKILL.md", "file"),
+    ("references", "dir"),
+    ("tests/harness/pc_hooklog.py", "file"),
+)
+
+
+def _plain_sources(folder: str) -> Tuple[Tuple[str, str], ...]:
+    return _PLAIN_COMMON_SOURCES + (
+        (folder + "/fixture-CLAUDE.md", "file"),
+        (folder + "/s2-preclear-prompt.md", "file"),
+        (_PLAIN_S1_PROMPT, "file"),
+        (_PLAIN_PLAN_DATA, "file"),
+    )
+
+
+def _plain_prompts(folder: str) -> Tuple[Tuple[str, str], ...]:
+    return (("s1", _PLAIN_S1_PROMPT), ("s2", folder + "/s2-preclear-prompt.md"))
+
+
+_ROW5A_SETUP_TEXT = (
+    "Setup: a plain project with no configuration block and no memory mentioned anywhere in it, no helper wrapper "
+    "and no ledger. Claude Code auto-memory is switched off in the run settings, with its directory still pinned "
+    "inside the run root so that a stray write would land there. A work turn comes first, then the /preclear turn "
+    "with the JSON-default correction in the same session; no fresh session follows."
+)
+_ROW5B_SETUP_TEXT = (
+    "Setup: as row 5a, plus the project instruction file says that memory is disabled for this project and tells "
+    "the session not to create or write memory files anywhere; durable facts go in the plan or the checkpoint. "
+    "Auto-memory is also switched off in the run settings, with its directory pinned inside the run root. A work "
+    "turn comes first, then the /preclear turn with the JSON-default correction in the same session; no fresh "
+    "session follows."
+)
 _ROW1_SETUP_TEXT = (
     "Setup: the configuration names ledger A (`CONTINUITY_CLAUDE-widget-export.md`); the harness bound the "
     "session to ledger B (`CONTINUITY_CLAUDE-other-task.md`, a different workstream in the same fixture root). "
@@ -256,6 +311,38 @@ def _registered_rows() -> Dict[str, RowSpec]:
             prompts=_ROW4A_PROMPTS,
             setup_text=_ROW4A_SETUP_TEXT,
             tools_profile=PROFILE_HELPER,
+        ),
+        ROW5A: RowSpec(
+            ROW5A,
+            KIND_ROW,
+            "Row 5a: no memory system (1P)",
+            _ROW5_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW5A),
+            _plain_sources(_PUBLICATION_5A),
+            seed="pc_rowseeds:seed_row5a",
+            prompts=_plain_prompts(_PUBLICATION_5A),
+            setup_text=_ROW5A_SETUP_TEXT,
+            tools_profile=PROFILE_PLAIN,
+            extra_tools=_PLAIN_EXTRA_TOOLS,
+            memory=MEMORY_DISABLED,
+        ),
+        ROW5B: RowSpec(
+            ROW5B,
+            KIND_ROW,
+            "Row 5b: memory explicitly disabled (1P)",
+            _ROW5_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW5B),
+            _plain_sources(_PUBLICATION_5B),
+            seed="pc_rowseeds:seed_row5b",
+            prompts=_plain_prompts(_PUBLICATION_5B),
+            setup_text=_ROW5B_SETUP_TEXT,
+            tools_profile=PROFILE_PLAIN,
+            extra_tools=_PLAIN_EXTRA_TOOLS,
+            memory=MEMORY_DISABLED,
         ),
     }
 

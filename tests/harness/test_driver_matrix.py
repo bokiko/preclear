@@ -104,6 +104,12 @@ def rig_for(*row_ids, repeat=1):
     return pc_testutil.RowRig(stages=stages)
 
 
+def implemented_ids() -> list:
+    """The ids of every implemented row in registry order: what --all runs."""
+    pc_rows = rows()
+    return [e.row_id for e in pc_rows.build_registry() if e.kind == pc_rows.KIND_ROW and e.implemented]
+
+
 def ledger_of(rig):
     import pc_spike
 
@@ -600,21 +606,25 @@ class MatrixScopeTests(unittest.TestCase):
     """--all without a campaign scopes its ledger rows with the word matrix; a single row keeps the bare ids."""
 
     def test_a_matrix_run_is_not_refused_when_the_ledger_already_holds_the_bare_row_1_lines(self) -> None:
-        rig = rig_for(ROW1, ROW4A)
+        ids = implemented_ids()
+        rig = rig_for(*ids)
         import pc_spike
 
         home = pc_spike.harness_home(rig.env, rig.env["HOME"], rig.repo)
         bare = ("row1-s1", "row1-s2", "row1-s3")
         for key in bare:
             pc_spend.append_launch(home, ROW1, key, Decimal("0.10"), "2.1.310", bare)
-        code, out, err = drive(rig, ["--all", "--budget", "5.00"])
+        code, out, err = drive(rig, ["--all", "--budget", "25.00"])
         self.assertEqual(code, 0, out + err)
-        self.assertEqual(len(rig.calls()), 5)
+        self.assertEqual(len(rig.calls()), sum(len(spec_of(row_id).stages) for row_id in ids))
         scoped = sorted({line["row"] for line in ledger_of(rig) if line["row"].startswith("matrix-")})
-        self.assertEqual(scoped, ["matrix-row1-wrong-binding", "matrix-row4a-unknown-backend"])
+        self.assertEqual(scoped, sorted("matrix-" + row_id for row_id in ids))
         dated = dated_folder(rig)
-        self.assertEqual(sorted(os.listdir(dated)), [ROW1, ROW4A])
-        self.assertIn("summary: 2 row(s) selected, 2 filed, 0 stopped, 0 skipped, 0 refused, 0 not started", out)
+        self.assertEqual(sorted(os.listdir(dated)), sorted(ids))
+        self.assertIn(
+            "summary: %d row(s) selected, %d filed, 0 stopped, 0 skipped, 0 refused, 0 not started" % (len(ids), len(ids)),
+            out,
+        )
         assert_clean(self, rig, out + err)
 
     def test_a_single_row_without_a_campaign_keeps_the_bare_ids(self) -> None:
@@ -625,11 +635,12 @@ class MatrixScopeTests(unittest.TestCase):
         self.assertEqual({line["stage"] for line in ledger_of(rig)}, {"row4a-s1", "row4a-s2"})
 
     def test_a_campaign_with_all_uses_the_label_and_not_the_matrix_word(self) -> None:
-        rig = rig_for(ROW1, ROW4A)
-        code, out, err = drive(rig, ["--all", "--campaign", "wave-m", "--budget", "5.00"])
+        ids = implemented_ids()
+        rig = rig_for(*ids)
+        code, out, err = drive(rig, ["--all", "--campaign", "wave-m", "--budget", "25.00"])
         self.assertEqual(code, 0, out + err)
         rows_in_ledger = {line["row"] for line in ledger_of(rig)}
-        self.assertEqual(rows_in_ledger, {"wave-m-row1-wrong-binding", "wave-m-row4a-unknown-backend"})
+        self.assertEqual(rows_in_ledger, set("wave-m-" + row_id for row_id in ids))
         self.assertTrue(os.path.isdir(dated_folder(rig, label="wave-m")))
 
 
