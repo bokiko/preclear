@@ -275,8 +275,8 @@ class BudgetBoundaryTests(unittest.TestCase):
         self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
         return result
 
-    def test_the_worst_case_and_above_are_accepted_up_to_five(self) -> None:
-        for value in ("2.00", "2.01", "5.00", "2.0", "3", "4.99"):
+    def test_the_worst_case_and_above_are_accepted_up_to_twenty_five(self) -> None:
+        for value in ("2.00", "2.01", "5.00", "5.01", "2.0", "3", "4.99", "25.00", "25"):
             code, out, err = self.budget(value)
             self.assertEqual(code, 0, "a budget at or above the worst case was refused")
 
@@ -285,7 +285,8 @@ class BudgetBoundaryTests(unittest.TestCase):
             "1.99",
             "0",
             "0.00",
-            "5.01",
+            "25.01",
+            "26",
             "2.000",
             "1e1",
             "2e0",
@@ -307,7 +308,7 @@ class BudgetBoundaryTests(unittest.TestCase):
             self.assertEqual(out.count("Traceback"), 0)
 
     def test_a_refused_budget_never_echoes_the_value(self) -> None:
-        for value in ("1.99", "7.77", "bogus-marker-zz"):
+        for value in ("1.99", "77.77", "bogus-marker-zz"):
             code, out, err = self.budget(value)
             self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED)
             self.assertNotIn(value, out + err)

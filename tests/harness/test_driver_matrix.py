@@ -868,5 +868,290 @@ class RefileAnyRowTests(unittest.TestCase):
         self.assertEqual(code, pc_exitcodes.USAGE, text)
 
 
+
+class InvocationBudgetParserTests(unittest.TestCase):
+    """--budget has its own parser; the per-call flag keeps the lower ceiling."""
+
+    def test_well_formed_amounts_up_to_the_ceiling_are_accepted(self) -> None:
+        self.assertEqual(pc_flags.INVOCATION_BUDGET_MAX, Decimal("25.00"))
+        self.assertIsInstance(pc_flags.INVOCATION_BUDGET_MAX, Decimal)
+        for text, expected in (("25.00", "25.00"), ("25", "25.00"), ("2.5", "2.50"), ("0.01", "0.01"), ("12.34", "12.34")):
+            self.assertEqual(pc_flags.format_invocation_budget(text), expected)
+        self.assertEqual(pc_flags.format_invocation_budget(Decimal("7.00")), "7.00")
+
+    def test_everything_else_is_refused(self) -> None:
+        for bad in (
+            "25.01",
+            "26",
+            "0",
+            "0.00",
+            "2.005",
+            "1e1",
+            "2,5",
+            "",
+            "-1",
+            "NaN",
+            " 2",
+            "2 ",
+            ".5",
+            "2.",
+            "٢.00",
+            2.5,
+            2,
+            True,
+            None,
+            Decimal("2.005"),
+            Decimal("NaN"),
+            Decimal("26"),
+        ):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                pc_flags.format_invocation_budget(bad)
+
+    def test_the_per_call_budget_keeps_its_own_ceiling(self) -> None:
+        self.assertEqual(pc_flags.format_budget("5.00"), "5.00")
+        for bad in ("5.01", "25.00", "7"):
+            with self.assertRaises(ValueError):
+                pc_flags.format_budget(bad)
+
+
+class WorstCaseTests(unittest.TestCase):
+    """The worst case of a row is the smaller of the cap sum and the row cap, and the ledger enforces that bound."""
+
+    def four_stage_row(self):
+        return injected("row0-four", caps=("0.30", "1.30", "0.40", "0.60"))
+
+    def test_a_four_stage_row_reports_2_00_and_a_two_stage_row_its_cap_sum(self) -> None:
+        pc_rows = rows()
+        self.assertEqual(pc_rows.worst_case(self.four_stage_row()), Decimal("2.00"))
+        self.assertEqual(pc_rows.worst_case(injected("row0-two", caps=("0.30", "1.30"))), Decimal("1.60"))
+        self.assertEqual(pc_rows.worst_case(injected("row0-one", caps=("0.10",))), Decimal("0.10"))
+        self.assertIsInstance(pc_rows.worst_case(self.four_stage_row()), Decimal)
+
+    def test_the_dry_run_prints_2_00_for_it_and_a_total_that_uses_the_bounded_figure(self) -> None:
+        rig = pc_testutil.RowRig(stages=[])
+        registry = registry_of(self.four_stage_row())
+        code, out, err = drive(rig, ["--dry-run", "--row", "row0-four"], registry, claude=False)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("worst case 2.00 USD", out)
+
+    def test_the_ledger_refuses_the_launch_that_would_take_the_row_past_2_00(self) -> None:
+        home = os.path.join(scratch(), "hh")
+        keys = tuple("row0-s%d" % number for number in range(1, 5))
+        caps = (Decimal("0.30"), Decimal("1.30"), Decimal("0.40"), Decimal("0.60"))
+        deltas = (Decimal("0.30"), Decimal("0.80"), Decimal("0.30"))  # settled 1.40 after three stages
+        for index in range(3):
+            attempt = pc_spend.append_launch(home, "row0-four", keys[index], caps[index], "2.1.310", keys)
+            pc_spend.settle(home, "row0-four", keys[index], attempt, "success", deltas[index], None, "2.1.310")
+        self.assertEqual(pc_spend.row_pessimistic_total(home, "row0-four"), Decimal("1.40"))
+        pc_spend.append_launch(home, "row0-four", keys[3], caps[3], "2.1.310", keys)  # 1.40 + 0.60 is exactly 2.00
+
+        other = os.path.join(scratch(), "hh")
+        more = (Decimal("0.30"), Decimal("0.80"), Decimal("0.40"))  # settled 1.50 after three stages
+        for index in range(3):
+            attempt = pc_spend.append_launch(other, "row0-four", keys[index], caps[index], "2.1.310", keys)
+            pc_spend.settle(other, "row0-four", keys[index], attempt, "success", more[index], None, "2.1.310")
+        with self.assertRaises(pc_spend.SpendRefused):
+            pc_spend.append_launch(other, "row0-four", keys[3], caps[3], "2.1.310", keys)
+
+
+class BudgetTests(unittest.TestCase):
+    """The per-invocation budget: its minimum, its ceiling and the stop before a row that would pass it."""
+
+    def setUp(self) -> None:
+        self.rig = pc_testutil.RowRig(stages=[])
+        self.rec = Recorder()
+
+    def spending(self, row_id, spent, worst=("1.00", "1.00"), code=0):
+        runner = self.rec.runner(row_id, code=code, spent=Decimal(spent) if spent is not None else None)
+        return injected(row_id, caps=worst, runner=runner)
+
+    def real(self, entries, budget, extra=()):
+        args = []
+        for entry in entries:
+            args += ["--row", entry.row_id]
+        code, out, err = drive(self.rig, args + ["--budget", budget] + list(extra), registry_of(*entries))
+        assert_clean(self, self.rig, out + err)
+        return code, out, err
+
+    def test_a_one_row_budget_equal_to_the_worst_case_is_accepted_and_one_cent_less_is_refused(self) -> None:
+        entry = self.spending("row0-a", "0.30")
+        for budget, expected in (("2.00", 0), ("2.01", 0), ("1.99", 18), ("1.00", 18)):
+            self.rig = pc_testutil.RowRig(stages=[])
+            self.rec.calls.clear()
+            dry = drive(self.rig, ["--dry-run", "--row", "row0-a", "--budget", budget], registry_of(entry), claude=False)
+            self.assertEqual(dry[0], expected, budget + dry[1] + dry[2])
+            code, out, err = self.real([entry], budget)
+            self.assertEqual(code, expected, budget + out + err)
+            self.assertEqual(len(self.rec.calls), 1 if expected == 0 else 0)
+
+    def test_a_multi_row_selection_needs_only_the_largest_single_worst_case(self) -> None:
+        entries = [self.spending("row0-a", "0.30"), self.spending("row0-b", "0.30"), self.spending("row0-c", "0.30")]
+        code, out, err = self.real(entries[:1], "2.00")
+        self.assertEqual(code, 0, out + err)
+        dry = drive(
+            self.rig,
+            ["--dry-run", "--row", "row0-a", "--row", "row0-b", "--row", "row0-c", "--budget", "2.00"],
+            registry_of(*entries),
+            claude=False,
+        )
+        self.assertEqual(dry[0], 0, dry[1] + dry[2])
+        self.assertIn("budget 2.00 USD for this invocation", dry[1])
+        short = drive(
+            self.rig,
+            ["--dry-run", "--row", "row0-a", "--row", "row0-b", "--row", "row0-c", "--budget", "1.99"],
+            registry_of(*entries),
+            claude=False,
+        )
+        self.assertEqual(short[0], pc_exitcodes.BUDGET_REFUSED)
+        self.assertNotIn("budget 1.99", short[1])
+
+    def test_the_minimum_is_the_largest_single_row_not_the_first_or_the_sum(self) -> None:
+        small = injected("row0-small", caps=("0.10",), runner=self.rec.runner("row0-small"))
+        big = injected("row0-big", caps=("0.90", "0.90"), runner=self.rec.runner("row0-big"))
+        args = ["--dry-run", "--row", "row0-small", "--row", "row0-big"]
+        self.assertEqual(drive(self.rig, args + ["--budget", "1.80"], registry_of(small, big), claude=False)[0], 0)
+        self.assertEqual(
+            drive(self.rig, args + ["--budget", "1.79"], registry_of(small, big), claude=False)[0],
+            pc_exitcodes.BUDGET_REFUSED,
+        )
+
+    def test_the_ceiling_is_25_00_and_every_other_shape_is_refused_without_an_echo(self) -> None:
+        entry = self.spending("row0-a", "0.30")
+        ok = drive(self.rig, ["--dry-run", "--row", "row0-a", "--budget", "25.00"], registry_of(entry), claude=False)
+        self.assertEqual(ok[0], 0, ok[1] + ok[2])
+        for bad in ("25.01", "30", "2.005", "1e1", "2,5", "zz-probe-text", "", "0", "-2"):
+            code, out, err = drive(
+                self.rig, ["--dry-run", "--row", "row0-a", "--budget", bad], registry_of(entry), claude=False
+            )
+            self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, repr(bad))
+            self.assertNotIn("probe", out + err)
+            self.assertIn("worst case 2.00", out, "the plan was printed first")
+
+    def test_rows_that_spend_little_all_run_under_a_budget_that_covers_the_running_total(self) -> None:
+        entries = [self.spending("row0-a", "0.30"), self.spending("row0-b", "0.30"), self.spending("row0-c", "0.30")]
+        code, out, err = self.real(entries, "2.60")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-a", "row0-b", "row0-c"])
+        self.assertIn("row row0-c: filed, exit 0, spent 0.30 USD", out)
+        self.assertIn("summary: 3 row(s) selected, 3 filed, 0 stopped, 0 skipped, 0 refused, 0 not started", out)
+
+    def test_the_third_row_is_not_started_when_the_running_total_plus_its_worst_case_passes_the_budget(self) -> None:
+        entries = [self.spending("row0-a", "0.30"), self.spending("row0-b", "0.30"), self.spending("row0-c", "0.30")]
+        code, out, err = self.real(entries, "2.59")
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-a", "row0-b"], "0.60 plus 2.00 is above 2.59")
+        self.assertIn(matrix().MESSAGE_BUDGET_STOP, err)
+        self.assertIn("summary: 3 row(s) selected, 2 filed, 0 stopped, 0 skipped, 0 refused, 1 not started", out)
+
+    def test_a_tighter_budget_stops_before_the_second_row_and_keeps_the_first_filed(self) -> None:
+        entries = [self.spending("row0-a", "0.30"), self.spending("row0-b", "0.30"), self.spending("row0-c", "0.30")]
+        code, out, err = self.real(entries, "2.29")
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-a"], "0.30 plus 2.00 is above 2.29")
+        self.assertIn("row row0-a: filed, exit 0, spent 0.30 USD", out)
+        self.assertIn("summary: 3 row(s) selected, 1 filed, 0 stopped, 0 skipped, 0 refused, 2 not started", out)
+
+    def test_the_stop_uses_exact_decimal_arithmetic(self) -> None:
+        entries = [
+            self.spending("row0-a", "0.10", worst=("0.10", "0.10", "0.10")),
+            self.spending("row0-b", "0.10", worst=("0.10", "0.10", "0.10")),
+            self.spending("row0-c", "0.10", worst=("0.10", "0.10", "0.10")),
+        ]
+        code, out, err = self.real(entries, "0.50")
+        self.assertEqual(code, 0, "0.20 plus 0.30 is exactly 0.50, with no float residue: " + out + err)
+        self.rec.calls.clear()
+        self.rig = pc_testutil.RowRig(stages=[])
+        code, out, err = self.real(entries, "0.49")
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-a", "row0-b"])
+
+    def test_a_stopped_row_still_counts_what_it_spent(self) -> None:
+        entries = [
+            self.spending("row0-a", "1.50", code=11),
+            self.spending("row0-b", "0.10", worst=("1.00",)),
+        ]
+        code, out, err = self.real(entries, "2.40")
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-a"], "1.50 plus 1.00 is above 2.40")
+        self.assertIn("row row0-a: stopped, exit 11, spent 1.50 USD", out)
+        self.assertIn("1 stopped", out)
+
+    def test_a_skipped_row_costs_nothing_and_is_never_stopped_by_the_budget(self) -> None:
+        entries = [
+            self.spending("row0-a", "1.90", worst=("1.00", "1.00")),
+            injected("row0-b", caps=("1.00", "1.00"), precondition=lambda: "the fixture of this test row is absent"),
+        ]
+        code, out, err = self.real(entries, "2.00")
+        self.assertEqual(code, 10, out + err)
+        self.assertIn("row row0-b: skipped, exit 10, spent 0.00 USD", out)
+        self.assertNotIn(matrix().MESSAGE_BUDGET_STOP, err)
+
+    def test_a_runner_that_reports_nothing_is_read_from_the_ledger(self) -> None:
+        def runner(ctx):
+            home = ctx.harness_home
+            row = rows().scoped_row("row0-a", ctx.campaign, ctx.attempt, ctx.matrix)
+            keys = ("row0-s1",)
+            attempt = pc_spend.append_launch(home, row, keys[0], Decimal("1.00"), "2.1.310", keys)
+            pc_spend.settle(home, row, keys[0], attempt, "success", Decimal("1.20"), Decimal("1.20"), "2.1.310")
+            return rows().RowOutcome(0, ("scripted from the ledger",))
+
+        first = injected("row0-a", caps=("1.00", "1.00"), runner=runner)
+        second = self.spending("row0-b", "0.10", worst=("1.30",))
+        code, out, err = self.real([first, second], "2.40")
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertIn("row row0-a: filed, exit 0, spent 1.20 USD", out)
+        self.assertEqual(self.rec.calls, [], "1.20 plus 1.30 is above 2.40")
+
+    def test_a_runner_that_raises_counts_the_ledger_total_and_its_code_is_mapped(self) -> None:
+        def runner(ctx):
+            raise pc_spend.SpendRefused("probe-zz")
+
+        entry = injected("row0-a", caps=("1.00", "1.00"), runner=runner)
+        code, out, err = self.real([entry], "2.00")
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertNotIn("probe", out + err)
+        self.assertIn("refused, exit 18", out)
+
+    def test_the_budget_is_the_run_context_budget(self) -> None:
+        seen = []
+
+        def runner(ctx):
+            seen.append(ctx.budget)
+            return rows().RowOutcome(0, ("scripted",))
+
+        entry = injected("row0-a", runner=runner)
+        code, out, err = self.real([entry], "7.50")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(seen, [Decimal("7.50")])
+
+
+class PlanLineTests(unittest.TestCase):
+    """The plan prints each row's own allowlist size."""
+
+    def test_every_row_prints_the_size_of_its_own_profile(self) -> None:
+        import pc_row1
+
+        pc_rows = rows()
+        for row_id in (ROW1, ROW4A):
+            entry = spec_of(row_id)
+            lines = matrix().plan_lines(entry, "2026-10-28")
+            size = len(pc_row1.allowed_tools(entry.tools_profile, matrix().ALLOWLIST_ROLE_WRAPPER))
+            self.assertIn("allowlist %d rules" % size, lines)
+        self.assertEqual(pc_rows.PROFILE_HELPER, spec_of(ROW1).tools_profile)
+
+    def test_a_row_with_another_profile_prints_that_profile_not_a_shared_figure(self) -> None:
+        odd = injected("row0-odd")._replace(tools_profile="no-such-profile")
+        lines = matrix().plan_lines(odd, "2026-10-28")
+        self.assertIn("allowlist unknown profile", lines)
+        self.assertNotIn("allowlist 40 rules", lines)
+
+    def test_the_plan_for_two_rows_prints_one_allowlist_line_each(self) -> None:
+        rig = pc_testutil.RowRig(stages=[])
+        code, out, err = drive(rig, ["--dry-run", "--row", ROW1, "--row", ROW4A], claude=False)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(out.count("allowlist "), 2)
+        self.assertIn("total: 2 row(s), 5 stage(s), 3 session(s), worst case 3.60 USD", out)
+
+
 if __name__ == "__main__":
     unittest.main()

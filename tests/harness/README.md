@@ -236,10 +236,25 @@ a dry run, then one row.
   feeds the preflight, the argument vector and the scan of the binary, so a tested build that is
   not first on `PATH` can be selected without changing anything else. It is accepted and unused in
   a dry run.
-- `--budget AMOUNT` is the most the caller allows a real run to cost. It must be at least the worst
-  case the dry run prints, written with at most two decimals and at most five in total; a real run
-  without one, or with a smaller or malformed one, is refused with exit 18 before any process
-  starts.
+- `--row ID` and `--layout NAME` may each be repeated and combined in one invocation, which is how a
+  wave is selected. The selected entries run in registry order (layouts first, then the rows in the
+  order of the acceptance document) whatever order they were typed in. A repeated id and an unknown
+  one are refused with exit 2 and fixed text that never repeats the value, and `--all` cannot be
+  combined with either flag.
+- `--attempt N` (a digit from 1 to 9, default 1) retries one explicitly selected entry. The row folder
+  is named `<row id>-attempt-N` for N above 1 and the ledger identities are scoped with `aN`, so two
+  attempts of one row never share a folder or a ledger row. A real run refuses it with exit 18 unless
+  the ledger already holds a launch line for attempt N minus one of that row (under the same
+  campaign); the ledger is only read for that check, and a dry run does not read it. It cannot be
+  combined with `--all` or with more than one selected entry (exit 2).
+- `--budget AMOUNT` is the budget of one invocation: the most the caller allows the whole invocation
+  to cost, written with at most two decimals and at most 25.00 in total. It must be at least the
+  largest single worst case among the selected rows (the dry run prints each row's). Before each row
+  the driver adds what the rows already finished in this invocation settled to the next row's worst
+  case, and when that is above the budget it stops with exit 18 and a fixed line; the rows already
+  finished stay filed and the rest are counted as not started. A real run without a budget, or with a
+  smaller or malformed one, is refused with exit 18 before any process starts. The per-call
+  `--max-budget-usd` of each stage keeps its own, lower ceiling.
 - `--campaign LABEL` names the dated folder `rerun-<date>-<model>-<LABEL>` and puts the label in front
   of every ledger row id, ledger stage key and run folder name, so two campaigns never share an
   attempt count. A label is one lowercase id of at most 24 characters and holds no part from `a1` to
@@ -266,10 +281,25 @@ because the cost the stream reports is cumulative across a resumed session; the 
 each session chain's final total once.
 
 The claude-free gate runs inside the dry run, with no process and no `claude`: the runs root is
-outside every home folder and the repository, every file the row reads exists, the evidence folder
-for the run does not exist yet (a name that exists is refused with exit 17 and never reused), and
-the row's own precondition holds. A real run then checks the budget, starts the checkpoint stub
-with `--version` once, and runs the strict preflight, in that order, before the row starts.
+outside every home folder and the repository, every file the row reads exists, the row's own folder
+does not exist yet inside the dated evidence folder, and the row's own precondition holds. The row
+folder, its `STOPPED-` folder and its `SKIPPED-` folder (of the selected attempt) are each refused
+with exit 17 and never reused; a dated folder that already exists is fine, so waves and retries file
+into one dated folder, and a dated name that is a link or a file is refused. A real run then checks
+the budget, starts the checkpoint stub with `--version` once, and runs the strict preflight, in that
+order, before the first row starts.
+
+The loop. A real run walks the selected entries in registry order. A row that is skipped (10),
+stopped (11) or whose stream is incomplete (19) does not end the invocation: the next row still
+runs. A filing failure or a refusal (14, 15, 16, 17 or 18) ends it at once, because a leak, a scanner
+error, a taken folder or a budget stop may apply to every later row too. After the loop the driver
+prints one line per row it handled (the id, `filed`, `stopped`, `skipped` or `refused`, the exit
+code and what the row spent) and one summary line with the counts, including the rows not started.
+The exit code of the invocation is the ending code if there was one, else 19 if any row returned it,
+else 11, else 10, else 0, so a skipped or stopped row never reads as success. The driver never
+prints a verdict for a row. `--all` without `--campaign` scopes its ledger rows with the word
+`matrix`, so a matrix run in a harness home that already holds earlier single-row lines is not
+refused as a second attempt; a single `--row` without a campaign keeps the bare ids.
 
 The three states, each with its own code and its own label:
 
@@ -494,10 +524,12 @@ sanitizer that was built before any spend, the whole tree is scanned by the leak
 deny entries, and promote creates the new folder `tests/evidence/rerun-<date>-<model>` exclusively and once.
 A folder that already exists is refused with exit 17 and is never reused; a refusal by the sanitizer (exit 15)
 or by the gate (exit 14) files nothing. Each row is filed into its own folder inside the dated folder: the staged
-tree holds only the row folder, promote creates `<dated folder>/<row id>`, and an existing row folder is refused
-with exit 17 while an existing dated folder is not, so two different rows share one dated folder. The driver's
-claude-free gate still refuses to start on a dated folder that already exists. Nothing under `tests/evidence` is
-ever overwritten or removed.
+tree holds only the row folder, promote creates `<dated folder>/<row folder>` (the row id, or the row id and
+`-attempt-N` for an attempt above 1), and an existing row folder is refused with exit 17 while an existing dated
+folder is not, so waves, retries and two different rows share one dated folder. The driver's claude-free gate
+refuses the same things before anything starts: the row folder and its `STOPPED-` and `SKIPPED-` folders. A run
+that carries a campaign or an attempt records both in a small scope record in its raw folder, so `--refile` files
+it where the original run would have. Nothing under `tests/evidence` is ever overwritten or removed.
 Filing, live or by `--refile`, is also refused with exit 11 when any stage record shows a problem or an
 isolation assertion that did not hold (a stage that did not finish cleanly), and nothing at all is created;
 it is refused with exit 15 when the sanitizer's deny entries were not built. Promote itself raises when it is
@@ -533,8 +565,9 @@ exits 10, never 0.
 refusal that came late (a taken name, the gate, a sanitizer error). It starts no claude, needs no budget,
 writes no ledger line, takes the evidence date and the model recorded in the run (not today's date) and calls
 the same filing function as a fresh run. A folder that is not a run folder with a run record under the runs
-root is refused with exit 2, a destination that already exists with exit 17, and a run the live path stopped
-with exit 11. The folder must hold the whole chain: the first two stages, and the third exactly when the
+root is refused with exit 2, a row folder (or its `STOPPED-` or `SKIPPED-` label) that already exists in the
+dated folder with exit 17, and a run the live path stopped with exit 11. A run folder of any registered row is
+accepted. The folder must hold the whole chain: the first two stages, and the third exactly when the
 second printed a resume line. A run in which a stage did not run (a crash, an interrupt or a harness error
 after the first call) is refused with exit 11, nothing is created and no destination name is used up, as is a
 stage that did not finish cleanly.

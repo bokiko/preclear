@@ -13,8 +13,12 @@ Run it as python3 -E -s -B pc_matrix.py, never with -I, because the pc_ modules 
                             process of any kind and write nothing
     --claude PATH           the absolute path of the claude executable (D-13); it feeds the
                             preflight, the argument vector and the binary scan from one path
-    --budget AMOUNT         the most the caller allows a real run to cost; it must be at least the
-                            worst case the plan prints, or the run is refused with exit 18
+    --budget AMOUNT         the most the caller allows one invocation to cost (at most 25.00, at most
+                            two decimals); it must be at least the largest single worst case among the
+                            selected rows, or the run is refused with exit 18. Before each row the driver
+                            adds the settled spend of the rows already finished in this invocation to the
+                            next row's worst case and stops with exit 18 when that is above the budget,
+                            leaving the finished rows filed
     --campaign LABEL        name the dated folder rerun-<date>-<model>-<LABEL> and scope every ledger
                             identity and run folder with the label (one lowercase id, at most 24
                             characters, no part a1 to a9)
@@ -85,9 +89,10 @@ MESSAGE_USAGE = "invalid command line"
 MESSAGE_UNKNOWN_ROW = "unknown row id"
 MESSAGE_UNKNOWN_LAYOUT = "unknown layout name"
 MESSAGE_NOT_IMPLEMENTED = "that entry is not implemented in this phase"
-MESSAGE_NEEDS_BUDGET = "a real run needs --budget at least the worst case printed above"
+MESSAGE_NEEDS_BUDGET = "a real run needs --budget at least the largest worst case printed above"
 MESSAGE_BAD_BUDGET = "the budget is not an amount like 2.00 within the allowed range"
-MESSAGE_SHORT_BUDGET = "the budget is below the worst case printed above"
+MESSAGE_SHORT_BUDGET = "the budget is below the largest worst case printed above"
+MESSAGE_BUDGET_STOP = "the next row's worst case would take this invocation past the budget; no later row was started"
 MESSAGE_NOTHING_TO_RUN = "no implemented row was selected, so nothing was run"
 MESSAGE_UNKNOWN_STAGE = "unknown stage key"
 MESSAGE_NOT_ATTEMPTED = "that stage has not been attempted"
@@ -223,9 +228,14 @@ def list_lines(registry: Sequence[pc_rows.RowSpec]) -> List[str]:
     return lines
 
 
-def _allowlist_size() -> int:
-    tools = pc_flags.build_allowed_tools(ALLOWLIST_ROLE_WRAPPER, pc_flags.MODEL_FACING_WRAPPER_VERBS)
-    return len(tools)
+def _allowlist_size(row: pc_rows.RowSpec) -> Optional[int]:
+    """The number of --allowedTools rules of the row's own profile, built through pc_flags; None for an unknown profile."""
+    import pc_row1  # imported late: pc_row1 imports this module's siblings
+
+    try:
+        return len(pc_row1.allowed_tools(row.tools_profile, ALLOWLIST_ROLE_WRAPPER))
+    except ValueError:
+        return None
 
 
 def _stage_words(row: pc_rows.RowSpec, stage: pc_rows.StageSpec) -> str:
@@ -250,7 +260,8 @@ def plan_lines(
     for stage in row.stages:
         lines.append("  %s: %s" % (stage.name, _stage_words(row, stage)))
     lines.append("worst case %s USD" % _money_up(pc_rows.worst_case(row)))
-    lines.append("allowlist %d rules" % _allowlist_size())
+    size = _allowlist_size(row)
+    lines.append("allowlist %d rules" % size if size is not None else "allowlist unknown profile")
     lines.append("model %s" % model)
     lines.append("destination tests/evidence/%s" % pc_rows.evidence_folder_name(evidence_date, model, campaign))
     if attempt > 1:
@@ -336,6 +347,14 @@ def _total_worst_case(chosen: Sequence[pc_rows.RowSpec]) -> Decimal:
     for entry in chosen:
         total += pc_rows.worst_case(entry)
     return total
+
+
+def _largest_worst_case(chosen: Sequence[pc_rows.RowSpec]) -> Decimal:
+    """The largest single worst case among the selected rows: the least an invocation budget may be."""
+    largest = Decimal("0")
+    for entry in chosen:
+        largest = max(largest, pc_rows.worst_case(entry))
+    return largest
 
 
 # ---------------------------------------------------------------------------------------------
@@ -479,9 +498,13 @@ def check_stub(repo_root: str, env: Optional[Mapping[str, str]] = None) -> GateR
 
 
 def _check_budget(text: str, needed: Decimal, err: TextIO) -> Tuple[Optional[Decimal], int]:
-    """Return (amount, 0) when the budget is well formed and covers the worst case, else (None, 18)."""
+    """Return (amount, 0) when the invocation budget is well formed and covers the largest single worst case.
+
+    The amount is parsed by pc_flags.format_invocation_budget (at most two decimals, at most 25.00); anything else
+    is (None, 18), and so is an amount below needed. The text is never echoed.
+    """
     try:
-        amount = Decimal(pc_flags.format_budget(text))
+        amount = Decimal(pc_flags.format_invocation_budget(text))
     except ValueError:
         return None, _refuse(err, MESSAGE_BAD_BUDGET, pc_exitcodes.BUDGET_REFUSED)
     if amount < needed:
@@ -912,16 +935,25 @@ def _run_rows(
     invocation: _Invocation,
     out: TextIO,
     err: TextIO,
+    budget: Optional[Decimal] = None,
 ) -> int:
     """Run the selected rows in order and return the invocation's exit code.
 
     A skipped row is filed as a SKIPPED label and recorded as exit 10; a row whose runner returns 10, 11 or 19 does
     not stop the loop; any other non-zero code (a filing failure or a refusal, 14 to 18) ends the invocation at
-    once and later rows are not started. After the loop one line per handled row and the counts are printed.
+    once and later rows are not started. Before each row that will run, the spend settled by the rows already
+    finished in this invocation plus that row's worst case must not exceed the budget: when it does, the loop stops
+    with exit 18 and a fixed line, the finished rows stay filed and the rest are counted as not started. After the
+    loop one line per handled row and the counts are printed. The arithmetic is exact Decimal.
     """
     outcomes: List[Tuple[pc_rows.RowSpec, int, Decimal]] = []
     ending: Optional[int] = None
+    settled = Decimal("0")
     for entry in chosen:
+        if entry.row_id not in skipped and budget is not None and settled + pc_rows.worst_case(entry) > budget:
+            _write(err, "%s: %s\n" % (PROG, MESSAGE_BUDGET_STOP))
+            ending = pc_exitcodes.BUDGET_REFUSED
+            break
         if entry.row_id in skipped:
             code = _file_skipped(
                 entry,
@@ -940,6 +972,7 @@ def _run_rows(
             code, spent = pc_exitcodes.PREFLIGHT_FAIL, Decimal("0")
         else:
             code, spent = _execute(entry, ctx, out, err)
+        settled += spent
         outcomes.append((entry, code, spent))
         if code != pc_exitcodes.OK and code not in CONTINUE_CODES:
             ending = code
@@ -1127,13 +1160,14 @@ def main(
     evidence_date = args.evidence_date if args.evidence_date is not None else now.strftime("%Y-%m-%d")
     matrix_scope = bool(args.all_rows and args.campaign is None)
     _print_plans(args, entries, chosen, evidence_date, out, attempt)
-    needed = _total_worst_case(chosen)
+    needed = _largest_worst_case(chosen)
 
     if args.dry_run:
         if args.budget is not None:
             amount, code = _check_budget(args.budget, needed, err)
             if amount is None:
                 return code
+            _write(out, "budget %s USD for this invocation\n" % format(amount, "f"))
         return _run_gates(chosen, root, source, now_of, entries, out, args.campaign, evidence_date, attempt)
 
     if attempt > 1:
@@ -1153,7 +1187,7 @@ def main(
 
     if args.budget is None:
         return _refuse(err, MESSAGE_NEEDS_BUDGET, pc_exitcodes.BUDGET_REFUSED)
-    amount, code = _check_budget(args.budget, _total_worst_case(runnable), err)
+    amount, code = _check_budget(args.budget, needed, err)
     if amount is None:
         return code
 
@@ -1192,7 +1226,7 @@ def main(
         attempt=attempt,
         matrix=matrix_scope,
     )
-    return _run_rows(chosen, skipped, ctx, invocation, out, err)
+    return _run_rows(chosen, skipped, ctx, invocation, out, err, amount)
 
 
 if __name__ == "__main__":
