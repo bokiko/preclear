@@ -172,7 +172,7 @@ class FilingTests(unittest.TestCase):
         world = World()
         self.assertEqual(world.code, 0, world.text)
         self.assertTrue(os.path.isdir(world.destination), "the evidence folder was created")
-        self.assertTrue(os.path.isfile(os.path.join(world.destination, "README.md")), "the folder README is filed")
+        self.assertEqual(os.listdir(world.destination), [ROW1], "the dated folder holds only the row folder")
         self.assertTrue(os.path.isdir(world.row_dir), "the row folder is filed")
         for name in ("README.md", "usage.txt", "model-id.txt"):
             self.assertTrue(os.path.isfile(os.path.join(world.row_dir, name)), "row folder holds " + name)
@@ -214,7 +214,7 @@ class FilingTests(unittest.TestCase):
     def test_an_existing_destination_still_stops_the_row_before_any_ledger_line(self) -> None:
         rig = pc_testutil.RowRig()
         ctx = rig.context()
-        os.makedirs(ctx.destination)
+        os.makedirs(os.path.join(ctx.destination, ROW1))
         outcome = row1().run_row(ctx)
         self.assertEqual(outcome.code, pc_exitcodes.PROMOTE_REFUSED, "\n".join(outcome.lines))
         import pc_spend
@@ -877,7 +877,6 @@ class VocabularyTests(unittest.TestCase):
         filed = default_filed()
         names = self.authored(filed)
         self.assertGreater(len(names), 10, "the scan covers many files")
-        self.assertIn("README.md", names, "the folder README is scanned")
         self.assertIn(ROW1 + "/README.md", names, "the row README is scanned")
         pattern = verdict_pattern()
         for name in names:
@@ -966,7 +965,10 @@ class FolderReadmeTests(unittest.TestCase):
         import pc_flags
 
         filed = default_filed()
-        text = read_text(os.path.join(filed.run.destination, "README.md"))
+        # The folder README is no longer part of the filing (a row is filed as its own folder inside the dated
+        # folder); the renderer stays defined for the step that closes a dated folder, so it is rendered here.
+        data = evidence().load_stage_data(filed.run.run_root)
+        text = evidence().render_folder_readme(filed.run.file_context(filed.sanitizer), data).decode("utf-8")
         usage = filed.read("usage.txt")
         row_total = [line for line in usage.splitlines() if line.startswith("row total: ")][0][len("row total: "):]
         run_total = [line for line in usage.splitlines() if line.startswith("run total: ")][0][len("run total: "):]

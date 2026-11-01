@@ -228,9 +228,10 @@ a dry run, then one row.
   turn limit and cap of each stage, the worst case, the size of the allowlist, the model and the
   evidence folder name. It starts no process of any kind, creates no folder and writes no ledger
   line, and it needs no `claude`.
-- Only row 1 is implemented in this phase. The other rows and the three layouts are listed and
-  refused with exit 2, and so is any id that is not an exact, whole match of a listed one (a
-  prefix, another case, an empty value). The refusal text is fixed and never repeats the value.
+- The implemented entries are the ones `--list` marks `yes`; a row is defined by its registry entry
+  alone, so a new row is one more entry. An entry that is only listed (`no`) is refused with
+  exit 2, and so is any id that is not an exact, whole match of a listed one (a prefix, another
+  case, an empty value). The refusal text is fixed and never repeats the value.
 - `--claude PATH` names the Claude Code executable to use, by its absolute path. The same path
   feeds the preflight, the argument vector and the scan of the binary, so a tested build that is
   not first on `PATH` can be selected without changing anything else. It is accepted and unused in
@@ -484,16 +485,18 @@ last step. The run root is read as it is on disk, one staged tree is rendered, e
 sanitizer that was built before any spend, the whole tree is scanned by the leak gate with the sanitizer's
 deny entries, and promote creates the new folder `tests/evidence/rerun-<date>-<model>` exclusively and once.
 A folder that already exists is refused with exit 17 and is never reused; a refusal by the sanitizer (exit 15)
-or by the gate (exit 14) files nothing. Nothing under `tests/evidence` is ever overwritten or removed.
+or by the gate (exit 14) files nothing. Each row is filed into its own folder inside the dated folder: the staged
+tree holds only the row folder, promote creates `<dated folder>/<row id>`, and an existing row folder is refused
+with exit 17 while an existing dated folder is not, so two different rows share one dated folder. The driver's
+claude-free gate still refuses to start on a dated folder that already exists. Nothing under `tests/evidence` is
+ever overwritten or removed.
 Filing, live or by `--refile`, is also refused with exit 11 when any stage record shows a problem or an
 isolation assertion that did not hold (a stage that did not finish cleanly), and nothing at all is created;
 it is refused with exit 15 when the sanitizer's deny entries were not built. Promote itself raises when it is
 not given the deny entries unless its caller opts into the default ones, which only its command line does.
 
-The folder holds a README and one folder per row. The README labels the run a new baseline on the pinned model
-and build, quotes the row total and the run total from the usage file, says the run is not a replication of
-the 2026-10-20 run (that run recorded no model), lists what differs and says the committed folder stays the
-reference. A row folder holds the same files as the committed row 1 folder (configuration, allowlist, digests,
+The dated folder holds one folder per row; filing a row writes only its row folder and no folder-level README.
+A row folder holds the same files as the committed row 1 folder (configuration, allowlist, digests,
 the prompts, the short and full traces, the measurements, the wrapper log and one snapshot folder per stage),
 plus the files of this harness: the provenance files (Claude Code version, model id, isolation mode, harness
 version, settings), the usage per stage with each call's own cost and the row total, the mechanical checks, the
@@ -592,6 +595,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_row1.py` - row 1: the seed, the snapshots, the three-stage chain and the init and instruction-audit assertions
+- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
@@ -623,6 +627,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_readme.py` - keeps this guide equal to the code
 - `test_row1_assertions.py` - tests for the init manifest and instruction-audit assertions of a row run
 - `test_row1_seed.py` - tests for the row 1 seed, the snapshots and the first stage
+- `test_row_generic.py` - tests for a row run from its registry entry: row 4a, the seed byte-tie, per-row filing and the row 1 parity
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
 - `test_selftest_shim.py` - tests for the `selftest` shim with a tripwire claude
