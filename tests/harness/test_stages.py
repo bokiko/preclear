@@ -393,7 +393,7 @@ class PreSpendTests(unittest.TestCase):
     def test_an_existing_destination_is_17_before_any_run_root_or_ledger_line(self) -> None:
         rig = pc_testutil.RowRig(stages=default_stages())
         ctx = rig.context()
-        os.makedirs(ctx.destination)
+        os.makedirs(os.path.join(ctx.destination, ROW1))
         outcome = row1().run_row(ctx)
         self.assertEqual(outcome.code, pc_exitcodes.PROMOTE_REFUSED)
         self.assertFalse(os.path.exists(self.ledger_file(ctx)))
@@ -404,7 +404,8 @@ class PreSpendTests(unittest.TestCase):
     def test_a_dangling_symlink_destination_is_also_17(self) -> None:
         rig = pc_testutil.RowRig(stages=default_stages())
         ctx = rig.context()
-        os.symlink(os.path.join(rig.base, "no-such-target"), ctx.destination)
+        os.makedirs(ctx.destination)
+        os.symlink(os.path.join(rig.base, "no-such-target"), os.path.join(ctx.destination, ROW1))
         self.assertEqual(row1().run_row(ctx).code, pc_exitcodes.PROMOTE_REFUSED)
         self.assertEqual(rig.calls(), [])
 

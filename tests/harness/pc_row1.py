@@ -832,7 +832,6 @@ def caller_map(paths: Mapping[str, Optional[str]], runs_root: str) -> Dict[str, 
 # The chain
 # ---------------------------------------------------------------------------------------------
 
-MESSAGE_DESTINATION = "REFUSED: the evidence folder already exists; a folder is never reused"
 MESSAGE_ROW_FOLDER = "REFUSED: the row folder already exists; a row folder is never reused"
 MESSAGE_SANITIZER = "FAIL: the sanitizer or the deny entries could not be built; nothing was spent"
 _STOP_TEXT = {
@@ -923,17 +922,17 @@ def finish(
     ctx: pc_rows.RunContext,
     paths: Mapping[str, Optional[str]],
     results: Sequence[StageResult],
-    entry: Optional[pc_rows.RowSpec] = None,
+    entry: pc_rows.RowSpec,
 ) -> pc_rows.RowOutcome:
     """Close a completed chain: the mechanical checks, one fixed line per stage, the filing and the row total.
 
     A breach found by the checks ends the row with 11 and prints counts only. When the checks find none, the row
-    is filed through pc_evidence.file_row, the last step; a refusal of the filing is its exit code and its fixed
-    lines (nothing more is printed), and the raw files stay in the run root for a zero-token refile.
+    is filed through pc_evidence.file_row with its registry entry, the last step; a refusal of the filing is its
+    exit code and its fixed lines (nothing more is printed), and the raw files stay in the run root for a
+    zero-token refile.
 
-    With the registry entry of the row, the line `stage <name>: not run (NO-RESUME-LINE)` is printed for each stage
-    of kind resume that did not run, so a spec without such a stage prints none, and the filing reads the entry.
-    Without an entry the row 1 behaviour of Phase 3 is kept.
+    The line `stage <name>: not run (NO-RESUME-LINE)` is printed for each stage of kind resume that did not run,
+    so a spec without such a stage prints none.
     """
     blocked = breach_outcome(ctx, paths)
     if blocked is not None:
@@ -951,16 +950,11 @@ def finish(
                 _cost_text(result.cumulative) or "unknown",
             )
         )
-    if entry is None:
-        if len(results) == 2:
-            lines.append("stage s3: not run (%s)" % MARKER_NONE)
-        filed = pc_evidence.file_row(ctx, str(paths["run_root"]))
-    else:
-        ran = frozenset(result.name for result in results)
-        for stage in entry.stages:
-            if stage.kind == "resume" and stage.name not in ran:
-                lines.append("stage %s: not run (%s)" % (stage.name, MARKER_NONE))
-        filed = pc_evidence.file_row(ctx, str(paths["run_root"]), spec=entry)
+    ran = frozenset(result.name for result in results)
+    for stage in entry.stages:
+        if stage.kind == "resume" and stage.name not in ran:
+            lines.append("stage %s: not run (%s)" % (stage.name, MARKER_NONE))
+    filed = pc_evidence.file_row(ctx, str(paths["run_root"]), spec=entry)
     if filed.code != pc_exitcodes.OK:
         return filed
     lines.extend(filed.lines)
@@ -973,70 +967,14 @@ def finish(
 
 
 def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> pc_rows.RowOutcome:
-    """Run row 1: refusals first, then seed, snapshot 0 and the stage chain (D-01, D-02, D-12, D-14).
+    """Run row 1: the registered chain of the row 1 entry (D-01, D-02, D-12, D-14).
 
-    Order before any ledger line: an existing destination (17, nothing created), the run root (a taken name
-    raises RunRootCollision, the driver's 16), the sanitizer and the deny entries (15, review WR-12), the
-    readable ledger, the seed and the version control tool. Then s1 with a fresh session, s2 resumed on that
-    session and s3 in a second fresh session whose prompt is the resume line, only when s2 printed one. The
-    chain stops at the first stage that is not a clean success.
+    A thin wrapper over run_registered_row; its signature and its return type are the Phase 3 ones. The order
+    of refusals, the stage walk and the filing are described there: an existing row folder (17, nothing created),
+    the run root, the sanitizer and the deny entries (15), the readable ledger, the seed, then s1, s2 resumed on
+    that session and s3 in a second fresh session whose prompt is the resume line, only when s2 printed one.
     """
-    if os.path.lexists(ctx.destination):
-        return pc_rows.RowOutcome(pc_exitcodes.PROMOTE_REFUSED, (MESSAGE_DESTINATION,))
-    run_name = "%s-%s" % (ROW_ID, _utc_now().strftime("%Y%m%dT%H%M%SZ"))
-    pc_spike.ensure_runs_root(ctx.runs_root)
-    run_root = pc_runroot.allocate_run_root(ctx.runs_root, run_name)
-    provisional = {"run_root": run_root, "auto_memory": os.path.join(run_root, "auto-memory")}
-    try:
-        sanitizer = pc_sanitize.Sanitizer.from_machine(ctx.repo_root, caller_map(provisional, ctx.runs_root))
-        deny_entries = sanitizer.deny_entries()
-    except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
-        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
-    ctx = ctx._replace(run_root=run_root, sanitizer=sanitizer, deny_entries=deny_entries)
-    pc_spend.read_records(ctx.harness_home)
-    vcs = _git_executable(ctx.env)
-    session = str(uuid.uuid4())
-    paths = seed_row1(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
-    take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
-    ctx = ctx._replace(setup_pin=pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs, None))
-    pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
-    entry =pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
-    if entry is None:
-        raise pc_spike.SpikeError("the row is not in the registry")
-    s1_prompt, s2_prompt = read_stage_prompts(ctx.repo_root, str(paths["ledger_a"]))
-
-    results: List[StageResult] = []
-    resume_line = ""
-    scan = BinaryScan(str(ctx.claude))
-    for stage in entry.stages:
-        timeout = timeout_override if timeout_override is not None else stage.timeout
-        boundary = results[-1].hooklog_lines if results else 0
-        if stage.kind == "work":
-            result = run_stage(ctx, paths, stage, session, s1_prompt, False, None, timeout, boundary, scan)
-        elif stage.kind == "preclear":
-            result = run_stage(
-                ctx, paths, stage, session, s2_prompt, True, results[-1].cumulative, timeout, boundary, scan
-            )
-        else:
-            if not resume_line:
-                break
-            second = str(uuid.uuid4())
-            while second == session:
-                second = str(uuid.uuid4())
-            result = run_stage(ctx, paths, stage, second, resume_line, False, None, timeout, boundary, scan)
-        results.append(result)
-        blocked = breach_outcome(ctx, paths)
-        if blocked is not None:
-            extra = () if result.ok else _stopped(stage.name, result.problem).lines
-            return pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra))
-        if not result.ok:
-            return _stopped(stage.name, result.problem)
-        if result.evaluation is not None and result.evaluation.status != STATUS_PASS:
-            return _isolation_stop(stage.name, result.evaluation)
-        if stage.kind == "preclear":
-            resume_line = extract_resume_line(_result_text(result))
-            _write_chain(paths, resume_line)
-    return finish(ctx, paths, results)
+    return run_registered_row(ctx, ROW_ID, timeout_override)
 
 
 # ---------------------------------------------------------------------------------------------

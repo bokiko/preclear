@@ -560,6 +560,118 @@ class FilingTests(unittest.TestCase):
         self.assertEqual(evidence_tree(run.ctx.destination), before)
 
 
+def verdict_pattern():
+    """The words no harness-authored file may hold, assembled from fragments at run time."""
+    words = (
+        "pa" + "ss", "pa" + "ssed", "fa" + "il", "fa" + "iled", "fail" + "ure", "acc" + "ept", "acc" + "epted",
+        "ver" + "dict",
+    )
+    return re.compile(r"\b(?:%s)\b" % "|".join(words), re.IGNORECASE)
+
+
+def parity_stages():
+    """The default row 1 scripts without the auto-memory write: the committed baseline filed no memory file."""
+    stages = pc_testutil.default_row_stages(spec_of(ROW1))
+    stages[1]["ops"] = [op for op in stages[1]["ops"] if "$AUTOMEM" not in json.dumps(op)]
+    return stages
+
+
+class VocabularyTests(unittest.TestCase):
+    def authored(self, run: Registered) -> list:
+        names = []
+        for dirpath, _dirnames, filenames in os.walk(run.ctx.destination):
+            for name in filenames:
+                names.append(os.path.relpath(os.path.join(dirpath, name), run.ctx.destination).replace(os.sep, "/"))
+        return evidence().harness_authored_names(sorted(names))
+
+    def test_no_harness_authored_file_of_a_registered_row_holds_a_verdict_word(self) -> None:
+        pattern = verdict_pattern()
+        for row_id in (ROW4A, ROW1):
+            run = Registered(row_id)
+            self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+            names = self.authored(run)
+            self.assertIn(row_id + "/README.md", names, "the row README is scanned")
+            self.assertIn(row_id + "/usage.txt", names, "a provenance file is scanned")
+            self.assertGreater(len(names), 8, "the scan covers many files")
+            count = 0
+            for name in names:
+                text = read_text(os.path.join(run.ctx.destination, name))
+                count += text.count(VERDICT_LINE)
+                if name == row_id + "/README.md":
+                    self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"), "the line closes the row README")
+                    text = text[: -len(VERDICT_LINE) - 1]
+                self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+            self.assertEqual(count, 1, "the closing line occurs once in " + row_id)
+
+    def test_the_authored_names_cover_any_registered_row_id(self) -> None:
+        names = []
+        ids = [entry.row_id for entry in rows().build_registry()]
+        for row_id in ids:
+            names.append(row_id + "/README.md")
+            names.append(row_id + "/snap-0-setup/ledgers-ls.txt")
+            names.append(row_id + "/s1-work.out")
+        names.append("not-a-registered-row/README.md")
+        picked = evidence().harness_authored_names(names)
+        for row_id in ids:
+            self.assertIn(row_id + "/README.md", picked)
+            self.assertIn(row_id + "/snap-0-setup/ledgers-ls.txt", picked)
+            self.assertNotIn(row_id + "/s1-work.out", picked, "a model reply is outside the scan")
+        self.assertNotIn("not-a-registered-row/README.md", picked)
+
+
+class Row1ParityTests(unittest.TestCase):
+    def test_the_registry_entry_of_row_1_carries_what_the_engine_reads(self) -> None:
+        spec = spec_of(ROW1)
+        self.assertEqual([name for name, _path in spec.prompts], ["s1", "s2"])
+        self.assertIsNotNone(spec.seed)
+        self.assertTrue(callable(spec.runner), "row 1 has the lazy runner too")
+        self.assertTrue(spec.setup_text.startswith("Setup: "))
+        self.assertEqual(spec.tools_profile, rows().PROFILE_HELPER)
+
+    def test_run_row_is_a_thin_wrapper_over_the_registered_chain_of_row_1(self) -> None:
+        marker = object()
+        with mock.patch.object(row1(), "run_registered_row", return_value=marker) as fake:
+            self.assertIs(row1().run_row("ctx", 5), marker)
+        fake.assert_called_once_with("ctx", ROW1, 5)
+
+    def test_the_filed_names_equal_the_committed_baseline_names_none_added_none_missing(self) -> None:
+        run = Registered(ROW1, stages=parity_stages())
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        filed = set(tree_names(run.row_dir))
+        committed = set(tree_names(os.path.join(BASELINE, ROW1)))
+        self.assertGreater(len(committed), 30, "the baseline row folder was read")
+        self.assertEqual(
+            (sorted(filed - committed), sorted(committed - filed)),
+            ([], []),
+            "names added by the filing, then names missing from it",
+        )
+        self.assertEqual(os.listdir(run.ctx.destination), [ROW1], "only the row folder is filed")
+
+    def test_a_row_1_chain_with_no_resume_line_prints_the_stage_three_line_and_files_two_stages(self) -> None:
+        stages = with_result_text(pc_testutil.default_row_stages(spec_of(ROW1)), 1, "Nothing to resume.")
+        run = Registered(ROW1, stages=stages)
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        self.assertIn("stage s3: not run (%s)" % row1().MARKER_NONE, run.outcome.lines)
+        self.assertEqual(len(run.rig.calls()), 2)
+        names = tree_names(run.row_dir)
+        self.assertNotIn("s3-resume.exit", names)
+        self.assertEqual(read_text(os.path.join(run.row_dir, "resume-line.txt")), "NO-RESUME-LINE\n")
+
+    def test_a_row_1_chain_with_a_resume_line_runs_three_stages_in_two_sessions(self) -> None:
+        run = Registered(ROW1)
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        calls = [call["args"] for call in run.rig.calls()]
+        self.assertEqual(len(calls), 3)
+        first, second, third = calls
+        session = read_json(run.raw("run.json"))["session_id"]
+        self.assertEqual(first[first.index("--session-id") + 1], session)
+        self.assertEqual(second[second.index("--resume") + 1], session)
+        fresh = third[third.index("--session-id") + 1]
+        self.assertNotEqual(fresh, session)
+        self.assertNotIn("stage s3: not run (%s)" % row1().MARKER_NONE, run.outcome.lines)
+        self.assertEqual(read_json(run.raw("run.json"))["bound_ledger"], "B")
+
+
 def evidence_tree(root: str) -> dict:
     found = {}
     for dirpath, _dirnames, filenames in os.walk(root):

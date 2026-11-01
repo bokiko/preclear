@@ -16,9 +16,9 @@ A value that could not be measured is written UNCONFIRMED and never left blank.
 
 A row is described by its registry entry (pc_rows.RowSpec): the row folder name, the stage file labels, the Setup
 paragraph, the allowlist profile and the chain-complete rule are read from the entry, so no renderer names a row.
-file_row with an entry stages only the row folder and promotes it to <dated folder>/<row id>; an existing row
-folder is refused with 17 and an existing dated folder is not, so two rows share one dated folder. Without an
-entry file_row keeps the Phase 3 shape (a dated folder with a folder README) until row 1 moves onto the entry.
+file_row stages only the row folder and promotes it to <dated folder>/<row id>; an existing row folder is refused
+with 17 and an existing dated folder is not, so two rows share one dated folder. The folder-level README is no
+longer part of the filing: render_folder_readme stays defined for the step that closes a dated folder.
 
 Renderers are pure functions over data read from the run root; they write nothing. Messages are fixed text with
 counts, ids and rule labels only, never a path, a host name or the login. Standard library only, Python 3.9 floor.
@@ -1165,17 +1165,14 @@ def collect_files(
 ) -> Dict[str, bytes]:
     """Every file to stage, keyed by its path relative to the stage folder.
 
-    With the registry entry the staged tree holds only the row folder (named by the entry's id) and the stage file
-    labels, the Setup paragraph and the allowlist come from the entry. Without one the Phase 3 shape is kept: a
-    folder-level README beside the row folder.
+    The staged tree holds only the row folder, named by the entry's id; the stage file labels, the Setup paragraph
+    and the allowlist come from the entry (the one the run record names when none is passed).
     """
     row = spec if spec is not None else _spec_of_run(data)
     folder = row.row_id
     clean: Callable[[str], str] = ctx.sanitizer.sanitize_text
     paths = data.paths
     files: Dict[str, bytes] = {}
-    if spec is None:
-        files["README.md"] = render_folder_readme(ctx, data)
 
     def put(name: str, content: bytes) -> None:
         files[folder + "/" + name] = content
@@ -1268,35 +1265,35 @@ def file_row(
 ) -> pc_rows.RowOutcome:
     """Stage, sanitize, gate and promote the finished run in run_root into the evidence folder.
 
-    With the registry entry of the row (spec) the staged tree holds only the row folder and it is promoted to
-    ctx.destination joined with the entry's id: the dated folder may already exist and holds other rows, a row
-    folder that exists is refused with 17. The entry must be the one the run record names, or nothing is filed.
-    Without an entry the whole staged tree, folder README included, is promoted to ctx.destination, which then
-    must not exist (the Phase 3 shape).
+    The staged tree holds only the row folder and it is promoted to ctx.destination joined with the row's id: the
+    dated folder may already exist and hold other rows, a row folder that exists is refused with 17. The row is
+    the one the run record names, matched exactly against the registry; an entry passed as spec must be that
+    same row, or nothing is filed.
 
     The sanitizer and the deny entries are the ones the row built before spend (ctx.sanitizer, ctx.deny_entries);
     promote is always called with both the deny entries and the config folder (review WR-14), and a context
     without the deny entries is refused with 15 before anything is read or made (WR-03). A breach found by the
     checks, or a stage that did not finish cleanly (a problem or a failed isolation assertion in its record),
     files nothing (exit 11), and so does a chain that stopped early (_unfileable); a sanitizer error is 15, a gate
-    refusal 14, a taken destination 17.
+    refusal 14, a taken row folder 17.
     """
     if ctx.deny_entries is None:
         return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))
     try:
         data = load_stage_data(run_root)
-        found = dict(facts) if facts is not None else pc_checks.compute_facts(run_root, ctx.config_dir)
-        if spec is not None and data.run.get("row") != spec.row_id:
+        entry = _spec_of_run(data)
+        if spec is not None and spec.row_id != entry.row_id:
             raise EvidenceError("the run record names another row")
+        found = dict(facts) if facts is not None else pc_checks.compute_facts(run_root, ctx.config_dir)
     except (EvidenceError, pc_checks.CheckError):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_UNREADABLE,))
     if pc_checks.breaches(found):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_BREACH,))
-    problem = _unfileable(data, spec)
+    problem = _unfileable(data, entry)
     if problem is not None:
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (problem,))
     try:
-        files = collect_files(ctx, data, found, spec)
+        files = collect_files(ctx, data, found, entry)
     except (EvidenceError, OSError, KeyError, ValueError):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_UNREADABLE,))
     except pc_sanitize.SanitizerError:
@@ -1311,12 +1308,14 @@ def file_row(
         return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
     except OSError:
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STAGING,))
-    if spec is None:
-        source, target = stage, ctx.destination
-    else:
-        source, target = os.path.join(stage, spec.row_id), os.path.join(ctx.destination, spec.row_id)
-    result = pc_promote.promote(source, target, ctx.repo_root, config_dir=ctx.config_dir, deny_entries=ctx.deny_entries)
-    return _outcome(result, ctx.destination, count, None if spec is None else spec.row_id)
+    result = pc_promote.promote(
+        os.path.join(stage, entry.row_id),
+        os.path.join(ctx.destination, entry.row_id),
+        ctx.repo_root,
+        config_dir=ctx.config_dir,
+        deny_entries=ctx.deny_entries,
+    )
+    return _outcome(result, ctx.destination, count, entry.row_id)
 
 
 # ---------------------------------------------------------------------------------------------

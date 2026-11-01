@@ -156,6 +156,11 @@ _ROW1_SOURCES: Tuple[Tuple[str, str], ...] = _COMMON_SOURCES + (
     (_PLAN_DATA, "file"),
 )
 
+_ROW1_PROMPTS: Tuple[Tuple[str, str], ...] = (
+    ("s1", _S1_PROMPT),
+    ("s2", _PUBLICATION + "/s2-preclear-prompt.md"),
+)
+
 # Row 4a (unknown backend): the committed two stages, one ledger bound to the session, no between-stage hook.
 _ROW4A_STAGES: Tuple[StageSpec, ...] = (
     StageSpec("s1", WORK_TURN, "work", 15, Decimal("0.30"), 900, "new:A"),
@@ -213,9 +218,12 @@ def _registered_rows() -> Dict[str, RowSpec]:
             _ROW1_STAGES,
             True,
             None,
-            "pc_row1:run_row",
+            _lazy_runner(ROW1),
             _ROW1_SOURCES,
+            seed="pc_rowseeds:seed_row1",
+            prompts=_ROW1_PROMPTS,
             setup_text=_ROW1_SETUP_TEXT,
+            tools_profile=PROFILE_HELPER,
         ),
         ROW4A: RowSpec(
             ROW4A,
