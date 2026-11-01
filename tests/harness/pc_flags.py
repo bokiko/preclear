@@ -111,6 +111,7 @@ _ENV_ALLOW_LIST = (
 )
 
 _MAX_BUDGET = Decimal("5.00")
+INVOCATION_BUDGET_MAX = Decimal("25.00")  # the most a driver invocation may be allowed to cost (plan 04-02)
 _BUDGET_TEXT = re.compile(r"[0-9]+(?:\.[0-9]{1,2})?\Z")
 _BANNER = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+) \(Claude Code\)\n?\Z")
 
@@ -253,30 +254,47 @@ def render_flag_table_markdown() -> str:
     return "\n".join(lines) + "\n"
 
 
-def format_budget(value: Any) -> str:
-    """Return value as text with exactly two decimals, or raise ValueError (D-04).
+def _format_amount(value: Any, ceiling: Decimal, what: str) -> str:
+    """Return value as text with exactly two decimals, or raise ValueError; the one parser behind both budgets.
 
-    Only str and Decimal are accepted: floats, ints and bools are refused. The value must be
-    above zero, at most 5.00 and have at most two decimal places (nothing is ever rounded).
+    Only str and Decimal are accepted: floats, ints and bools are refused. The value must be above zero, at most
+    the ceiling and have at most two decimal places (nothing is ever rounded).
     """
     if isinstance(value, bool) or not isinstance(value, (str, Decimal)):
-        raise ValueError("budget must be a str or Decimal")
+        raise ValueError("%s must be a str or Decimal" % what)
     if isinstance(value, str):
         if _BUDGET_TEXT.match(value) is None:
-            raise ValueError("budget text must be digits with at most two decimals")
+            raise ValueError("%s text must be digits with at most two decimals" % what)
         number = Decimal(value)
     else:
         number = value
         if not number.is_finite():
-            raise ValueError("budget must be a finite number")
+            raise ValueError("%s must be a finite number" % what)
         exponent = number.as_tuple().exponent
         if not isinstance(exponent, int) or exponent < -2:
-            raise ValueError("budget has more than two decimals")
+            raise ValueError("%s has more than two decimals" % what)
     if number <= 0:
-        raise ValueError("budget must be above zero")
-    if number > _MAX_BUDGET:
-        raise ValueError("budget must be at most 5.00")
+        raise ValueError("%s must be above zero" % what)
+    if number > ceiling:
+        raise ValueError("%s must be at most %s" % (what, format(ceiling, "f")))
     return format(number.quantize(Decimal("0.01")), "f")
+
+
+def format_budget(value: Any) -> str:
+    """Return the per-call budget (--max-budget-usd of one claude call) with two decimals, or raise ValueError (D-04).
+
+    Above zero, at most 5.00, at most two decimal places; only str and Decimal are accepted.
+    """
+    return _format_amount(value, _MAX_BUDGET, "budget")
+
+
+def format_invocation_budget(value: Any) -> str:
+    """Return the budget of one driver invocation (--budget) with two decimals, or raise ValueError.
+
+    The same shape rules as format_budget with the higher ceiling INVOCATION_BUDGET_MAX (25.00): a wave of rows
+    needs more than one call's ceiling. format_budget keeps its own ceiling for the per-call flag.
+    """
+    return _format_amount(value, INVOCATION_BUDGET_MAX, "invocation budget")
 
 
 def _require_absolute(path: Any, what: str) -> str:

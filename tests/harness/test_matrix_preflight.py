@@ -199,12 +199,17 @@ class ThreeStateTests(unittest.TestCase):
         self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, out + err)
         self.assertIn("evidence folder is missing", out)
 
-    def test_an_existing_destination_folder_is_refused_with_exit_17(self) -> None:
-        os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION))
+    def test_an_existing_row_folder_in_the_destination_is_refused_with_exit_17(self) -> None:
+        os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION, ROW1))
         code, out, err = self.dry(["--row", ROW1])
         self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
         self.assertIn(DESTINATION, out)
         self.assertNotIn(self.repo, out + err)
+
+    def test_an_existing_dated_folder_alone_is_not_refused(self) -> None:
+        os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION))
+        code, out, err = self.dry(["--row", ROW1])
+        self.assertEqual(code, 0, out + err)
 
     def test_a_dangling_symlink_destination_is_refused_with_exit_17(self) -> None:
         os.symlink(
@@ -270,8 +275,8 @@ class BudgetBoundaryTests(unittest.TestCase):
         self.assertEqual(pc_testutil.read_tripwire(self.bin), [])
         return result
 
-    def test_the_worst_case_and_above_are_accepted_up_to_five(self) -> None:
-        for value in ("2.00", "2.01", "5.00", "2.0", "3", "4.99"):
+    def test_the_worst_case_and_above_are_accepted_up_to_twenty_five(self) -> None:
+        for value in ("2.00", "2.01", "5.00", "5.01", "2.0", "3", "4.99", "25.00", "25"):
             code, out, err = self.budget(value)
             self.assertEqual(code, 0, "a budget at or above the worst case was refused")
 
@@ -280,7 +285,8 @@ class BudgetBoundaryTests(unittest.TestCase):
             "1.99",
             "0",
             "0.00",
-            "5.01",
+            "25.01",
+            "26",
             "2.000",
             "1e1",
             "2e0",
@@ -302,7 +308,7 @@ class BudgetBoundaryTests(unittest.TestCase):
             self.assertEqual(out.count("Traceback"), 0)
 
     def test_a_refused_budget_never_echoes_the_value(self) -> None:
-        for value in ("1.99", "7.77", "bogus-marker-zz"):
+        for value in ("1.99", "77.77", "bogus-marker-zz"):
             code, out, err = self.budget(value)
             self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED)
             self.assertNotIn(value, out + err)

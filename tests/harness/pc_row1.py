@@ -494,11 +494,14 @@ class StageResult(NamedTuple):
     hooklog_lines: int = 0
 
 
-def _row_stage_keys(row_id: str = ROW_ID) -> Tuple[str, ...]:
+def _row_stage_keys(
+    row_id: str = ROW_ID, campaign: Optional[str] = None, attempt: int = 1, matrix: bool = False
+) -> Tuple[str, ...]:
+    """The ledger stage keys of a row under a scope: the allowed-stage tuple the spend ledger checks a launch against."""
     entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
     if entry is None:
         raise pc_spike.SpikeError("the row is not in the registry")
-    return tuple(pc_rows.stage_key(row_id, stage.name) for stage in entry.stages)
+    return tuple(pc_rows.scoped_stage_key(row_id, stage.name, campaign, attempt, matrix) for stage in entry.stages)
 
 
 def _entry_of(row_id: str) -> pc_rows.RowSpec:
@@ -630,9 +633,11 @@ def run_stage(
         str(ctx.claude), session_id, str(paths["settings"]), tools, spec.max_turns, spec.cap, resume=resume, model=ctx.model
     )
     env = pc_flags.build_env(ctx.env, ctx.config_dir, str(paths["ckpt"]))
-    key = pc_rows.stage_key(row.row_id, spec.name)
+    scope = (ctx.campaign, ctx.attempt, ctx.matrix)
+    ledger_row = pc_rows.scoped_row(row.row_id, *scope)
+    key = pc_rows.scoped_stage_key(row.row_id, spec.name, *scope)
     attempt = pc_spend.append_launch(
-        ctx.harness_home, row.row_id, key, spec.cap, ctx.version, _row_stage_keys(row.row_id)
+        ctx.harness_home, ledger_row, key, spec.cap, ctx.version, _row_stage_keys(row.row_id, *scope)
     )
     # The prompt is kept verbatim in raw before the process starts, so a later filing or refile needs nothing from
     # memory. It comes after the reservation: a second launch of a stage is refused by the ledger first.
@@ -668,7 +673,7 @@ def run_stage(
         subtype = summary["subtype"][:64]
     else:
         subtype = "no-result"
-    pc_spend.settle(ctx.harness_home, row.row_id, key, attempt, subtype, delta, cumulative, ctx.version)
+    pc_spend.settle(ctx.harness_home, ledger_row, key, attempt, subtype, delta, cumulative, ctx.version)
 
     problem = _classify(call, events, summary)
     snapshot = snapshot_name(spec)
@@ -1012,15 +1017,59 @@ def _resolve_seed(seed: Any) -> Any:
     raise pc_spike.SpikeError("the row has no usable seed")
 
 
+SCOPE_RECORD = "scope.json"
+
+
+def _write_scope(paths: Mapping[str, Optional[str]], ctx: pc_rows.RunContext) -> None:
+    """Record the campaign, the attempt and the matrix flag of a run whose scope is not the Phase 3 default.
+
+    The record is written in raw before the setup snapshot, so the setup guard holds it and a later refile finds the
+    dated folder and the row folder this run belongs to. A default-scope run writes nothing.
+    """
+    if ctx.campaign is None and ctx.attempt == 1 and not ctx.matrix:
+        return
+    record = {"attempt": ctx.attempt, "campaign": ctx.campaign, "matrix": bool(ctx.matrix)}
+    pc_runroot.write_exclusive(
+        os.path.join(str(paths["raw"]), SCOPE_RECORD),
+        (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        0o600,
+    )
+
+
+def _settled_spend(ctx: pc_rows.RunContext, entry: pc_rows.RowSpec) -> Optional[Decimal]:
+    """What the ledger holds for this row under this scope: a settled attempt counts its delta, an unsettled one its cap."""
+    try:
+        ledger_row = pc_rows.scoped_row(entry.row_id, ctx.campaign, ctx.attempt, ctx.matrix)
+        return pc_spend.row_pessimistic_total(ctx.harness_home, ledger_row)
+    except (pc_spend.SpendError, ValueError):
+        return None
+
+
 def run_registered_row(
+    ctx: pc_rows.RunContext, row_id: str, timeout_override: Optional[int] = None
+) -> pc_rows.RowOutcome:
+    """Run one registered row (see _run_registered_row) and report what it spent in RowOutcome.spent.
+
+    The figure is read from the spend ledger under the row's scoped id once the chain has ended, whatever the
+    outcome: the pessimistic total of the ledger, so a stage that timed out or returned no cost counts its cap.
+    An outcome of a run that never reached the ledger reports zero.
+    """
+    outcome = _run_registered_row(ctx, row_id, timeout_override)
+    entry = _entry_of(row_id)
+    spent = _settled_spend(ctx, entry)
+    return outcome._replace(spent=spent if spent is not None else Decimal("0"))
+
+
+def _run_registered_row(
     ctx: pc_rows.RunContext, row_id: str, timeout_override: Optional[int] = None
 ) -> pc_rows.RowOutcome:
     """Run one registered row from its registry entry alone: refusals first, then seed, snapshot 0 and the chain.
 
     The entry is found by exact registry match before any path is built: an id that is not an implemented
     registry id, with a seed, raises SpikeError and nothing is created. The row folder name is the entry's id,
-    never caller text. Order before any ledger line: an existing row folder under ctx.destination (17, nothing
-    created; an existing dated folder is fine, two rows share it), the run root (a taken name raises
+    never caller text. Order before any ledger line: an existing row folder under ctx.destination (the entry's id,
+    or its id and -attempt-N for an attempt above 1; 17, nothing created; an existing dated folder is fine, two rows
+    share it), the run root (a taken name raises
     RunRootCollision, the driver's 16), the sanitizer and the deny entries (15), the readable ledger, the seed and
     the version control tool.
 
@@ -1035,9 +1084,10 @@ def run_registered_row(
     if entry.seed is None:
         raise pc_spike.SpikeError("the row is not in the registry")
     seed = _resolve_seed(entry.seed)
-    if os.path.lexists(os.path.join(ctx.destination, entry.row_id)):
+    if os.path.lexists(os.path.join(ctx.destination, pc_rows.row_folder_name(entry.row_id, ctx.attempt))):
         return pc_rows.RowOutcome(pc_exitcodes.PROMOTE_REFUSED, (MESSAGE_ROW_FOLDER,))
-    run_name = "%s-%s" % (entry.row_id, _utc_now().strftime("%Y%m%dT%H%M%SZ"))
+    scoped = pc_rows.scoped_row(entry.row_id, ctx.campaign, ctx.attempt, ctx.matrix)
+    run_name = "%s-%s" % (scoped, _utc_now().strftime("%Y%m%dT%H%M%SZ"))
     pc_spike.ensure_runs_root(ctx.runs_root)
     run_root = pc_runroot.allocate_run_root(ctx.runs_root, run_name)
     provisional = {"run_root": run_root, "auto_memory": os.path.join(run_root, "auto-memory")}
@@ -1051,6 +1101,7 @@ def run_registered_row(
     vcs = _git_executable(ctx.env)
     session = str(uuid.uuid4())
     paths = seed(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
+    _write_scope(paths, ctx)
     take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
     ctx = ctx._replace(setup_pin=pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs, None))
     pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)

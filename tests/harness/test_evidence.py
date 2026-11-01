@@ -1014,7 +1014,7 @@ def run_skip(reason: str, precreate: bool = False):
     err = io.StringIO()
     destination = os.path.join(rig.repo, "tests", "evidence", DEST_NAME)
     if precreate:
-        os.makedirs(destination)
+        os.makedirs(os.path.join(destination, "SKIPPED-" + SKIP_ID))
     code = matrix().main(
         ["--row", SKIP_ID, "--claude", rig.claude, "--budget", "2.00"],
         env=dict(rig.env),
@@ -1059,10 +1059,13 @@ class SkippedTests(unittest.TestCase):
         self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, text)
         self.assertEqual(rerun_folders(rig), [], "nothing was created")
 
-    def test_an_existing_destination_is_17_and_a_skip_never_exits_0(self) -> None:
+    def test_an_existing_label_folder_is_17_and_a_skip_never_exits_0(self) -> None:
         rig, code, text, destination = run_skip(FIXED_REASON, precreate=True)
         self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, text)
-        self.assertEqual(os.listdir(destination), [], "the existing folder was not written into")
+        self.assertEqual(os.listdir(destination), ["SKIPPED-" + SKIP_ID], "no other folder was made")
+        self.assertEqual(
+            os.listdir(os.path.join(destination, "SKIPPED-" + SKIP_ID)), [], "the existing folder was not written into"
+        )
         self.assertNotEqual(code, 0, "a skip is never a success")
 
 
