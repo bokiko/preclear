@@ -1145,24 +1145,47 @@ _AUTHORED_ROW_FILES = frozenset(
     ]
 )
 _AUTHORED_LISTINGS = frozenset(["ledgers-ls.txt", "bindings-ls.txt"])
+_AUTHORED_LABEL_FILES = frozenset(["README.md", "stop.txt", "usage.txt", "mechanical-checks.md"])
+_AUTHORED_TOP = re.compile(r"(?:README\.md|digest-table(?:-part-[0-9]+)?\.md|usage-by-row(?:-part-[0-9]+)?\.txt)\Z")
+_ATTEMPT_SUFFIX = re.compile(r"(.+)-attempt-[2-9]\Z")
+
+
+def _folder_kind(part: str, ids: frozenset) -> Optional[str]:
+    """`row` for a row folder (its id, or its id and -attempt-N), `label` for STOPPED-/SKIPPED- of one, else None."""
+    kind = "row"
+    base = part
+    for prefix in (STOPPED_PREFIX, SKIPPED_PREFIX):
+        if part.startswith(prefix):
+            kind, base = "label", part[len(prefix):]
+            break
+    attempt = _ATTEMPT_SUFFIX.match(base)
+    if attempt is not None:
+        base = attempt.group(1)
+    return kind if base in ids else None
 
 
 def harness_authored_names(names: Iterable[str]) -> List[str]:
     """Pick the names (relative to the evidence folder, forward slashes) of files the harness wrote in its own words.
 
     Traces, replies, prompts, ledger and memory copies and stderr come from the model or the process and are not
-    in the set. The verdict-word scan covers exactly these files. A row folder is any registered row id.
+    in the set. The verdict-word scan covers exactly these files: the top-level files the harness writes (README,
+    the digest and usage tables and their part files), the harness-written files of a row folder (any registered
+    row id, with or without -attempt-N) and of a STOPPED or SKIPPED label folder.
     """
     ids = frozenset(entry.row_id for entry in pc_rows.build_registry())
     picked: List[str] = []
     for name in names:
         parts = name.split("/")
         base = parts[-1]
-        if name == "README.md":
+        if len(parts) == 1 and _AUTHORED_TOP.match(name):
             picked.append(name)
-        elif len(parts) == 2 and parts[0] in ids and (base in _AUTHORED_ROW_FILES or base.endswith(".exit")):
-            picked.append(name)
-        elif len(parts) == 3 and parts[0] in ids and parts[1].startswith("snap-") and base in _AUTHORED_LISTINGS:
+        elif len(parts) == 2:
+            kind = _folder_kind(parts[0], ids)
+            if kind == "row" and (base in _AUTHORED_ROW_FILES or base.endswith(".exit")):
+                picked.append(name)
+            elif kind == "label" and (base in _AUTHORED_LABEL_FILES or base.endswith(".exit")):
+                picked.append(name)
+        elif len(parts) == 3 and _folder_kind(parts[0], ids) == "row" and parts[1].startswith("snap-") and base in _AUTHORED_LISTINGS:
             picked.append(name)
     return sorted(picked)
 

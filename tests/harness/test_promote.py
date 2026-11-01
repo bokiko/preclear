@@ -449,5 +449,174 @@ class DenyEntriesRequiredTests(HarnessTestCase):
         self.ok(found >= 2, "the scan saw the production calls")
 
 
+
+# ---------------------------------------------------------------------------
+# promote_into: flat exclusive creates inside an existing evidence folder (plan 04-03; D-14, D-15)
+# ---------------------------------------------------------------------------
+
+
+def make_dated(repo, files=None, name="rerun-2026-10-28-model-x"):
+    """An existing dated folder under tests/evidence, with the given files created in it."""
+    folder = os.path.join(repo, "tests", "evidence", name)
+    os.makedirs(folder)
+    for file_name, data in (files or {}).items():
+        with open(os.path.join(folder, file_name), "xb") as handle:
+            handle.write(data)
+    return folder
+
+
+class PromoteIntoTests(HarnessTestCase):
+    def refused_and_unchanged(self, stage, folder, repo, code=pc_exitcodes.PROMOTE_REFUSED, **kwargs):
+        before = tree_bytes(folder) if os.path.isdir(folder) else None
+        result = pc_promote.promote_into(stage, folder, repo, None, [], **kwargs)
+        self.ok(result.code == code, "exit %d, got %d: %s" % (code, result.code, result.message))
+        if before is not None:
+            self.ok(tree_bytes(folder) == before, "the folder is byte-identical afterwards")
+        return result
+
+    def test_flat_files_are_added_to_an_existing_folder_and_the_old_files_are_untouched(self):
+        repo = make_repo()
+        folder = make_dated(repo, {"old.txt": b"old bytes\n"})
+        stage = make_stage({"README.md": b"readme\n", "digest-table.md": b"table\r\nno newline"})
+        result = pc_promote.promote_into(stage, folder, repo, None, [])
+        self.ok(result.code == 0, "exit 0")
+        self.ok(result.message == "promoted 2 file(s)", "one-line count message")
+        self.ok(
+            tree_bytes(folder) == {"old.txt": b"old bytes\n", "README.md": b"readme\n", "digest-table.md": b"table\r\nno newline"},
+            "the old file is untouched and the new files are byte-identical",
+        )
+        for name in ("README.md", "digest-table.md"):
+            self.ok(stat.S_IMODE(os.stat(os.path.join(folder, name)).st_mode) == pc_promote.FILE_MODE, "the fixed mode")
+
+    def test_an_existing_name_refuses_the_whole_request_and_creates_nothing(self):
+        repo = make_repo()
+        folder = make_dated(repo, {"README.md": b"first\n"})
+        stage = make_stage({"README.md": b"second\n", "a.txt": b"a\n", "b.txt": b"b\n"})
+        self.refused_and_unchanged(stage, folder, repo)
+        self.ok(sorted(os.listdir(folder)) == ["README.md"], "not even the free names were created")
+
+    def test_a_dangling_symlink_or_a_folder_with_a_staged_name_also_refuses(self):
+        repo = make_repo()
+        folder = make_dated(repo)
+        os.symlink(os.path.join(repo, "no-such-target"), os.path.join(folder, "link.txt"))
+        os.makedirs(os.path.join(folder, "taken-dir"))
+        listing = sorted(os.listdir(folder))
+        for name in ("link.txt", "taken-dir"):
+            stage = make_stage({name: b"x\n", "free.txt": b"y\n"})
+            result = pc_promote.promote_into(stage, folder, repo, None, [])
+            self.ok(result.code == pc_exitcodes.PROMOTE_REFUSED, "exit 17 for " + name)
+            self.ok(sorted(os.listdir(folder)) == listing, "the folder listing is unchanged")
+            self.ok(not os.path.lexists(os.path.join(folder, "free.txt")), "no free name was created")
+
+    def test_a_stage_with_a_subfolder_is_refused_because_the_files_must_be_flat(self):
+        repo = make_repo()
+        folder = make_dated(repo)
+        self.refused_and_unchanged(make_stage({"sub/x.txt": b"x\n"}), folder, repo)
+        self.ok(os.listdir(folder) == [], "nothing was created")
+
+    def test_a_staged_name_with_a_leading_dot_is_refused(self):
+        repo = make_repo()
+        folder = make_dated(repo)
+        self.refused_and_unchanged(make_stage({".hidden": b"x\n", "ok.txt": b"y\n"}), folder, repo)
+        self.ok(os.listdir(folder) == [], "nothing was created")
+
+    def test_a_dot_dot_in_the_folder_argument_is_refused(self):
+        repo = make_repo()
+        make_dated(repo, {"keep.txt": b"k\n"})
+        stage = make_stage({"a.txt": b"a\n"})
+        sneaky = os.path.join(repo, "tests", "evidence", "rerun-2026-10-28-model-x", "..", "rerun-2026-10-28-model-x")
+        result = pc_promote.promote_into(stage, sneaky, repo, None, [])
+        self.ok(result.code == pc_exitcodes.PROMOTE_REFUSED, "exit 17 for a dot-dot segment")
+
+    def test_a_symlinked_folder_is_refused_and_the_target_is_untouched(self):
+        repo = make_repo()
+        target = make_dated(repo, {"keep.txt": b"k\n"}, name="real-folder")
+        link = os.path.join(repo, "tests", "evidence", "linked-folder")
+        os.symlink(target, link)
+        self.refused_and_unchanged(make_stage({"a.txt": b"a\n"}), link, repo)
+        self.ok(tree_bytes(target) == {"keep.txt": b"k\n"}, "the target folder is unchanged")
+
+    def test_a_folder_outside_the_evidence_tree_is_refused(self):
+        repo = make_repo()
+        outside = os.path.join(repo, "tests", "other")
+        os.makedirs(outside)
+        self.refused_and_unchanged(make_stage({"a.txt": b"a\n"}), outside, repo)
+        self.ok(os.listdir(outside) == [], "nothing was created outside")
+        elsewhere = tempfile.mkdtemp(prefix="preclear-pe-")
+        self.refused_and_unchanged(make_stage({"a.txt": b"a\n"}), elsewhere, repo)
+        self.ok(os.listdir(elsewhere) == [], "nothing was created in a folder of another tree")
+
+    def test_a_missing_folder_is_refused_and_not_created(self):
+        repo = make_repo()
+        missing = os.path.join(repo, "tests", "evidence", "rerun-never-made")
+        result = pc_promote.promote_into(make_stage({"a.txt": b"a\n"}), missing, repo, None, [])
+        self.ok(result.code == pc_exitcodes.PROMOTE_REFUSED, "exit 17")
+        self.ok(not os.path.lexists(missing), "the folder was not created")
+
+    def test_the_evidence_folder_itself_needs_the_explicit_keyword(self):
+        repo = make_repo()
+        evidence = os.path.join(repo, "tests", "evidence")
+        self.refused_and_unchanged(make_stage({"a.txt": b"a\n"}), evidence, repo)
+        self.ok(os.listdir(evidence) == [], "nothing was created")
+        result = pc_promote.promote_into(make_stage({"a.txt": b"a\n"}), evidence, repo, None, [], allow_evidence_root=True)
+        self.ok(result.code == 0, "accepted when the caller says so")
+        self.ok(os.listdir(evidence) == ["a.txt"], "the file is there")
+
+    def test_a_leak_shaped_byte_is_refused_with_14_and_nothing_is_created(self):
+        repo = make_repo()
+        folder = make_dated(repo, {"keep.txt": b"k\n"})
+        seed = pc_seeds.home_path(SYNTHETIC_USER)
+        stage = make_stage({"clean.txt": b"clean\n", "leaky.txt": ("x " + seed + "\n").encode("utf-8")})
+        result = self.refused_and_unchanged(stage, folder, repo, code=pc_exitcodes.LEAK_REFUSED)
+        self.ok(SYNTHETIC_USER not in result.message and seed not in result.message, "no seeded value in the message")
+        self.ok(not os.path.lexists(os.path.join(folder, "clean.txt")), "the clean sibling was not created either")
+
+    def test_missing_deny_entries_are_refused_with_15_before_anything_else(self):
+        repo = make_repo()
+        folder = make_dated(repo, {"keep.txt": b"k\n"})
+        stage = make_stage({"a.txt": b"a\n"})
+        before = tree_bytes(folder)
+        result = pc_promote.promote_into(stage, folder, repo, None, None)
+        self.ok(result.code == pc_exitcodes.SCANNER_ERROR, "exit 15")
+        self.ok(tree_bytes(folder) == before, "nothing was created")
+        result = pc_promote.promote_into(stage, os.path.join(repo, "nowhere"), repo, None, None)
+        self.ok(result.code == pc_exitcodes.SCANNER_ERROR, "15 first, even for a bad folder")
+
+    def test_a_stage_that_is_a_symlink_or_empty_is_refused(self):
+        repo = make_repo()
+        folder = make_dated(repo)
+        real = make_stage({"a.txt": b"a\n"})
+        link = os.path.join(tempfile.mkdtemp(prefix="preclear-pl-"), "stage-link")
+        os.symlink(real, link)
+        self.refused_and_unchanged(link, folder, repo)
+        self.refused_and_unchanged(tempfile.mkdtemp(prefix="preclear-pn-"), folder, repo)
+        self.ok(os.listdir(folder) == [], "nothing was created")
+
+    def test_a_stage_or_folder_under_the_config_directory_is_refused(self):
+        repo = make_repo()
+        config = os.path.join(repo, "config-home")
+        os.makedirs(config)
+        stage = make_stage({"a.txt": b"a\n"})
+        folder = make_dated(repo)
+        inside = os.path.join(config, "stage-inside")
+        os.makedirs(inside)
+        with open(os.path.join(inside, "a.txt"), "xb") as handle:
+            handle.write(b"a\n")
+        result = pc_promote.promote_into(inside, folder, repo, config, [])
+        self.ok(result.code == pc_exitcodes.PROMOTE_REFUSED, "a stage under the config folder")
+        result = pc_promote.promote_into(stage, folder, repo, os.path.dirname(stage), [])
+        self.ok(result.code == pc_exitcodes.PROMOTE_REFUSED, "a stage whose parent is the config folder")
+        self.ok(os.listdir(folder) == [], "nothing was created")
+
+    def test_nothing_is_ever_overwritten_across_repeated_calls(self):
+        repo = make_repo()
+        folder = make_dated(repo)
+        first = make_stage({"README.md": b"one\n"})
+        self.ok(pc_promote.promote_into(first, folder, repo, None, []).code == 0, "the first call")
+        again = make_stage({"README.md": b"two\n", "more.txt": b"m\n"})
+        self.ok(pc_promote.promote_into(again, folder, repo, None, []).code == pc_exitcodes.PROMOTE_REFUSED, "the second call")
+        self.ok(tree_bytes(folder) == {"README.md": b"one\n"}, "the first file is as it was and no new name appeared")
+
+
 if __name__ == "__main__":
     unittest.main()

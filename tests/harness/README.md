@@ -622,6 +622,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `checkpoint-wrapper` - logs every stub call, refuses driver-only verbs, injects conflicts
 - `checkpoint_stub.py` - the single-file STUB-BACKED checkpoint helper
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
+- `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report and check-words
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
 - `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after
 - `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED and STOPPED labels
