@@ -199,12 +199,17 @@ class ThreeStateTests(unittest.TestCase):
         self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, out + err)
         self.assertIn("evidence folder is missing", out)
 
-    def test_an_existing_destination_folder_is_refused_with_exit_17(self) -> None:
-        os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION))
+    def test_an_existing_row_folder_in_the_destination_is_refused_with_exit_17(self) -> None:
+        os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION, ROW1))
         code, out, err = self.dry(["--row", ROW1])
         self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
         self.assertIn(DESTINATION, out)
         self.assertNotIn(self.repo, out + err)
+
+    def test_an_existing_dated_folder_alone_is_not_refused(self) -> None:
+        os.makedirs(os.path.join(self.repo, "tests", "evidence", DESTINATION))
+        code, out, err = self.dry(["--row", ROW1])
+        self.assertEqual(code, 0, out + err)
 
     def test_a_dangling_symlink_destination_is_refused_with_exit_17(self) -> None:
         os.symlink(

@@ -1328,6 +1328,7 @@ def file_row(
 MESSAGE_SKIP_ROW = "FAIL: the skipped row could not be filed; nothing is filed"
 MESSAGE_SKIP_COLLISION = "RUNROOT_COLLISION: a run folder already exists; nothing is filed"
 SKIPPED_PREFIX = "SKIPPED-"
+STOPPED_PREFIX = "STOPPED-"  # the label folder of a stopped row (plan 04-03 files it; the driver gate already refuses it)
 
 
 def render_skipped_readme(row_id: str, reason: str) -> bytes:

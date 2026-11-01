@@ -353,5 +353,520 @@ class CampaignTests(unittest.TestCase):
             self.assertNotIn(ROOT, text)
 
 
+
+def injected(row_id, caps=("0.10",), precondition=None, runner=None, kind="row"):
+    """A registry entry for a test: one stage per cap, every stage in a new session, no sources."""
+    pc_rows = rows()
+    stages = tuple(
+        pc_rows.StageSpec("s%d" % (index + 1), "work turn", "work", 5, Decimal(cap), 60, "new:%s" % "ABCDEFGH"[index])
+        for index, cap in enumerate(caps)
+    )
+    return pc_rows.RowSpec(row_id, kind, "injected test row", stages, True, precondition, runner, ())
+
+
+class Recorder(object):
+    """Scripted row runners that remember who ran, in what order and under which scope."""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def runner(self, row_id, code=0, spent=None):
+        def run(ctx):
+            self.calls.append((row_id, ctx.campaign, ctx.attempt, ctx.matrix))
+            return rows().RowOutcome(code, ("scripted %s" % row_id,), spent)
+
+        return run
+
+    def ids(self):
+        return [call[0] for call in self.calls]
+
+
+def registry_of(*extra):
+    return rows().build_registry(extra=list(extra))
+
+
+def assert_clean(test, rig, text):
+    """No path of the rig, no home path and no verdict word in anything the driver printed."""
+    test.assertNotIn(rig.base, text)
+    test.assertNotIn(ROOT, text)
+    test.assertIsNone(re.search(r"\b(pass|passed|fail|accepted)\b", text, re.I), "a verdict word was printed")
+
+
+def dated_folder(rig, date="2026-10-28", label=None) -> str:
+    name = "rerun-%s-%s" % (date, MODEL) + ("" if label is None else "-" + label)
+    return os.path.join(rig.repo, "tests", "evidence", name)
+
+
+class SelectionTests(unittest.TestCase):
+    """--row and --layout may be repeated and combined; the entries run in registry order."""
+
+    def setUp(self) -> None:
+        self.rig = pc_testutil.RowRig(stages=[])
+        self.rec = Recorder()
+        self.layout = injected("layout0-x", runner=self.rec.runner("layout0-x"), kind="layout")
+        self.a = injected("row0-a", runner=self.rec.runner("row0-a"))
+        self.b = injected("row0-b", runner=self.rec.runner("row0-b"))
+        self.registry = (self.layout, self.a, self.b)
+
+    def run_ok(self, args):
+        code, out, err = drive(self.rig, args + ["--budget", "1.00"], self.registry)
+        return code, out, err
+
+    def test_the_entries_run_in_registry_order_whatever_order_they_were_typed_in(self) -> None:
+        code, out, err = self.run_ok(["--row", "row0-b", "--layout", "layout0-x", "--row", "row0-a"])
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.rec.ids(), ["layout0-x", "row0-a", "row0-b"])
+
+    def test_two_rows_typed_in_reverse_still_run_in_registry_order(self) -> None:
+        code, out, err = self.run_ok(["--row", "row0-b", "--row", "row0-a"])
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-a", "row0-b"])
+
+    def test_the_dry_run_plan_lists_the_selected_entries_in_registry_order_with_a_total(self) -> None:
+        code, out, err = drive(
+            self.rig, ["--dry-run", "--row", "row0-b", "--layout", "layout0-x"], self.registry, claude=False
+        )
+        self.assertEqual(code, 0, out + err)
+        self.assertLess(out.index("layout0-x: 1 stages"), out.index("row0-b: 1 stages"))
+        self.assertNotIn("row0-a", out)
+        self.assertIn("total: 2 row(s), 2 stage(s), 2 session(s), worst case 0.20 USD", out)
+        self.assertEqual(self.rec.calls, [])
+
+    def test_a_repeated_or_unknown_id_is_refused_with_exit_2_and_never_echoed(self) -> None:
+        for args in (
+            ["--row", "row0-a", "--row", "row0-a"],
+            ["--layout", "layout0-x", "--layout", "layout0-x"],
+            ["--row", "row0-a", "--row", "row0-zz-probe"],
+            ["--row", "row0-zz-probe", "--row", "row0-a"],
+            ["--row", "row0-a", "--layout", "layout0-zz-probe"],
+        ):
+            code, out, err = drive(self.rig, ["--dry-run"] + args, self.registry, claude=False)
+            self.assertEqual(code, pc_exitcodes.USAGE, " ".join(args))
+            self.assertEqual(out, "", "a refusal wrote to standard output")
+            self.assertNotIn("probe", err)
+            self.assertNotIn("row0-a", err)
+        self.assertEqual(self.rec.calls, [])
+
+    def test_all_cannot_be_combined_with_row_or_layout(self) -> None:
+        for extra in (["--row", "row0-a"], ["--layout", "layout0-x"], ["--row", "row0-a", "--layout", "layout0-x"]):
+            code, out, err = drive(self.rig, ["--dry-run", "--all"] + extra, self.registry, claude=False)
+            self.assertEqual(code, pc_exitcodes.USAGE, " ".join(extra))
+        self.assertEqual(self.rec.calls, [])
+
+    def test_all_runs_every_implemented_entry_in_registry_order(self) -> None:
+        code, out, err = drive(self.rig, ["--dry-run", "--all"], self.registry, claude=False)
+        self.assertEqual(code, 0, out + err)
+        positions = [out.index("%s: 1 stages" % name) for name in ("layout0-x", "row0-a", "row0-b")]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_real_registry_lists_layouts_before_rows_and_all_follows_it(self) -> None:
+        pc_rows = rows()
+        implemented = [entry for entry in pc_rows.build_registry() if entry.implemented]
+        kinds = [entry.kind for entry in implemented]
+        self.assertEqual(kinds, sorted(kinds, key=lambda kind: 0 if kind == "layout" else 1))
+        ids = [entry.row_id for entry in implemented]
+        self.assertEqual(ids, [row_id for row_id in pc_rows.LAYOUT_IDS + pc_rows.ROW_IDS if row_id in ids])
+        code, out, err = drive(self.rig, ["--dry-run", "--all"], claude=False)
+        self.assertEqual(code, 0, out + err)
+        listed = [line.split(":")[0] for line in out.splitlines() if re.match(r"^[a-z0-9-]+: \d+ stages", line)]
+        self.assertEqual(listed, ids)
+
+
+class LoopTests(unittest.TestCase):
+    """The loop goes on after a skipped, stopped or incomplete row and reports one honest exit code."""
+
+    def setUp(self) -> None:
+        self.rig = pc_testutil.RowRig(stages=[])
+        self.rec = Recorder()
+
+    def run_rows(self, specs, extra=(), budget="5.00"):
+        """specs is a list of (row id, kind of result): clean, skip, a code number or a spent figure tuple."""
+        entries = []
+        for row_id, how in specs:
+            if how == "skip":
+                entries.append(injected(row_id, precondition=lambda: "the fixture of this test row is absent"))
+            else:
+                entries.append(injected(row_id, runner=self.rec.runner(row_id, code=how)))
+        args = []
+        for row_id, _how in specs:
+            args += ["--row", row_id]
+        code, out, err = drive(self.rig, args + ["--budget", budget] + list(extra), registry_of(*entries))
+        assert_clean(self, self.rig, out + err)
+        return code, out, err
+
+    def test_a_skipped_a_stopped_and_a_clean_row_are_all_attempted_and_the_exit_is_11(self) -> None:
+        code, out, err = self.run_rows([("row0-a", "skip"), ("row0-b", 11), ("row0-c", 0)])
+        self.assertEqual(code, 11, out + err)
+        self.assertEqual(self.rec.ids(), ["row0-b", "row0-c"], "the stopped row did not end the loop")
+        lines = out.splitlines()
+        self.assertIn("row row0-a: skipped, exit 10, spent 0.00 USD", lines)
+        self.assertIn("row row0-b: stopped, exit 11, spent 0.00 USD", lines)
+        self.assertIn("row row0-c: filed, exit 0, spent 0.00 USD", lines)
+        self.assertIn("summary: 3 row(s) selected, 1 filed, 1 stopped, 1 skipped, 0 refused, 0 not started", lines)
+        self.assertLess(lines.index("row row0-a: skipped, exit 10, spent 0.00 USD"), lines.index(
+            "row row0-b: stopped, exit 11, spent 0.00 USD"))
+        self.assertTrue(os.path.isfile(os.path.join(dated_folder(self.rig), "SKIPPED-row0-a", "README.md")))
+
+    def test_a_skip_only_run_exits_10_and_never_0(self) -> None:
+        code, out, err = self.run_rows([("row0-a", "skip"), ("row0-b", "skip")])
+        self.assertEqual(code, 10, out + err)
+        self.assertIn("summary: 2 row(s) selected, 0 filed, 0 stopped, 2 skipped, 0 refused, 0 not started", out)
+        self.assertEqual(self.rec.calls, [])
+        self.assertEqual(sorted(os.listdir(dated_folder(self.rig))), ["SKIPPED-row0-a", "SKIPPED-row0-b"])
+
+    def test_a_skip_only_run_needs_no_budget(self) -> None:
+        entry = injected("row0-a", precondition=lambda: "the fixture of this test row is absent")
+        code, out, err = drive(self.rig, ["--row", "row0-a"], registry_of(entry), claude=False)
+        self.assertEqual(code, 10, out + err)
+
+    def test_a_clean_run_exits_0(self) -> None:
+        code, out, err = self.run_rows([("row0-a", 0), ("row0-b", 0)])
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("summary: 2 row(s) selected, 2 filed, 0 stopped, 0 skipped, 0 refused, 0 not started", out)
+
+    def test_the_exit_code_is_the_worst_row_outcome_in_the_order_19_11_10_0(self) -> None:
+        cases = (
+            ([("row0-a", 11), ("row0-b", 19)], 19),
+            ([("row0-a", 19), ("row0-b", 11)], 19),
+            ([("row0-a", "skip"), ("row0-b", 11)], 11),
+            ([("row0-a", 11), ("row0-b", "skip")], 11),
+            ([("row0-a", "skip"), ("row0-b", 0)], 10),
+            ([("row0-a", 0), ("row0-b", 19)], 19),
+        )
+        for specs, expected in cases:
+            self.rec.calls.clear()
+            self.rig = pc_testutil.RowRig(stages=[])
+            code, out, err = self.run_rows(specs)
+            self.assertEqual(code, expected, "%s -> %s" % (specs, out + err))
+            self.assertEqual(len(self.rec.calls) + sum(1 for _r, how in specs if how == "skip"), 2, "all rows ran")
+
+    def test_a_filing_failure_or_refusal_ends_the_invocation_at_once(self) -> None:
+        for ending in (14, 15, 16, 17, 18):
+            self.rec.calls.clear()
+            self.rig = pc_testutil.RowRig(stages=[])
+            code, out, err = self.run_rows([("row0-a", 0), ("row0-b", ending), ("row0-c", 0)])
+            self.assertEqual(code, ending, out + err)
+            self.assertEqual(self.rec.ids(), ["row0-a", "row0-b"], "no row was started after the ending code")
+            self.assertIn("row row0-b: refused, exit %d, spent 0.00 USD" % ending, out)
+            self.assertIn("summary: 3 row(s) selected, 1 filed, 0 stopped, 0 skipped, 1 refused, 1 not started", out)
+
+    def test_a_taken_skipped_label_is_refused_by_the_gate_before_any_row_runs(self) -> None:
+        entries = [
+            injected("row0-a", precondition=lambda: "no fixture"),
+            injected("row0-b", runner=self.rec.runner("row0-b")),
+        ]
+        os.makedirs(os.path.join(dated_folder(self.rig), "SKIPPED-row0-a"))
+        code, out, err = drive(
+            self.rig, ["--row", "row0-a", "--row", "row0-b", "--budget", "1.00"], registry_of(*entries)
+        )
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+        self.assertEqual(self.rec.calls, [], "the gate refused before any row ran")
+
+    def test_the_driver_never_prints_a_verdict_and_every_line_is_fixed_text(self) -> None:
+        code, out, err = self.run_rows([("row0-a", "skip"), ("row0-b", 19), ("row0-c", 0)])
+        for line in out.splitlines():
+            if line.startswith(("row row0", "summary:")):
+                self.assertRegex(
+                    line,
+                    r"^(row row0-[a-c]: (filed|skipped|stopped|refused), exit \d+, spent \d+\.\d\d USD"
+                    r"|summary: \d+ row\(s\) selected, \d+ filed, \d+ stopped, \d+ skipped, \d+ refused, \d+ not started)$",
+                )
+
+    def test_aggregation_is_a_pure_function_of_the_outcomes(self) -> None:
+        pc_matrix = matrix()
+        row = injected("row0-a")
+        zero = Decimal("0")
+
+        def agg(codes, ending=None):
+            return pc_matrix._aggregate_code([(row, code, zero) for code in codes], ending)
+
+        self.assertEqual(agg([]), 0)
+        self.assertEqual(agg([0, 0]), 0)
+        self.assertEqual(agg([0, 10]), 10)
+        self.assertEqual(agg([10, 11]), 11)
+        self.assertEqual(agg([11, 19, 10]), 19)
+        self.assertEqual(agg([0, 19], ending=17), 17)
+        self.assertEqual(agg([], ending=18), 18)
+
+    def test_a_precondition_row_in_a_dry_run_stops_the_gate_loop_as_before(self) -> None:
+        entries = [injected("row0-a", precondition=lambda: "no fixture"), injected("row0-b")]
+        code, out, err = drive(
+            self.rig, ["--dry-run", "--row", "row0-a", "--row", "row0-b"], registry_of(*entries), claude=False
+        )
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_SKIP, out + err)
+
+
+class MatrixScopeTests(unittest.TestCase):
+    """--all without a campaign scopes its ledger rows with the word matrix; a single row keeps the bare ids."""
+
+    def test_a_matrix_run_is_not_refused_when_the_ledger_already_holds_the_bare_row_1_lines(self) -> None:
+        rig = rig_for(ROW1, ROW4A)
+        import pc_spike
+
+        home = pc_spike.harness_home(rig.env, rig.env["HOME"], rig.repo)
+        bare = ("row1-s1", "row1-s2", "row1-s3")
+        for key in bare:
+            pc_spend.append_launch(home, ROW1, key, Decimal("0.10"), "2.1.310", bare)
+        code, out, err = drive(rig, ["--all", "--budget", "5.00"])
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(len(rig.calls()), 5)
+        scoped = sorted({line["row"] for line in ledger_of(rig) if line["row"].startswith("matrix-")})
+        self.assertEqual(scoped, ["matrix-row1-wrong-binding", "matrix-row4a-unknown-backend"])
+        dated = dated_folder(rig)
+        self.assertEqual(sorted(os.listdir(dated)), [ROW1, ROW4A])
+        self.assertIn("summary: 2 row(s) selected, 2 filed, 0 stopped, 0 skipped, 0 refused, 0 not started", out)
+        assert_clean(self, rig, out + err)
+
+    def test_a_single_row_without_a_campaign_keeps_the_bare_ids(self) -> None:
+        rig = rig_for(ROW4A)
+        code, out, err = drive(rig, ["--row", ROW4A, "--budget", "1.60"])
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual({line["row"] for line in ledger_of(rig)}, {ROW4A})
+        self.assertEqual({line["stage"] for line in ledger_of(rig)}, {"row4a-s1", "row4a-s2"})
+
+    def test_a_campaign_with_all_uses_the_label_and_not_the_matrix_word(self) -> None:
+        rig = rig_for(ROW1, ROW4A)
+        code, out, err = drive(rig, ["--all", "--campaign", "wave-m", "--budget", "5.00"])
+        self.assertEqual(code, 0, out + err)
+        rows_in_ledger = {line["row"] for line in ledger_of(rig)}
+        self.assertEqual(rows_in_ledger, {"wave-m-row1-wrong-binding", "wave-m-row4a-unknown-backend"})
+        self.assertTrue(os.path.isdir(dated_folder(rig, label="wave-m")))
+
+
+class AttemptTests(unittest.TestCase):
+    """--attempt names the row folder and scopes the ledger, and needs an earlier attempt on record."""
+
+    def first_attempt(self, rig, extra=()):
+        return drive(rig, ["--row", ROW4A, "--budget", "1.60"] + list(extra))
+
+    def test_an_attempt_without_an_earlier_launch_is_refused_with_18_and_creates_nothing(self) -> None:
+        rig = rig_for(ROW4A)
+        code, out, err = drive(rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "2"])
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertIn(matrix().MESSAGE_NO_EARLIER_ATTEMPT, err)
+        self.assertEqual(rig.calls(), [])
+        self.assertFalse(os.path.exists(rig.harness_home), "no ledger or harness home was created")
+        self.assertEqual([n for n in evidence_names(rig) if n.startswith("rerun-")], [])
+        self.assertFalse(os.path.exists(rig.runs), "no run folder was created")
+        assert_clean(self, rig, out + err)
+
+    def test_attempt_two_runs_after_attempt_one_and_files_its_own_folder_and_ledger_rows(self) -> None:
+        rig = rig_for(ROW4A, repeat=2)
+        self.assertEqual(self.first_attempt(rig)[0], 0)
+        code, out, err = drive(rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "2"])
+        self.assertEqual(code, 0, out + err)
+        dated = dated_folder(rig)
+        self.assertEqual(sorted(os.listdir(dated)), [ROW4A, ROW4A + "-attempt-2"])
+        self.assertIn("filed: %s %s-attempt-2" % (os.path.basename(dated), ROW4A), out)
+        ledger = ledger_of(rig)
+        self.assertEqual(
+            sorted({(line["row"], line["stage"]) for line in ledger}),
+            sorted(
+                [
+                    (ROW4A, "row4a-s1"),
+                    (ROW4A, "row4a-s2"),
+                    ("a2-" + ROW4A, "a2-row4a-s1"),
+                    ("a2-" + ROW4A, "a2-row4a-s2"),
+                ]
+            ),
+        )
+        self.assertEqual({line["attempt"] for line in ledger}, {1}, "each scoped stage is on its first attempt")
+        self.assertTrue(os.path.isfile(os.path.join(dated, ROW4A + "-attempt-2", "README.md")))
+
+    def test_attempt_three_needs_attempt_two_on_record(self) -> None:
+        rig = rig_for(ROW4A, repeat=2)
+        self.assertEqual(self.first_attempt(rig)[0], 0)
+        code, out, err = drive(rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "3"])
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertEqual(len(rig.calls()), 2)
+
+    def test_the_same_attempt_twice_is_refused_as_a_taken_row_folder(self) -> None:
+        rig = rig_for(ROW4A, repeat=3)
+        self.assertEqual(self.first_attempt(rig)[0], 0)
+        self.assertEqual(drive(rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "2"])[0], 0)
+        code, out, err = drive(rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "2"])
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+        self.assertEqual(len(rig.calls()), 4, "no third chain started")
+
+    def test_a_campaign_attempt_looks_for_the_earlier_attempt_under_the_same_label(self) -> None:
+        rig = rig_for(ROW4A, repeat=2)
+        import pc_spike
+
+        home = pc_spike.harness_home(rig.env, rig.env["HOME"], rig.repo)
+        keys = ("wave-a-row4a-s1", "wave-a-row4a-s2")
+        pc_spend.append_launch(home, "wave-a-" + ROW4A, keys[0], Decimal("0.10"), "2.1.310", keys)
+        other = drive(rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "2", "--campaign", "wave-b"])
+        self.assertEqual(other[0], pc_exitcodes.BUDGET_REFUSED, other[1] + other[2])
+        code, out, err = drive(
+            rig, ["--row", ROW4A, "--budget", "1.60", "--attempt", "2", "--campaign", "wave-a", "--evidence-date", CLEAN_DATE]
+        )
+        self.assertEqual(code, 0, out + err)
+        rows_in_ledger = {line["row"] for line in ledger_of(rig)}
+        self.assertIn("wave-a-a2-" + ROW4A, rows_in_ledger)
+        self.assertTrue(os.path.isdir(os.path.join(dated_folder(rig, CLEAN_DATE, "wave-a"), ROW4A + "-attempt-2")))
+
+    def test_a_bad_attempt_is_refused_with_exit_2_and_fixed_text(self) -> None:
+        rig = rig_for(ROW4A)
+        for value in ("0", "10", "01", "2.0", "", "x", "-1", "+2", "22", "２", " 2", "2 ", "2\n"):
+            code, out, err = drive(rig, ["--dry-run", "--row", ROW4A, "--attempt", value], claude=False)
+            self.assertEqual(code, pc_exitcodes.USAGE, repr(value))
+            self.assertEqual(out, "")
+            self.assertEqual(err, "pc_matrix.py: %s\n" % matrix().MESSAGE_BAD_ATTEMPT)
+
+    def test_attempt_with_all_or_with_more_than_one_entry_is_refused_with_exit_2(self) -> None:
+        rig = rig_for(ROW4A)
+        for args in (
+            ["--all", "--attempt", "2"],
+            ["--row", ROW1, "--row", ROW4A, "--attempt", "2"],
+            ["--row", ROW1, "--row", ROW4A, "--attempt", "1"],
+            ["--all", "--attempt", "1"],
+        ):
+            code, out, err = drive(rig, ["--dry-run"] + args, claude=False)
+            self.assertEqual(code, pc_exitcodes.USAGE, " ".join(args))
+            self.assertEqual(err, "pc_matrix.py: %s\n" % matrix().MESSAGE_ATTEMPT_WITH_ALL)
+
+    def test_the_attempt_cannot_be_combined_with_a_mode_that_does_not_run_rows(self) -> None:
+        rig = rig_for(ROW4A)
+        for mode in (["--list"], ["--refile", "relative"], ["--authorize-retry", "row1-s2"]):
+            code, out, err = drive(rig, mode + ["--attempt", "2"], claude=False)
+            self.assertEqual(code, pc_exitcodes.USAGE, " ".join(mode))
+
+    def test_a_dry_run_does_not_read_the_ledger_and_prints_the_row_folder(self) -> None:
+        rig = rig_for(ROW4A)
+        with NoProcess():
+            code, out, err = drive(rig, ["--dry-run", "--row", ROW4A, "--attempt", "2"], claude=False)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("row folder %s-attempt-2\n" % ROW4A, out)
+        self.assertFalse(os.path.exists(rig.harness_home))
+
+    def test_two_attempts_never_share_a_folder_or_a_ledger_row(self) -> None:
+        pc_rows = rows()
+        folders = {pc_rows.row_folder_name(ROW4A, attempt) for attempt in range(1, 10)}
+        ledger_rows = {pc_rows.scoped_row(ROW4A, "wave-a", attempt, False) for attempt in range(1, 10)}
+        self.assertEqual(len(folders), 9)
+        self.assertEqual(len(ledger_rows), 9)
+
+
+class RowFolderGateTests(unittest.TestCase):
+    """The gate refuses only through the row: its folder, its STOPPED- folder or its SKIPPED- folder."""
+
+    def setUp(self) -> None:
+        self.rig = pc_testutil.RowRig(stages=[])
+        self.dated = dated_folder(self.rig)
+
+    def dry(self, attempt=None):
+        extra = [] if attempt is None else ["--attempt", str(attempt)]
+        with NoProcess():
+            return drive(self.rig, ["--dry-run", "--row", ROW4A] + extra, claude=False)
+
+    def test_an_existing_dated_folder_alone_is_not_refused(self) -> None:
+        os.makedirs(self.dated)
+        code, out, err = self.dry()
+        self.assertEqual(code, 0, out + err)
+
+    def test_the_row_folder_and_both_label_folders_are_refused_with_17(self) -> None:
+        for name in (ROW4A, "STOPPED-" + ROW4A, "SKIPPED-" + ROW4A):
+            rig_dated = os.path.join(self.dated, name)
+            os.makedirs(rig_dated)
+            code, out, err = self.dry()
+            self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, name + out + err)
+            self.assertIn(name, out)
+            self.assertNotIn(self.rig.base, out + err)
+            self.rig = pc_testutil.RowRig(stages=[])
+            self.dated = dated_folder(self.rig)
+
+    def test_another_rows_folder_does_not_block_this_row(self) -> None:
+        os.makedirs(os.path.join(self.dated, ROW1))
+        os.makedirs(os.path.join(self.dated, "STOPPED-" + ROW1))
+        code, out, err = self.dry()
+        self.assertEqual(code, 0, out + err)
+
+    def test_the_attempt_selects_which_row_folder_is_checked(self) -> None:
+        os.makedirs(os.path.join(self.dated, ROW4A))
+        self.assertEqual(self.dry(2)[0], 0, "attempt 2 is free while attempt 1 exists")
+        os.makedirs(os.path.join(self.dated, ROW4A + "-attempt-2"))
+        self.assertEqual(self.dry(2)[0], pc_exitcodes.PROMOTE_REFUSED)
+        self.assertEqual(self.dry(3)[0], 0)
+        os.makedirs(os.path.join(self.dated, "SKIPPED-" + ROW4A + "-attempt-3"))
+        self.assertEqual(self.dry(3)[0], pc_exitcodes.PROMOTE_REFUSED)
+
+    def test_a_dated_name_that_is_a_link_or_a_file_is_refused(self) -> None:
+        os.symlink(os.path.join(self.rig.base, "nowhere"), self.dated)
+        self.assertEqual(self.dry()[0], pc_exitcodes.PROMOTE_REFUSED)
+        rig = pc_testutil.RowRig(stages=[])
+        with open(dated_folder(rig), "w", encoding="utf-8") as handle:
+            handle.write("x\n")
+        with NoProcess():
+            code, out, err = drive(rig, ["--dry-run", "--row", ROW4A], claude=False)
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+
+
+class RefileAnyRowTests(unittest.TestCase):
+    """--refile accepts a run folder of any registered row and files where the run's own scope says."""
+
+    def chain(self, rig, **overrides):
+        import pc_row1
+
+        first = os.path.join(rig.repo, "tests", "evidence", "rerun-2026-10-28-claude-sonnet-5-5-first")
+        ctx = rig.context(destination=first, **overrides)
+        outcome = pc_row1.run_registered_row(ctx, ROW4A)
+        self.assertEqual(outcome.code, 0, "\n".join(outcome.lines))
+        names = sorted(os.listdir(ctx.runs_root))
+        self.assertEqual(len(names), 1, names)
+        return os.path.join(ctx.runs_root, names[0])
+
+    def refile(self, rig, run_root):
+        out, err = io.StringIO(), io.StringIO()
+        code = matrix().main(
+            ["--refile", run_root], env=dict(rig.env), repo_root=rig.repo, clock=fixed_clock, out=out, err=err
+        )
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_row_4a_run_is_refiled_into_its_row_folder_with_zero_tokens(self) -> None:
+        rig = rig_for(ROW4A)
+        run_root = self.chain(rig)
+        calls = len(rig.calls())
+        code, text = self.refile(rig, run_root)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(rig.calls()), calls, "no process was started")
+        self.assertTrue(os.path.isfile(os.path.join(dated_folder(rig), ROW4A, "README.md")))
+        self.assertIn("filed: %s %s" % (os.path.basename(dated_folder(rig)), ROW4A), text)
+
+    def test_the_campaign_and_the_attempt_of_the_run_name_the_folders(self) -> None:
+        rig = rig_for(ROW4A)
+        run_root = self.chain(rig, campaign="wave-a", attempt=2)
+        scope = read_json(os.path.join(run_root, "raw", "scope.json"))
+        self.assertEqual(scope, {"attempt": 2, "campaign": "wave-a", "matrix": False})
+        code, text = self.refile(rig, run_root)
+        self.assertEqual(code, 0, text)
+        target = os.path.join(dated_folder(rig, label="wave-a"), ROW4A + "-attempt-2")
+        self.assertTrue(os.path.isfile(os.path.join(target, "README.md")))
+        again, text = self.refile(rig, run_root)
+        self.assertEqual(again, pc_exitcodes.PROMOTE_REFUSED, text)
+        self.assertIn(ROW4A + "-attempt-2", text)
+
+    def test_a_malformed_scope_record_makes_the_run_folder_unusable(self) -> None:
+        rig = rig_for(ROW4A)
+        run_root = self.chain(rig, campaign="wave-a")
+        for body in ("{}", "[]", "not json", '{"attempt": 10, "campaign": null, "matrix": false}',
+                     '{"attempt": 1, "campaign": "A1", "matrix": false}',
+                     '{"attempt": true, "campaign": null, "matrix": false}'):
+            with open(os.path.join(run_root, "raw", "scope.json"), "w", encoding="utf-8") as handle:
+                handle.write(body)
+            code, text = self.refile(rig, run_root)
+            self.assertEqual(code, pc_exitcodes.USAGE, body + text)
+            self.assertIn("the run folder is not usable", text)
+
+    def test_a_run_record_that_names_no_registered_row_is_unusable(self) -> None:
+        rig = rig_for(ROW4A)
+        run_root = self.chain(rig)
+        record = read_json(os.path.join(run_root, "raw", "run.json"))
+        record["row"] = "row0-not-registered"
+        with open(os.path.join(run_root, "raw", "run.json"), "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+        code, text = self.refile(rig, run_root)
+        self.assertEqual(code, pc_exitcodes.USAGE, text)
+
+
 if __name__ == "__main__":
     unittest.main()
