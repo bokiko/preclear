@@ -317,13 +317,23 @@ class BinaryScan(object):
         return frozenset(name for name in wanted if self._known[name])
 
 
-def _memory_path_ok(init: Mapping[str, Any], auto_memory: str) -> bool:
+def _memory_path_ok(init: Mapping[str, Any], auto_memory: str, memory_enabled: bool = True) -> bool:
     """memory_paths must be a mapping whose auto value is an absolute path naming the auto-memory folder.
 
     Compared by realpath with a trailing separator tolerated; a sibling folder that shares a name prefix is not
     equal, and an absent, empty or non-text value is a failure, never a pass.
+
+    With memory disabled (memory_enabled false, plan 04-04) the init event may report no memory path at all: a
+    missing memory_paths value, or a mapping whose auto value is missing or null, then passes, because whether the
+    pinned build reports a path under that setting is not known before a real run. A path that is reported must
+    still be the pinned one, and a value of any other shape is still a failure.
     """
     memory_paths = init.get("memory_paths")
+    if not memory_enabled:
+        if memory_paths is None:
+            return True
+        if isinstance(memory_paths, dict) and memory_paths.get("auto") is None:
+            return True
     if not isinstance(memory_paths, dict):
         return False
     auto = memory_paths.get("auto")
@@ -357,6 +367,7 @@ def _evaluate_parts(
     user_names: Any,
     binary_defined: Any,
     config_dir: str,
+    memory_enabled: bool = True,
 ) -> Tuple[List[Tuple[str, str, bool]], Dict[str, Any]]:
     triples, counts = pc_spike.s1_evaluation(
         events,
@@ -374,7 +385,9 @@ def _evaluate_parts(
         else:
             adjusted.append((name, how, ok))
     init = pc_stream.init_manifest(events)
-    adjusted.append(("memory-path-as-set", pc_spike.HOW_INIT, _memory_path_ok(init, str(paths["auto_memory"]))))
+    adjusted.append(
+        ("memory-path-as-set", pc_spike.HOW_INIT, _memory_path_ok(init, str(paths["auto_memory"]), memory_enabled))
+    )
     adjusted.append(("cwd-is-project", pc_spike.HOW_INIT, _cwd_ok(init, str(paths["project"]))))
     adjusted.append(
         ("session-id-as-requested", pc_spike.HOW_INIT, _session_ok(events, init, requested_session))
@@ -391,16 +404,18 @@ def stage_assertions(
     user_names: Any,
     binary_defined: Any,
     config_dir: str,
+    memory_enabled: bool = True,
 ) -> List[Tuple[str, str, bool]]:
     """Return the twelve (id, how, ok) triples in the order of ROW_ASSERTION_IDS.
 
     The nine spike assertions come from pc_spike.s1_evaluation. For a resumed stage whose hook slice holds no
     entry the three hook ids are recorded as not asserted on resume and are ok (silence on resume is a fact,
     not a failure); for any other empty slice they are not assertable and fail. A boundary violation in a
-    non-empty slice fails in either kind of stage.
+    non-empty slice fails in either kind of stage. memory_enabled false is a row whose memory is disabled: the init
+    event may then report no memory path (see _memory_path_ok).
     """
     return _evaluate_parts(
-        events, hooklog_slice, paths, requested_session, kind, user_names, binary_defined, config_dir
+        events, hooklog_slice, paths, requested_session, kind, user_names, binary_defined, config_dir, memory_enabled
     )[0]
 
 
@@ -413,6 +428,7 @@ def evaluate_stage(
     user_names: Any,
     scan: Any,
     config_dir: str,
+    memory_enabled: bool = True,
 ) -> Evaluation:
     """Evaluate one stage: pass only when every assertion is ok, otherwise stop (D-02, HARN-07).
 
@@ -422,7 +438,7 @@ def evaluate_stage(
     candidates = pc_spike.hit_candidates(init, user_names)
     defined = scan(candidates) if candidates else frozenset()
     triples, counts = _evaluate_parts(
-        events, hooklog_slice, paths, requested_session, kind, user_names, defined, config_dir
+        events, hooklog_slice, paths, requested_session, kind, user_names, defined, config_dir, memory_enabled
     )
     unassertable = [name for name, how, _ok in triples if how == pc_spike.HOW_NONE]
     failed = [name for name, how, ok in triples if not ok and how != pc_spike.HOW_NONE]
@@ -516,15 +532,15 @@ def _entry_of(row_id: str) -> pc_rows.RowSpec:
     return entry
 
 
-def allowed_tools(profile: str, wrapper: str) -> Tuple[str, ...]:
-    """The --allowedTools rules of an allowlist profile; a profile this harness does not know is a ValueError.
+def allowed_tools(profile: str, wrapper: str, extra: Sequence[str] = ()) -> Tuple[str, ...]:
+    """The --allowedTools rules of an allowlist profile and the row's extra rules; an unknown profile is a ValueError.
 
-    PROFILE_HELPER is the committed baseline plus one rule per model-facing verb of the logging wrapper. A new
-    profile is one more branch here and one more constant in pc_rows, never a second place that builds rules.
+    PROFILE_HELPER is the committed baseline plus one rule per model-facing verb of the logging wrapper;
+    PROFILE_PLAIN is the baseline alone and never takes a wrapper rule. The rules are built only by
+    pc_flags.build_row_tools: a new profile is one more branch there and one more constant in pc_rows, never a
+    second place that builds rules.
     """
-    if profile == pc_rows.PROFILE_HELPER:
-        return pc_flags.build_allowed_tools(wrapper, pc_flags.MODEL_FACING_WRAPPER_VERBS)
-    raise ValueError("the allowlist profile is not known")
+    return pc_flags.build_row_tools(profile, wrapper, extra)
 
 
 def snapshot_name(stage: pc_rows.StageSpec) -> str:
@@ -632,7 +648,7 @@ def run_stage(
     """
     if row is None:
         row = _entry_of(ROW_ID)
-    tools = allowed_tools(row.tools_profile, str(paths["wrapper"]))
+    tools = allowed_tools(row.tools_profile, str(paths["wrapper"]), row.extra_tools)
     argv = pc_flags.build_argv(
         str(ctx.claude), session_id, str(paths["settings"]), tools, spec.max_turns, spec.cap, resume=resume, model=ctx.model
     )
@@ -699,6 +715,7 @@ def run_stage(
             names,
             scan if scan is not None else BinaryScan(str(ctx.claude)),
             ctx.config_dir,
+            row.memory != pc_rows.MEMORY_DISABLED,
         )
     hooklog_lines = _line_count(str(paths["hooklog"]))
     record = {

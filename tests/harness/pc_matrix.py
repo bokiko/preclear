@@ -233,7 +233,7 @@ def _allowlist_size(row: pc_rows.RowSpec) -> Optional[int]:
     import pc_row1  # imported late: pc_row1 imports this module's siblings
 
     try:
-        return len(pc_row1.allowed_tools(row.tools_profile, ALLOWLIST_ROLE_WRAPPER))
+        return len(pc_row1.allowed_tools(row.tools_profile, ALLOWLIST_ROLE_WRAPPER, row.extra_tools))
     except ValueError:
         return None
 

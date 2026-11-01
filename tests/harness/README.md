@@ -690,7 +690,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_row1.py` - row 1: the seed, the snapshots, the three-stage chain and the init and instruction-audit assertions
-- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups
+- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a and 5b setups
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
@@ -725,6 +725,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_row1_assertions.py` - tests for the init manifest and instruction-audit assertions of a row run
 - `test_row1_seed.py` - tests for the row 1 seed, the snapshots and the first stage
 - `test_row_generic.py` - tests for a row run from its registry entry: row 4a, the seed byte-tie, per-row filing and the row 1 parity
+- `test_rows_plain.py` - tests for the plain rows 5a and 5b: the seed byte-tie, the 35-rule allowlist, the memory settings and assertion and a scripted chain of each
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
 - `test_selftest_shim.py` - tests for the `selftest` shim with a tripwire claude
@@ -745,6 +746,8 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `data/s2-probe-labels.json` - the policy-probe labels for spike S2
 - `data/row1-s1-prompt.md` - the row 1 work-turn prompt, with a ledger placeholder
 - `data/row1-plan.md` - the row 1 plan text, whose digest equals the committed setup digest
+- `data/plain-plan.md` - the plan text of every plain row, whose digest equals the committed setup digest of rows 5a and 5b
+- `data/plain-s1-prompt.md` - the plain work-turn prompt: the row 1 prompt with the ledger clause replaced
 
 ## Limits
 

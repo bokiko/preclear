@@ -11,6 +11,10 @@ seeds that call it:
   * seed_row1         the row 1 parameters: ledgers A and B, the session bound to B, the wrapper path absolute
   * seed_row4a        the row 4a parameters: ledger A only, the session bound to it, backend checkpoint-v2 and the
                       relative executable wrapper/checkpoint kept exactly as the committed fixture holds them
+  * seed_plain_row    the setup of a row with no helper (plan 04-04): the committed project instruction file copied in
+                      place, the plain plan, a repository on main with one commit, the skill copy, an empty ledgers
+                      folder and no wrapper, no stub, no ledger and no binding; the settings follow the memory policy
+  * seed_row5a, seed_row5b   the plain rows: the committed fixtures of rows 5a and 5b
 
 Every file and folder is created exclusively through pc_runroot, so a second call on the same run root raises
 FileExistsError; nothing here deletes, renames, moves or truncates, and this module is scanned for those primitives
@@ -38,8 +42,11 @@ import pc_spike
 PUBLICATION_ROOT = "tests/evidence/publication-2026-10-20"
 ROW1_FOLDER = PUBLICATION_ROOT + "/row1-wrong-binding"
 ROW4A_FOLDER = PUBLICATION_ROOT + "/row4a-unknown-backend"
+ROW5A_FOLDER = PUBLICATION_ROOT + "/row5a-no-memory"
+ROW5B_FOLDER = PUBLICATION_ROOT + "/row5b-disabled-memory"
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
+PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
 LEDGER_A_NAME = "CONTINUITY_CLAUDE-widget-export.md"
 LEDGER_B_NAME = "CONTINUITY_CLAUDE-other-task.md"
 PLAN_NAME = "2026-10-15-widget-export.md"
@@ -402,3 +409,191 @@ def seed_row4a(
         },
     )
 
+
+
+def _memory_policy(row_id: str) -> str:
+    """The memory policy word of a registry entry, taken from the entry and never typed in a seed."""
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
+    if entry is None or entry.memory not in (pc_rows.MEMORY_PINNED, pc_rows.MEMORY_DISABLED):
+        raise ValueError("the row has no known memory policy")
+    return entry.memory
+
+
+def seed_plain_row(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+    row_id: str,
+    fixture: str,
+    memory: str,
+) -> Dict[str, Optional[str]]:
+    """Build the setup of a row with no helper inside the already-created run root and return its paths.
+
+    fixture is the repo-relative path of the committed fixture-CLAUDE.md of the row; it is copied byte for byte (a
+    plain row has no configuration block to fill). The plan is the plain plan data file. memory is the row's memory
+    policy word: the settings carry autoMemoryEnabled false for MEMORY_DISABLED and true for MEMORY_PINNED, and the
+    auto-memory directory is pinned inside the run root in both cases.
+
+    Created exclusively, in order: project (CLAUDE.md, the plan, a repository on main with one commit, then the
+    skill copy as untracked files), ckpt with an empty ledgers folder (the child's environment still names ckpt;
+    nothing writes a ledger or a binding there), raw (run.json: row, bound ledger none, memory, model, evidence date,
+    session id, isolation mode), auto-memory, snaps and settings.json. There is no wrapper folder and no stub: the
+    returned mapping still names wrapper, wrapper_dir and the two ledger paths, as folders and files that do not
+    exist, so paths_for and the checks need no second shape.
+    """
+    try:
+        canonical = str(uuid.UUID(session_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("the session id must be a UUID") from None
+    if canonical != session_id:
+        raise ValueError("the session id must be the canonical lowercase form")
+    if not pc_rows.is_valid_id(row_id):
+        raise ValueError("the row id is not a registry id")
+    if memory not in (pc_rows.MEMORY_PINNED, pc_rows.MEMORY_DISABLED):
+        raise ValueError("the memory policy is not known")
+    repo = os.path.realpath(repo_root)
+    root = os.path.realpath(run_root)
+    runs = os.path.realpath(runs_dir)
+    if not os.path.isdir(root):
+        raise ValueError("the run root does not exist")
+    if not _within(root, runs) or root == runs:
+        raise ValueError("the run root must lie under the runs folder")
+    if _within(root, repo):
+        raise ValueError("the run root must be outside the repository")
+    wanted = (
+        ("skill", "SKILL.md"),
+        ("hooklog", "tests/harness/pc_hooklog.py"),
+        ("plan", PLAIN_PLAN_DATA),
+        ("claude_md", fixture),
+    )
+    source: Dict[str, str] = {}
+    for key, relative in wanted:
+        path = os.path.join(repo, *relative.split("/"))
+        if not os.path.isfile(path):
+            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % relative)
+        source[key] = path
+    references = os.path.join(repo, "references")
+    if not os.path.isdir(references):
+        raise pc_spike.SpikeError("a source the run root needs is missing: references")
+    interpreter = os.path.realpath(sys.executable)
+    if not interpreter:
+        raise ValueError("no interpreter path is known")
+
+    project = os.path.join(root, "project")
+    wrapper_dir = os.path.join(root, "wrapper")
+    ckpt = os.path.join(root, "ckpt")
+    ledgers = os.path.join(ckpt, "ledgers")
+    auto_memory = os.path.join(root, "auto-memory")
+    raw = os.path.join(root, "raw")
+    snaps = os.path.join(root, "snaps")
+    settings = os.path.join(root, "settings.json")
+    hooklog = os.path.join(raw, "hooklog.jsonl")
+
+    pc_runroot.exclusive_dir(project, 0o700)
+    thoughts = os.path.join(project, "thoughts")
+    pc_runroot.exclusive_dir(thoughts, 0o700)
+    plans = os.path.join(thoughts, "plans")
+    pc_runroot.exclusive_dir(plans, 0o700)
+    pc_runroot.write_exclusive(os.path.join(plans, PLAN_NAME), _read(source["plan"]), 0o644)
+    pc_runroot.write_exclusive(os.path.join(project, "CLAUDE.md"), _read(source["claude_md"]), 0o644)
+    pc_spike._run_git(project, ["init", "-q"])
+    pc_spike._run_git(project, ["symbolic-ref", "HEAD", "refs/heads/main"])
+    pc_spike._run_git(project, ["add", "-A"])
+    pc_spike._run_git(project, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial fixture commit"])
+
+    skill_dir = os.path.join(project, ".claude", "skills", "preclear")
+    pc_runroot.exclusive_dir(os.path.join(project, ".claude"), 0o700)
+    pc_runroot.exclusive_dir(os.path.join(project, ".claude", "skills"), 0o700)
+    pc_runroot.exclusive_dir(skill_dir, 0o700)
+    pc_runroot.write_exclusive(os.path.join(skill_dir, "SKILL.md"), _read(source["skill"]), 0o644)
+    pc_spike._copy_tree_with(references, os.path.join(skill_dir, "references"))
+
+    pc_runroot.exclusive_dir(ckpt, 0o700)
+    pc_runroot.exclusive_dir(ledgers, 0o700)
+    pc_runroot.exclusive_dir(raw, 0o700)
+    pc_runroot.exclusive_dir(auto_memory, 0o700)
+    pc_runroot.exclusive_dir(snaps, 0o700)
+    command = " ".join(shlex.quote(part) for part in (interpreter, "-I", "-B", source["hooklog"], hooklog))
+    rendered = pc_flags.render_settings(auto_memory, command, memory == pc_rows.MEMORY_PINNED)
+    pc_runroot.write_exclusive(settings, (json.dumps(rendered, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600)
+    run_facts = {
+        "row": row_id,
+        "bound_ledger": BOUND_NONE,
+        "memory": memory,
+        "model": model,
+        "evidence_date": evidence_date,
+        "session_id": session_id,
+        "isolation": isolation_mode(),
+    }
+    pc_runroot.write_exclusive(
+        os.path.join(raw, "run.json"), (json.dumps(run_facts, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
+    )
+
+    return {
+        "run_root": root,
+        "project": project,
+        "skill_dir": skill_dir,
+        "wrapper_dir": wrapper_dir,
+        "wrapper": os.path.join(wrapper_dir, "checkpoint"),
+        "ckpt": ckpt,
+        "ledgers": ledgers,
+        "ledger_a": os.path.join(ledgers, LEDGER_A_NAME),
+        "ledger_b": os.path.join(ledgers, LEDGER_B_NAME),
+        "auto_memory": auto_memory,
+        "raw": raw,
+        "snaps": snaps,
+        "settings": settings,
+        "hooklog": hooklog,
+    }
+
+
+def seed_row5a(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 5a setup: a plain project (no configuration block, no memory text), auto-memory disabled."""
+    return seed_plain_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW5A,
+        ROW5A_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW5A),
+    )
+
+
+def seed_row5b(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 5b setup: as row 5a, the project instruction file says memory is disabled."""
+    return seed_plain_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW5B,
+        ROW5B_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW5B),
+    )

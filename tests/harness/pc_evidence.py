@@ -423,8 +423,18 @@ def _file_sha(path: str) -> str:
         return UNCONFIRMED
 
 
-def render_digests(ctx: pc_rows.RunContext, data: RunData) -> bytes:
-    """digests.txt: sha256 and name of SKILL.md, the reference files, the stub and the wrapper (run-token paths)."""
+def _has_wrapper(row: pc_rows.RowSpec) -> bool:
+    """True for a row whose allowlist profile carries the logging wrapper; a plain row has none (plan 04-04)."""
+    return row.tools_profile == pc_rows.PROFILE_HELPER
+
+
+def render_digests(ctx: pc_rows.RunContext, data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes:
+    """digests.txt: sha256 and name of SKILL.md, the reference files, the stub and the wrapper (run-token paths).
+
+    A row with no wrapper (a plain row) lists the skill and the reference files only: it has no stub and no wrapper,
+    so no line for either is written, not even an UNCONFIRMED one.
+    """
+    row = spec if spec is not None else _spec_of_run(data)
     skill = str(data.paths["skill_dir"])
     items: List[Tuple[str, str]] = [(os.path.join(skill, "SKILL.md"), os.path.join(skill, "SKILL.md"))]
     references = os.path.join(skill, "references")
@@ -433,24 +443,76 @@ def render_digests(ctx: pc_rows.RunContext, data: RunData) -> bytes:
             full = os.path.join(references, name)
             if os.path.isfile(full):
                 items.append((full, full))
-    stub = os.path.join(ctx.repo_root, "tests", "harness", "checkpoint_stub.py")
-    items.append((stub, "tests/harness/checkpoint_stub.py"))
-    wrapper = str(data.paths["wrapper"])
-    items.append((wrapper, wrapper))
+    if _has_wrapper(row):
+        stub = os.path.join(ctx.repo_root, "tests", "harness", "checkpoint_stub.py")
+        items.append((stub, "tests/harness/checkpoint_stub.py"))
+        wrapper = str(data.paths["wrapper"])
+        items.append((wrapper, wrapper))
     return _lines(["%s  %s" % (_file_sha(path), name) for path, name in items])
 
 
 def render_tools(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes:
     """tools.txt: the allowlist of the row's profile as the comma-joined rules, with the wrapper path in them."""
     row = spec if spec is not None else _spec_of_run(data)
-    rules = _row1().allowed_tools(row.tools_profile, str(data.paths["wrapper"]))
+    rules = _row1().allowed_tools(row.tools_profile, str(data.paths["wrapper"]), row.extra_tools)
     return _lines([",".join(rules)])
 
 
+def memory_policy(data: RunData) -> str:
+    """The memory policy the run used, read from its run record; a record with no such key is the pinned policy.
+
+    Rows filed before the record carried the key (Phase 3 and the helper rows) ran with auto-memory on. A value that
+    is not one of the two known words is an EvidenceError, never a guess.
+    """
+    run = data.run if isinstance(data.run, dict) else {}
+    policy = run.get("memory", pc_rows.MEMORY_PINNED)
+    if policy not in (pc_rows.MEMORY_PINNED, pc_rows.MEMORY_DISABLED):
+        raise EvidenceError("the run record names a memory policy that is not known")
+    return policy
+
+
 def render_settings_json(data: RunData) -> bytes:
-    """settings.json: the settings the run used, without the audit hook."""
-    rendered = pc_flags.render_settings(str(data.paths["auto_memory"]))
+    """settings.json: the settings the run used, without the audit hook (the memory switch follows the run record)."""
+    rendered = pc_flags.render_settings(
+        str(data.paths["auto_memory"]), None, memory_policy(data) == pc_rows.MEMORY_PINNED
+    )
     return (json.dumps(rendered, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _count_names(root: str, skip_top: Sequence[str] = (), needle: Optional[str] = None) -> Optional[int]:
+    """Count the entries under root without following a link: every file (needle None), or every file and folder whose
+    path below root holds needle (lower case). The top-level names in skip_top are left out. None when unreadable."""
+    if not os.path.isdir(root) or os.path.islink(root):
+        return None
+    count = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            if dirpath == root:
+                dirnames[:] = [name for name in dirnames if name not in skip_top]
+                filenames = [name for name in filenames if name not in skip_top]
+            for name in list(dirnames) + list(filenames):
+                full = os.path.join(dirpath, name)
+                if needle is None:
+                    if name in filenames or os.path.islink(full):
+                        count += 1
+                elif needle in os.path.relpath(full, root).lower():
+                    count += 1
+    except OSError:
+        return None
+    return count
+
+
+def memory_fact_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
+    """The memory facts of a run as counts and names only: the setting, the files in the pinned auto-memory folder, the
+    memory-looking paths under the project (its git folder left out) and the default memory root."""
+    files = _count_names(str(data.paths["auto_memory"]))
+    paths = _count_names(str(data.paths["project"]), skip_top=(".git",), needle="memory")
+    return [
+        "memory-setting: %s" % memory_policy(data),
+        "auto-memory-files: %s" % (files if files is not None else UNCONFIRMED),
+        "project-memory-paths: %s" % (paths if paths is not None else UNCONFIRMED),
+        "default-memory-root: %s" % facts["memory_probe"],
+    ]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -780,7 +842,8 @@ def render_mechanical_checks(
                 "bash-write-escapes: %d" % mentions["write_escapes"]["count"],
                 "run-record-changes: %d" % facts["guard"]["count"],
                 "default-memory-folder: %s" % facts["memory_probe"],
-            ],
+            ]
+            + memory_fact_lines(data, facts),
         )
     )
 
@@ -890,8 +953,15 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_r
     traces = ", ".join("%s-full-trace.md" % stage_label(row, stage.name) for stage in data.stages)
     return [
         "- [ ] helper calls (all stages): attempted %d, executed %d, denied %d, compound refusals %d "
-        "(source: wrapper-calls.log, %s)"
-        % (helper["attempted"], helper["executed"], helper["denied"], helper["compound_refusals"], traces),
+        "(source: %s%s)"
+        % (
+            helper["attempted"],
+            helper["executed"],
+            helper["denied"],
+            helper["compound_refusals"],
+            "wrapper-calls.log, " if _has_wrapper(row) else "",
+            traces,
+        ),
         "- [ ] ledger digests unchanged, setup to %s: %s (source: snap-0-setup/sha.txt, %s/sha.txt)"
         % (last, _yes_no(bool(facts["ledgers"]["unchanged"])), last),
         "- [ ] writes outside approved roots: %d; snapshot paths %d, tool paths %d, Bash writes %d, "
@@ -1257,7 +1327,7 @@ def collect_files(
     put("model-id.txt", render_model_id(data))
     put("isolation-mode.txt", render_isolation_mode(data))
     put("harness-version.txt", render_harness_version(ctx))
-    put("digests.txt", render_digests(ctx, data))
+    put("digests.txt", render_digests(ctx, data, row))
     put("tools.txt", render_tools(data, row))
     put("settings.json", render_settings_json(data))
     put("usage.txt", render_usage(data, row))
@@ -1268,12 +1338,14 @@ def collect_files(
 
     claude_md = os.path.join(str(paths["project"]), "CLAUDE.md")
     put("fixture-CLAUDE.md", _read_bytes(claude_md) if os.path.isfile(claude_md) else _lines([UNCONFIRMED]))
-    for source, target in (
+    helper_files = (
         (os.path.join(str(paths["raw"]), "status-before.txt"), "status-before.txt"),
         (os.path.join(str(paths["raw"]), "lint-before.txt"), "lint-before.txt"),
         (os.path.join(str(paths["wrapper_dir"]), "calls.log"), "wrapper-calls.log"),
         (str(paths["wrapper"]), "wrapper-checkpoint.sh"),
-    ):
+    )
+    # A row with no wrapper has no helper state to file: the four files are left out, not filed as UNCONFIRMED.
+    for source, target in helper_files if _has_wrapper(row) else ():
         put(target, _read_bytes(source) if os.path.isfile(source) else _lines([UNCONFIRMED]))
 
     for name, content in stage_files(row, data, facts, clean, filed_row=True).items():
