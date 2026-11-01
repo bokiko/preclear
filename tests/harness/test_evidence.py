@@ -106,6 +106,15 @@ class World(object):
         return os.path.join(self.destination, ROW1)
 
 
+def assert_only_stopped(case: unittest.TestCase, world: "World", label: str) -> None:
+    """A stop files only its STOPPED label: the dated folder holds that one folder and no row folder (plan 04-03)."""
+    created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
+    case.assertEqual(created, [DEST_NAME], label + ": only the dated folder was created under tests/evidence")
+    case.assertEqual(
+        os.listdir(world.destination), ["STOPPED-" + ROW1], label + ": a stop files its label and no row folder"
+    )
+
+
 class Unfiled(object):
     """A rig whose row ran to the end with the filing refused by a stand-in, so the run root is complete and
     nothing is filed. The real filing is then called by the test."""
@@ -114,7 +123,12 @@ class Unfiled(object):
         self.rig = pc_testutil.RowRig(stages=stages, **config)
         self.ctx = self.rig.context()
         refusal = rows().RowOutcome(pc_exitcodes.PROMOTE_REFUSED, ("refused by the test stand-in",))
-        with mock.patch.object(evidence(), "file_row", return_value=refusal):
+        no_label = rows().RowOutcome(pc_exitcodes.OK, ())
+        # A live stop files a STOPPED label (plan 04-03); the stand-in files none, so the refile tests start from
+        # a world where nothing is filed.
+        with mock.patch.object(evidence(), "file_row", return_value=refusal), mock.patch.object(
+            evidence(), "file_stopped", return_value=no_label
+        ):
             self.outcome = row1().run_row(self.ctx)
 
     @property
@@ -226,8 +240,7 @@ class FilingTests(unittest.TestCase):
         stages = pc_testutil.seed_outside_write(pc_testutil.default_row1_stages(), 1)
         world = World(stages=stages)
         self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
-        created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
-        self.assertEqual(created, [], "nothing was created under tests/evidence")
+        assert_only_stopped(self, world, "")
 
     def test_a_sanitizer_error_on_a_staged_file_is_15_and_files_nothing(self) -> None:
         run = Unfiled()
@@ -1154,7 +1167,8 @@ class RefileTests(unittest.TestCase):
     def test_a_run_with_a_breach_is_11_and_files_nothing(self) -> None:
         rig = pc_testutil.RowRig(stages=pc_testutil.seed_outside_write(pc_testutil.default_row1_stages(), 1))
         ctx = rig.context()
-        outcome = row1().run_row(ctx)
+        with mock.patch.object(evidence(), "file_stopped", return_value=rows().RowOutcome(pc_exitcodes.OK, ())):
+            outcome = row1().run_row(ctx)
         self.assertEqual(outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "the row stopped with the breach")
         names = os.listdir(ctx.runs_root)
         out = io.StringIO()
@@ -1533,8 +1547,7 @@ class Harn09ReproofTests(unittest.TestCase):
             world = World(stages=stages)
             self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, label + ": " + world.text)
             self.assertIn("isolation or git breach", world.text, label + ": a breach line is printed")
-            created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
-            self.assertEqual(created, [], label + ": nothing was created under tests/evidence")
+            assert_only_stopped(self, world, label)
             self.assertNotIn(world.rig.base, world.text, label + ": no folder of the rig is printed")
             self.assertEqual(world.rig.tripwire(), [], label + ": no other claude was started")
             if marker is not None:
@@ -1546,7 +1559,7 @@ class Harn09ReproofTests(unittest.TestCase):
         world = World(stages=pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0))
         self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
         created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
-        self.assertEqual(created, [], "nothing was created under tests/evidence")
+        self.assertEqual(created, [], "nothing was created under tests/evidence (the runner stopped before any label)")
         self.assertNotIn(world.rig.base, world.text, "no folder of the rig is printed")
         self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
         self.assertEqual(len(world.rig.calls()), 1, "the second stage was never launched")
@@ -1556,7 +1569,7 @@ class Harn09ReproofTests(unittest.TestCase):
         world = World(stages=pc_testutil.seed_pin_rewritten(pc_testutil.default_row1_stages(), 0))
         self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
         created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
-        self.assertEqual(created, [], "nothing was created under tests/evidence")
+        self.assertEqual(created, [], "nothing was created under tests/evidence (the runner stopped before any label)")
         self.assertNotIn(world.rig.base, world.text, "no folder of the rig is printed")
         self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
         self.assertEqual(len(world.rig.calls()), 1, "the second stage was never launched")

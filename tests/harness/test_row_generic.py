@@ -329,7 +329,7 @@ class RegisteredRowTests(unittest.TestCase):
         stages = pc_testutil.seed_outside_write(pc_testutil.default_row_stages(spec_of(ROW4A)), 1)
         run = Registered(stages=stages)
         self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
-        self.assertFalse(os.path.exists(run.ctx.destination), "nothing was filed")
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW4A], "only the stopped label was filed")
         self.assertTrue(any("writes outside approved roots" in line for line in run.outcome.lines))
 
     def test_every_setup_text_is_free_of_path_shaped_strings(self) -> None:

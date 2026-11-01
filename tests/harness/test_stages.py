@@ -332,9 +332,11 @@ class StopRuleTests(unittest.TestCase):
     def assert_stopped(self, run, code, calls, stage="s1"):
         self.assertEqual(run.outcome.code, code, "\n".join(run.outcome.lines))
         self.assertEqual(len(run.rig.calls()), calls)
-        self.assertEqual(len(run.outcome.lines), 1)
+        self.assertEqual(len(run.outcome.lines), 2, "the stop line and the filed line (plan 04-03)")
         self.assertIn("stage " + stage, run.outcome.lines[0])
         self.assertNotIn(run.rig.base, run.outcome.lines[0])
+        self.assertRegex(run.outcome.lines[1], r"^filed: [a-z0-9.-]+/STOPPED-row1-wrong-binding, [0-9]+ file\(s\)$")
+        self.assertNotIn(run.rig.base, run.outcome.lines[1])
         self.assertEqual(len([r for r in run.ledger() if r["kind"] == "launch"]), calls)
         self.assertEqual(len([r for r in run.ledger() if r["kind"] == "settle"]), calls)
         self.assertTrue(os.path.isfile(run.raw("%s.stdout" % stage)))

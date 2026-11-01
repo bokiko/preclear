@@ -2741,7 +2741,7 @@ class RunRecordRunTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(raw, "s2.stdout")), kind + ": the raw bytes stay")
         self.assertFalse(os.path.exists(os.path.join(raw, "s3.stdout")), kind + ": no third stage")
         self.assertEqual(len(run.rig.calls()), 2, kind + ": no later stage was launched")
-        self.assertFalse(os.path.lexists(run.ctx.destination), kind + ": nothing was filed")
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-row1-wrong-binding"], kind + ": no row folder, one STOPPED label")
 
     def test_a_rewritten_hook_log_ends_the_row_with_11(self) -> None:
         self.check_tamper("hooklog")

@@ -279,7 +279,7 @@ def usage_totals(stages: Sequence[StageData]) -> Tuple[str, str]:
 # ---------------------------------------------------------------------------------------------
 
 
-def render_usage(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes:
+def render_usage(data: RunData, spec: Optional[pc_rows.RowSpec] = None, stopped: bool = False) -> bytes:
     """usage.txt: the stages in execution order, each call's own cost and the reported totals as parsed text.
 
     Costs are the Decimal text exactly as parsed. The row total is the s2 cumulative total plus the s3 total
@@ -319,6 +319,12 @@ def render_usage(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes
                 "check the call cost" % name
             )
     row_total, run_total = usage_totals(data.stages)
+    if stopped:
+        # A chain that did not finish has no row total: the sum of what the stages that ran reported is a partial
+        # total, UNCONFIRMED when any of them reported no cost.
+        lines.append("row total: %s, the chain did not finish" % UNCONFIRMED)
+        lines.append("partial total: %s" % row_total)
+        return _lines(lines)
     lines.append("row total: %s" % row_total)
     lines.append("run total: %s" % run_total)
     return _lines(lines)
@@ -1161,6 +1167,51 @@ def harness_authored_names(names: Iterable[str]) -> List[str]:
     return sorted(picked)
 
 
+def stage_files(
+    row: pc_rows.RowSpec, data: RunData, facts: Mapping[str, Any], clean: Callable[[str], str], filed_row: bool
+) -> Dict[str, bytes]:
+    """The per-stage files of every stage that has a record, keyed by their name inside the folder.
+
+    A filed row (filed_row true) gets all of them: exit, error, the work turn's reply, the prompts, the traces
+    and the session ids. A stopped row's folder (filed_row false) holds the prompt, exit, error and trace files
+    only: no reply file and no session id. A trace is written only for a stage whose stream is readable.
+    """
+    files: Dict[str, bytes] = {}
+    for stage in data.stages:
+        label = stage_label(row, stage.name)
+        kind = _stage_kind(row, stage.name)
+        record = stage.record
+        code = record.get("returncode")
+        base = "s1" if stage.name == "s1" else label
+        files["%s.exit" % base] = _lines(
+            ["exit %s" % (code if isinstance(code, int) and not isinstance(code, bool) else UNCONFIRMED)]
+        )
+        files["%s.err" % base] = stage.stderr
+        readable = stage.events is not None
+        if kind == "work":
+            if filed_row:
+                files["%s.out" % label] = _lines([_result_text(stage)])
+            if stage.prompt is not None or filed_row:
+                files["%s-prompt.md" % label] = (stage.prompt or "").encode("utf-8")
+            if readable or filed_row:
+                files["%s-full-trace.md" % label] = render_full_trace(row.row_id, stage, label)
+            if filed_row:
+                files["session.id"] = _lines([_text(record.get("session_id"))])
+        elif kind == "preclear":
+            if stage.prompt is not None or filed_row:
+                files["%s-prompt.md" % label] = (stage.prompt or "").encode("utf-8")
+            if readable or filed_row:
+                files["%s-trace.md" % label] = render_short_trace(row.row_id, stage, facts, clean, label)
+                files["%s-full-trace.md" % label] = render_full_trace(row.row_id, stage, label)
+        else:
+            if readable or filed_row:
+                files["%s-trace.md" % label] = render_short_trace(row.row_id, stage, facts, clean, label)
+                files["%s-full-trace.md" % label] = render_full_trace(row.row_id, stage, label)
+            if filed_row:
+                files["session-resume.id"] = _lines([_text(record.get("session_id"))])
+    return files
+
+
 def collect_files(
     ctx: pc_rows.RunContext, data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None
 ) -> Dict[str, bytes]:
@@ -1202,27 +1253,8 @@ def collect_files(
     ):
         put(target, _read_bytes(source) if os.path.isfile(source) else _lines([UNCONFIRMED]))
 
-    for stage in data.stages:
-        label = stage_label(row, stage.name)
-        kind = _stage_kind(row, stage.name)
-        record = stage.record
-        code = record.get("returncode")
-        base = "s1" if stage.name == "s1" else label
-        put("%s.exit" % base, _lines(["exit %s" % (code if isinstance(code, int) and not isinstance(code, bool) else UNCONFIRMED)]))
-        put("%s.err" % base, stage.stderr)
-        if kind == "work":
-            put("%s.out" % label, _lines([_result_text(stage)]))
-            put("%s-prompt.md" % label, (stage.prompt or "").encode("utf-8"))
-            put("%s-full-trace.md" % label, render_full_trace(folder, stage, label))
-            put("session.id", _lines([_text(record.get("session_id"))]))
-        elif kind == "preclear":
-            put("%s-prompt.md" % label, (stage.prompt or "").encode("utf-8"))
-            put("%s-trace.md" % label, render_short_trace(folder, stage, facts, clean, label))
-            put("%s-full-trace.md" % label, render_full_trace(folder, stage, label))
-        else:
-            put("%s-trace.md" % label, render_short_trace(folder, stage, facts, clean, label))
-            put("%s-full-trace.md" % label, render_full_trace(folder, stage, label))
-            put("session-resume.id", _lines([_text(record.get("session_id"))]))
+    for name, content in stage_files(row, data, facts, clean, filed_row=True).items():
+        put(name, content)
     chain = data.chain or {}
     line = chain.get("resume_line")
     if isinstance(line, str) and line:
@@ -1328,7 +1360,7 @@ def file_row(
 MESSAGE_SKIP_ROW = "FAIL: the skipped row could not be filed; nothing is filed"
 MESSAGE_SKIP_COLLISION = "RUNROOT_COLLISION: a run folder already exists; nothing is filed"
 SKIPPED_PREFIX = "SKIPPED-"
-STOPPED_PREFIX = "STOPPED-"  # the label folder of a stopped row (plan 04-03 files it; the driver gate already refuses it)
+STOPPED_PREFIX = "STOPPED-"  # the label folder of a stopped row (D-02)
 
 
 def render_skipped_readme(row_id: str, reason: str) -> bytes:
@@ -1394,4 +1426,230 @@ def file_skipped(
     return pc_rows.RowOutcome(
         pc_exitcodes.PREFLIGHT_SKIP,
         ("filed: %s/%s%s, 1 file(s); no session was run" % (os.path.basename(destination), SKIPPED_PREFIX, label),),
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# A STOPPED row (D-02, D-03)
+# ---------------------------------------------------------------------------------------------
+
+REASON_TURNS = "turns"
+REASON_CAP = "cap"
+REASON_TIMEOUT = "timeout"
+REASON_STREAM = "stream"
+REASON_ISOLATION = "isolation"
+REASON_BREACH = "breach"
+REASON_EXIT = "exit"
+REASON_ERROR = "error"
+STOP_REASONS: Tuple[str, ...] = (
+    REASON_TURNS,
+    REASON_CAP,
+    REASON_TIMEOUT,
+    REASON_STREAM,
+    REASON_ISOLATION,
+    REASON_BREACH,
+    REASON_EXIT,
+    REASON_ERROR,
+)
+STOP_FILE = "stop.txt"
+MESSAGE_STOP_UNREADABLE = "FAIL: the stopped run could not be read for filing; nothing is filed"
+MESSAGE_STOP_REASON = "FAIL: the stop reason is not one of the known words; nothing is filed"
+MESSAGE_CHECKS_NOT_COMPUTED = "The mechanical checks were not computed: the checks could not read the run root.\n"
+_SUBTYPE_TEXT = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
+_NO_FACTS: Mapping[str, Any] = {}
+
+
+def verdict_pattern() -> Any:
+    """The whole words no harness-authored file may hold, assembled from fragments at run time (EVID-05).
+
+    The module holds none of them whole: the only place the vocabulary exists is the compiled pattern, so a plain
+    search of the harness source for the words finds nothing.
+    """
+    parts = (
+        ("pa", "ss"), ("pa", "ssed"), ("fa", "il"), ("fa", "iled"), ("fa", "ilure"),
+        ("acc", "ept"), ("acc", "epted"), ("ver", "dict"),
+    )
+    return re.compile(r"\b(?:%s)\b" % "|".join("".join(pair) for pair in parts), re.IGNORECASE)
+
+
+def stop_reason(problem: str, subtype: Any) -> str:
+    """The reason word of a stop, from the stage's problem word and the result subtype text.
+
+    isolation and breach are named by the caller and pass through; a timeout and an unreadable stream are what
+    they are. A subtype text holding max_turns is turns and one holding max_budget is cap, whatever the exit
+    status was (the real limit-hit subtype names on the pinned build are unobserved; the first real stop is
+    checked against this reading). A non-zero exit with no such subtype is exit. Anything else (a subtype that is
+    neither, an error result, a terminal reason that is not completed) is error, and stop.txt records the
+    subtype text.
+    """
+    word = str(problem)
+    if word in (REASON_ISOLATION, REASON_BREACH, REASON_TIMEOUT, REASON_STREAM):
+        return word
+    text = subtype if isinstance(subtype, str) else ""
+    if "max_turns" in text:
+        return REASON_TURNS
+    if "max_budget" in text:
+        return REASON_CAP
+    if word == REASON_EXIT:
+        return REASON_EXIT
+    return REASON_ERROR
+
+
+def stop_exit_code(reason: str) -> int:
+    """The exit code a stop keeps: 19 for an unreadable stream, 11 for every other stop."""
+    return pc_exitcodes.DENIAL_FOUND if reason == REASON_STREAM else pc_exitcodes.PREFLIGHT_FAIL
+
+
+def render_stop(row_id: str, reason: str, stage_name: str) -> bytes:
+    """The README of a STOPPED folder: the label, the row, the reason and the stage, then the one verdict line last."""
+    return _lines(
+        [
+            "# STOPPED: %s" % row_id,
+            "",
+            "Row: %s" % row_id,
+            "Reason: %s" % reason,
+            "Stage: %s" % stage_name,
+            "",
+            "This folder is a label for a run that did not finish. It is not a result. stop.txt holds the reason "
+            "and the counts, usage.txt the cost of the stages that ran. The raw captures stay in the run root and "
+            "are not filed.",
+            "",
+            VERDICT_LINE,
+        ]
+    )
+
+
+def _subtype_text(data: RunData, stage_name: str) -> str:
+    """The result subtype of a stage as plain text, UNCONFIRMED when absent, odd-shaped or a verdict word."""
+    stage = _stage(data, stage_name)
+    value = stage.record.get("subtype") if stage is not None else None
+    if not isinstance(value, str) or not _SUBTYPE_TEXT.match(value) or verdict_pattern().search(value):
+        return UNCONFIRMED
+    return value
+
+
+def render_stop_text(
+    row: pc_rows.RowSpec,
+    data: RunData,
+    reason: str,
+    stage_name: str,
+    exit_code: int,
+    facts: Optional[Mapping[str, Any]],
+) -> bytes:
+    """stop.txt: the reason, the stage, the exit code, the subtype text and the counts, as `name: value` lines."""
+    stage = _stage(data, stage_name)
+    turns = _record_int(stage, "turns") if stage is not None else None
+    calls = len(pc_stream.tool_calls(stage.events)) if stage is not None and stage.events is not None else None
+    lines = [
+        "stop for %s" % row.row_id,
+        "reason: %s" % reason,
+        "stage: %s" % stage_name,
+        "exit code: %d" % exit_code,
+        "result subtype: %s" % _subtype_text(data, stage_name),
+        "counts: stages run %d of %d, turns in the stopped stage %s, tool calls in the stopped stage %s"
+        % (
+            len(data.stages),
+            len(row.stages),
+            UNCONFIRMED if turns is None else turns,
+            UNCONFIRMED if calls is None else calls,
+        ),
+    ]
+    if facts is None:
+        lines.append("checks: not computed")
+    else:
+        lines.append("checks: computed")
+        for name, count in pc_checks.breaches(facts):
+            lines.append("breach %s: %d" % (name, count))
+    return _lines(lines)
+
+
+def stopped_files(
+    ctx: pc_rows.RunContext,
+    data: RunData,
+    row: pc_rows.RowSpec,
+    reason: str,
+    stage_name: str,
+    exit_code: int,
+    facts: Optional[Mapping[str, Any]],
+) -> Dict[str, bytes]:
+    """The flat file set of a STOPPED folder: README, stop.txt, usage.txt, the stage files, the checks when readable.
+
+    Nothing from the raw folder is staged as is: no stream, no stage record, no settings file, no session id, no
+    snapshot. The stage files are the rendered traces, the stored prompts, the exit lines and the error text.
+    """
+    clean: Callable[[str], str] = ctx.sanitizer.sanitize_text
+    files: Dict[str, bytes] = {
+        "README.md": render_stop(row.row_id, reason, stage_name),
+        STOP_FILE: render_stop_text(row, data, reason, stage_name, exit_code, facts),
+        "usage.txt": render_usage(data, row, stopped=True),
+    }
+    if facts is not None:
+        files["mechanical-checks.md"] = render_mechanical_checks(data, facts, row)
+    else:
+        files["mechanical-checks.md"] = MESSAGE_CHECKS_NOT_COMPUTED.encode("utf-8")
+    files.update(stage_files(row, data, facts if facts is not None else _NO_FACTS, clean, filed_row=False))
+    return files
+
+
+def file_stopped(
+    ctx: pc_rows.RunContext,
+    run_root: str,
+    spec: pc_rows.RowSpec,
+    reason: str,
+    stage_name: str,
+    exit_code: Optional[int] = None,
+) -> pc_rows.RowOutcome:
+    """File <destination>/STOPPED-<row folder> for a row that stopped after its run root existed.
+
+    The folder is a label, not a result: its README ends with the one verdict line and no harness-authored file
+    holds a verdict word. The files are rendered from the run root as it is on disk, for the stages that ran
+    (usage.txt marks the row total unknown), sanitized, gated and promoted with the deny entries like a complete
+    row; raw captures, settings, session ids and snapshots are never staged. The outcome is exit 0 and the
+    `filed:` line when the label was filed (the caller keeps the stop's own exit code), else the refusal's code
+    (14 gate, 15 sanitizer or scanner, 17 promote, 11 for a run root that cannot be read) and its fixed lines.
+    A short chain, a stream that does not parse and a checks failure are all tolerated: the label is more useful
+    filed than not.
+    """
+    if reason not in STOP_REASONS:
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STOP_REASON,))
+    if ctx.deny_entries is None or ctx.sanitizer is None:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_NO_DENY_ENTRIES,))
+    try:
+        data = load_stage_data(run_root)
+        entry = _spec_of_run(data)
+        if spec is not None and spec.row_id != entry.row_id:
+            raise EvidenceError("the run record names another row")
+    except EvidenceError:
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STOP_UNREADABLE,))
+    try:
+        facts: Optional[Dict[str, Any]] = pc_checks.compute_facts(run_root, ctx.config_dir)
+    except pc_checks.CheckError:
+        facts = None
+    code = exit_code if exit_code is not None else stop_exit_code(reason)
+    try:
+        files = stopped_files(ctx, data, entry, reason, stage_name, code, facts)
+    except (EvidenceError, OSError, KeyError, ValueError):
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STOP_UNREADABLE,))
+    try:
+        stage = new_stage_dir(os.path.realpath(run_root))
+    except OSError:
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STAGING,))
+    try:
+        count = stage_tree(stage, files, ctx.sanitizer)
+    except pc_sanitize.SanitizerError:
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
+    except OSError:
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STAGING,))
+    label = STOPPED_PREFIX + pc_rows.row_folder_name(entry.row_id, ctx.attempt)
+    result = pc_promote.promote(
+        stage,
+        os.path.join(ctx.destination, label),
+        ctx.repo_root,
+        config_dir=ctx.config_dir,
+        deny_entries=ctx.deny_entries,
+    )
+    if int(result.code) != pc_exitcodes.OK:
+        return _outcome(result, ctx.destination, 0)
+    return pc_rows.RowOutcome(
+        pc_exitcodes.OK, ("filed: %s/%s, %d file(s)" % (os.path.basename(ctx.destination), label, count),)
     )

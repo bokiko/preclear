@@ -624,7 +624,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
 - `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after
-- `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED labels
+- `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED and STOPPED labels
 - `pc_exitcodes.py` - the named exit codes
 - `pc_flags.py` - the pinned `claude -p` contract: flag table, argv builder, environment scrub, version gate
 - `pc_leakgate.py` - fail-closed leak gate for evidence about to become public
@@ -647,6 +647,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_testutil.py` - fake and tripwire claude, shared-directory layout, minimal environments (test support)
 - `replay-cases.json` - the mined helper calls the replay suite runs against the stub
 - `test_allowlist.py` - tests for the allowlist model
+- `test_baseline.py` - tests for stopped rows, promote_into and the top-level files of a dated folder
 - `test_bash_shims.py` - bash 3.2 lint of the shims and a run under the system bash
 - `test_branch_table.py` - tests for the branch table
 - `test_checks.py` - tests for the mechanical checks, with seeded failing runs and a clean control
