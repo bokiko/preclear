@@ -69,19 +69,22 @@ def read_text(path: str) -> str:
 
 
 def make_repo(skip_source=None, with_evidence=True) -> str:
-    """Build a repository layout holding only what row 1 lists as sources (placeholders) and the stub."""
+    """Build a repository layout holding what every implemented registry entry lists as sources (placeholders) and the stub."""
     repo = scratch()
     pc_rows = rows()
-    for path, kind in pc_rows.find_entry(pc_rows.build_registry(), "row", ROW1).sources:
-        if path == skip_source:
+    for entry in pc_rows.build_registry():
+        if not entry.implemented:
             continue
-        target = os.path.join(repo, *path.split("/"))
-        if kind == "dir":
-            os.makedirs(target, exist_ok=True)
-        else:
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "wb") as handle:
-                handle.write(b"placeholder\n")
+        for path, kind in entry.sources:
+            if path == skip_source:
+                continue
+            target = os.path.join(repo, *path.split("/"))
+            if kind == "dir":
+                os.makedirs(target, exist_ok=True)
+            elif not os.path.exists(target):
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "wb") as handle:
+                    handle.write(b"placeholder\n")
     stub = os.path.join(repo, "tests", "harness", "checkpoint_stub.py")
     if skip_source != "tests/harness/checkpoint_stub.py":
         shutil.copyfile(os.path.join(HARNESS_DIR, "checkpoint_stub.py"), stub)

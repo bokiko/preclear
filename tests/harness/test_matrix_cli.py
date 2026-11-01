@@ -113,6 +113,26 @@ def injected_row(row_id: str, caps, implemented: bool = True):
     return pc_rows.RowSpec(row_id, "row", "injected test row", stages, implemented, None, None, ())
 
 
+def an_unimplemented(kind: str):
+    """Return (id, registry) of an unimplemented entry of the given kind; inject one when none is left.
+
+    The ids come from the registry, so a plan that implements another row never edits the tests that need a row
+    that is only listed.
+    """
+    pc_rows = rows()
+    registry = pc_rows.build_registry()
+    for entry in registry:
+        if entry.kind == kind and not entry.implemented:
+            return entry.row_id, registry
+    extra = injected_row("%s0-not-built" % ("row" if kind == "row" else "layout"), ("0.10",), implemented=False)
+    extra = extra._replace(kind=kind)
+    return extra.row_id, pc_rows.build_registry(extra=[extra])
+
+
+def money(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.01")), "f")
+
+
 class RegistryTests(unittest.TestCase):
     def test_three_layouts_and_eighteen_rows_in_acceptance_order(self) -> None:
         pc_rows = rows()
@@ -125,11 +145,15 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual([entry.row_id for entry in registry], list(LAYOUTS + ROWS))
         self.assertEqual([entry.kind for entry in registry], ["layout"] * 3 + ["row"] * 18)
 
-    def test_only_row_one_is_implemented_with_its_three_stages(self) -> None:
+    def test_implemented_entries_have_stages_and_a_runner_and_row_one_keeps_its_three_stages(self) -> None:
         pc_rows = rows()
         registry = pc_rows.build_registry()
         implemented = [entry.row_id for entry in registry if entry.implemented]
-        self.assertEqual(implemented, ["row1-wrong-binding"])
+        self.assertIn("row1-wrong-binding", implemented)
+        for entry in registry:
+            if entry.implemented:
+                self.assertTrue(entry.stages, "an implemented entry has stages")
+                self.assertIsNotNone(entry.runner, "an implemented entry has a runner")
         row1 = pc_rows.find_entry(registry, "row", "row1-wrong-binding")
         self.assertEqual([stage.name for stage in row1.stages], ["s1", "s2", "s3"])
         self.assertEqual([stage.max_turns for stage in row1.stages], [15, 60, 15])
@@ -208,12 +232,19 @@ class ListTests(unittest.TestCase):
         body = [line.split() for line in lines[1:]]
         self.assertEqual([cells[1] for cells in body], list(LAYOUTS + ROWS))
         self.assertEqual([cells[0] for cells in body], ["layout"] * 3 + ["row"] * 18)
+        pc_rows = rows()
+        by_id = dict((entry.row_id, entry) for entry in pc_rows.build_registry())
         for cells in body:
             self.assertEqual(len(cells), 5)
+            entry = by_id[cells[1]]
+            if entry.implemented:
+                self.assertEqual(
+                    cells[2:], [str(len(entry.stages)), str(pc_rows.session_count(entry)), "yes"], cells[1]
+                )
+            else:
+                self.assertEqual(cells[2:], ["-", "-", "no"], cells[1])
             if cells[1] == "row1-wrong-binding":
                 self.assertEqual(cells[2:], ["3", "2", "yes"])
-            else:
-                self.assertEqual(cells[2:], ["-", "-", "no"])
         id_columns = {line.index(line.split()[1]) for line in lines}
         self.assertEqual(len(id_columns), 1, "the id column is not at a fixed position")
 
@@ -231,8 +262,9 @@ class SelectionTests(unittest.TestCase):
         cls.base = scratch()
         cls.env = cli_env(cls.base, [], harness_home=os.path.join(cls.base, "h"))
 
-    def refused(self, args, expect_text=None):
-        code, out, err = run_main(args, self.env)
+    def refused(self, args, expect_text=None, registry=None):
+        extra = {} if registry is None else {"registry": registry}
+        code, out, err = run_main(args, self.env, **extra)
         self.assertEqual(code, pc_exitcodes.USAGE, "a selection was not refused with exit 2")
         self.assertEqual(out, "", "a refusal wrote to standard output")
         self.assertTrue(err.strip(), "a refusal printed nothing")
@@ -284,11 +316,13 @@ class SelectionTests(unittest.TestCase):
         self.refused(["--layout", ""], "unknown layout name")
 
     def test_a_known_but_unimplemented_entry_is_refused_with_its_own_text(self) -> None:
-        err = self.refused(["--row", "row2-double-conflict"], "not implemented")
-        self.assertNotIn("row2", err)
-        err = self.refused(["--layout", "plain-memory", "--dry-run"], "not implemented")
-        self.assertNotIn("plain-memory", err)
-        self.refused(["--row", "row12-frozen-handoff", "--dry-run"], "not implemented")
+        row_id, registry = an_unimplemented("row")
+        err = self.refused(["--row", row_id], "not implemented", registry)
+        self.assertNotIn(row_id, err)
+        layout_id, layout_registry = an_unimplemented("layout")
+        err = self.refused(["--layout", layout_id, "--dry-run"], "not implemented", layout_registry)
+        self.assertNotIn(layout_id, err)
+        self.refused(["--row", row_id, "--dry-run"], "not implemented", registry)
 
     def test_selection_flag_combinations_are_refused(self) -> None:
         self.refused([])
@@ -356,12 +390,26 @@ class DryRunTests(unittest.TestCase):
         self.assertIn("destination tests/evidence/rerun-2026-10-28-claude-sonnet-5-5", out)
 
     def test_dry_run_all_counts_only_the_implemented_rows(self) -> None:
+        pc_rows = rows()
         out = self.run_ok("--dry-run", "--all")
         self.assertIn("row1-wrong-binding: 3 stages, 2 sessions", out)
-        for identifier in LAYOUTS + ROWS[1:]:
-            self.assertIn("%s: not implemented" % identifier, out)
+        chosen = [entry for entry in pc_rows.build_registry() if entry.implemented]
+        for entry in pc_rows.build_registry():
+            if entry.implemented:
+                self.assertIn(
+                    "%s: %d stages, %d sessions" % (entry.row_id, len(entry.stages), pc_rows.session_count(entry)), out
+                )
+            else:
+                self.assertIn("%s: not implemented" % entry.row_id, out)
+        worst = sum((pc_rows.worst_case(entry) for entry in chosen), Decimal("0"))
+        expected = "total: %d row(s), %d stage(s), %d session(s), worst case %s USD" % (
+            len(chosen),
+            sum(len(entry.stages) for entry in chosen),
+            sum(pc_rows.session_count(entry) for entry in chosen),
+            money(worst),
+        )
         totals = [line for line in out.splitlines() if line.startswith("total:")]
-        self.assertEqual(totals, ["total: 1 row(s), 3 stage(s), 2 session(s), worst case 2.00 USD"])
+        self.assertEqual(totals, [expected])
 
     def test_an_empty_registry_has_zero_stages_and_zero_sessions(self) -> None:
         code, out, err = run_main(["--dry-run", "--all"], self.env, registry=())

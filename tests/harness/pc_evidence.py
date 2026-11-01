@@ -14,6 +14,12 @@ reused or removed. Harness-authored files hold facts, counts and ids written as 
 booleans); the row README ends with the one line VERDICT_LINE and no harness-authored file holds a verdict word.
 A value that could not be measured is written UNCONFIRMED and never left blank.
 
+A row is described by its registry entry (pc_rows.RowSpec): the row folder name, the stage file labels, the Setup
+paragraph, the allowlist profile and the chain-complete rule are read from the entry, so no renderer names a row.
+file_row with an entry stages only the row folder and promotes it to <dated folder>/<row id>; an existing row
+folder is refused with 17 and an existing dated folder is not, so two rows share one dated folder. Without an
+entry file_row keeps the Phase 3 shape (a dated folder with a folder README) until row 1 moves onto the entry.
+
 Renderers are pure functions over data read from the run root; they write nothing. Messages are fixed text with
 counts, ids and rule labels only, never a path, a host name or the login. Standard library only, Python 3.9 floor.
 Nothing here deletes, renames, moves or truncates a file.
@@ -46,12 +52,6 @@ VERDICT_LINE = "Reviewer verdict: PENDING"
 UNCONFIRMED = "UNCONFIRMED"
 MARKER_NO_RESUME = "NO-RESUME-LINE"
 STAGE_ORDER: Tuple[str, ...] = ("s1", "s2", "s3")
-STAGE_LABELS: Dict[str, str] = {"s1": "s1-work", "s2": "s2-preclear", "s3": "s3-resume"}
-SNAPSHOT_OF: Dict[str, str] = {
-    "s1": "snap-1-after-work",
-    "s2": "snap-2-after-preclear",
-    "s3": "snap-3-after-resume",
-}
 USAGE_KEYS: Tuple[Tuple[str, str], ...] = (
     ("input_tokens", "input"),
     ("cache_creation_input_tokens", "cache creation"),
@@ -87,14 +87,6 @@ _STAGE_DIR_MODE = 0o700
 _FILE_MODE = 0o644
 _GIT_TIMEOUT_SECONDS = 60
 
-_SETUP_TEXT = (
-    "Setup: the configuration names ledger A (`CONTINUITY_CLAUDE-widget-export.md`); the harness bound the "
-    "session to ledger B (`CONTINUITY_CLAUDE-other-task.md`, a different workstream in the same fixture root). "
-    "A work turn comes first, then the /preclear turn with the JSON-default correction in the same session, then "
-    "a fresh session that pastes the resume line the /preclear turn printed."
-)
-
-
 class EvidenceError(Exception):
     """The run root does not hold what filing needs; messages are fixed text."""
 
@@ -103,6 +95,35 @@ def _row1() -> Any:
     import pc_row1  # imported late: pc_row1 imports this module
 
     return pc_row1
+
+
+def _spec_of_run(data: Any) -> pc_rows.RowSpec:
+    """The registry entry of the row a run record names, matched exactly; a record with no row is a row 1 record.
+
+    Runs filed before the record carried a row id are row 1 runs. An id that matches no registry entry is an
+    EvidenceError, so no row id reaches a path or a label before it has matched the registry (T-04-01).
+    """
+    run = data.run if isinstance(data.run, dict) else {}
+    row = run.get("row", pc_rows.ROW1)
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row) if isinstance(row, str) else None
+    if entry is None:
+        raise EvidenceError("the run record names a row that is not in the registry")
+    return entry
+
+
+def stage_label(spec: pc_rows.RowSpec, stage_name: str) -> str:
+    """The file label of a stage: its name and its kind (s1-work, s2-preclear, s3-resume)."""
+    for stage in spec.stages:
+        if stage.name == stage_name:
+            return "%s-%s" % (stage.name, stage.kind)
+    raise EvidenceError("a stage is not part of the row")
+
+
+def _stage_kind(spec: pc_rows.RowSpec, stage_name: str) -> str:
+    for stage in spec.stages:
+        if stage.name == stage_name:
+            return stage.kind
+    raise EvidenceError("a stage is not part of the row")
 
 
 class StageData(NamedTuple):
@@ -257,7 +278,7 @@ def usage_totals(stages: Sequence[StageData]) -> Tuple[str, str]:
 # ---------------------------------------------------------------------------------------------
 
 
-def render_usage(data: RunData) -> bytes:
+def render_usage(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes:
     """usage.txt: the stages in execution order, each call's own cost and the reported totals as parsed text.
 
     Costs are the Decimal text exactly as parsed. The row total is the s2 cumulative total plus the s3 total
@@ -267,7 +288,8 @@ def render_usage(data: RunData) -> bytes:
     when the call's own cost was derived from the totals and not read from the per-call block, WR-04), and one
     warning line follows for each stage whose flag is no (IN-01).
     """
-    lines = ["usage for %s" % pc_rows.ROW1, "costs are in US dollars as the stream reported them, kept as text"]
+    row = spec if spec is not None else _spec_of_run(data)
+    lines = ["usage for %s" % row.row_id, "costs are in US dollars as the stream reported them, kept as text"]
     for stage in data.stages:
         record = stage.record
         usage = record.get("usage")
@@ -411,9 +433,10 @@ def render_digests(ctx: pc_rows.RunContext, data: RunData) -> bytes:
     return _lines(["%s  %s" % (_file_sha(path), name) for path, name in items])
 
 
-def render_tools(data: RunData) -> bytes:
-    """tools.txt: the allowlist as the comma-joined rules, with the wrapper path in them."""
-    rules = pc_flags.build_allowed_tools(str(data.paths["wrapper"]), pc_flags.MODEL_FACING_WRAPPER_VERBS)
+def render_tools(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes:
+    """tools.txt: the allowlist of the row's profile as the comma-joined rules, with the wrapper path in them."""
+    row = spec if spec is not None else _spec_of_run(data)
+    rules = _row1().allowed_tools(row.tools_profile, str(data.paths["wrapper"]))
     return _lines([",".join(rules)])
 
 
@@ -547,7 +570,7 @@ def _shorten(text: str, clean: Callable[[str], str]) -> str:
     return one if len(one) <= SHORT_LIMIT else one[:SHORT_LIMIT]
 
 
-def render_full_trace(row_id: str, stage: StageData) -> bytes:
+def render_full_trace(row_id: str, stage: StageData, label: str) -> bytes:
     """The complete trace: every call with its result and the flags the structured fields give.
 
     A call is flagged ERROR when its tool result is an error and REFUSAL/DENIAL when its tool_use id is in the
@@ -558,7 +581,6 @@ def render_full_trace(row_id: str, stage: StageData) -> bytes:
     union = pc_stream.denial_report(events).union if events else frozenset()
     results = _results_by_id(events)
     calls = pc_stream.tool_calls(events)
-    label = STAGE_LABELS[stage.name]
     lines = [
         "# %s: %s: complete sanitized tool calls and results" % (row_id, label),
         "",
@@ -591,7 +613,7 @@ def render_full_trace(row_id: str, stage: StageData) -> bytes:
 
 
 def render_short_trace(
-    row_id: str, stage: StageData, facts: Mapping[str, Any], clean: Callable[[str], str]
+    row_id: str, stage: StageData, facts: Mapping[str, Any], clean: Callable[[str], str], label: str
 ) -> bytes:
     """The short trace: one bullet per call, a footer of counts, the usage line and the final reply.
 
@@ -601,7 +623,6 @@ def render_short_trace(
     events = stage.events or []
     union = pc_stream.denial_report(events).union if events else frozenset()
     results = _results_by_id(events)
-    label = STAGE_LABELS[stage.name]
     lines = ["# %s: %s" % (row_id, label), ""]
     edits: List[str] = []
     for tool_id, name, tool_input in pc_stream.tool_calls(events):
@@ -696,9 +717,12 @@ def _sum_helper(facts: Mapping[str, Any]) -> Dict[str, int]:
     return totals
 
 
-def render_mechanical_checks(data: RunData, facts: Mapping[str, Any]) -> bytes:
+def render_mechanical_checks(
+    data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None
+) -> bytes:
     """mechanical-checks.md: ten sections of `name: value` lines, yes and no for booleans, no reply text."""
-    out: List[str] = ["# Mechanical checks for %s" % pc_rows.ROW1, ""]
+    row = spec if spec is not None else _spec_of_run(data)
+    out: List[str] = ["# Mechanical checks for %s" % row.row_id, ""]
     init_lines: List[str] = []
     for stage in data.stages:
         init_lines.extend(_init_lines(stage))
@@ -834,8 +858,9 @@ def render_mechanical_checks(data: RunData, facts: Mapping[str, Any]) -> bytes:
     return ("\n".join(out).rstrip("\n") + "\n").encode("utf-8")
 
 
-def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
+def checklist_lines(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None) -> List[str]:
     """The reviewer checklist: one blank-box line per mechanical fact in the D-09 order, each with its source."""
+    row = spec if spec is not None else _spec_of_run(data)
     helper = _sum_helper(facts)
     snapshots = facts["snapshots"]
     last = snapshots[-1] if snapshots else UNCONFIRMED
@@ -855,7 +880,7 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
         "%s cost %s and %s turns" % (stage.name, _text(stage.record.get("delta")), _text(stage.record.get("turns")))
         for stage in data.stages
     )
-    traces = ", ".join("%s-full-trace.md" % STAGE_LABELS[stage.name] for stage in data.stages)
+    traces = ", ".join("%s-full-trace.md" % stage_label(row, stage.name) for stage in data.stages)
     return [
         "- [ ] helper calls (all stages): attempted %d, executed %d, denied %d, compound refusals %d "
         "(source: wrapper-calls.log, %s)"
@@ -874,9 +899,15 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
     ]
 
 
-def render_row_readme(data: RunData, facts: Mapping[str, Any]) -> bytes:
-    """The row README: setup, stage table, mechanical facts, then the checklist, then the one verdict line."""
-    lines = ["# Row 1: wrong active binding (1P), rerun on the pinned model and build", "", _SETUP_TEXT, ""]
+def render_row_readme(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None) -> bytes:
+    """The row README: setup, stage table, mechanical facts, then the checklist, then the one verdict line.
+
+    The heading is the entry's title and the Setup paragraph is the entry's setup text (left out when it is empty).
+    """
+    row = spec if spec is not None else _spec_of_run(data)
+    lines = ["# %s, rerun on the pinned model and build" % row.title, ""]
+    if row.setup_text:
+        lines.extend([row.setup_text, ""])
     lines.extend(["## Stages", "", "| Stage | Session | Exit | Turns | Subtype |", "| --- | --- | --- | --- | --- |"])
     for stage in data.stages:
         record = stage.record
@@ -901,7 +932,7 @@ def render_row_readme(data: RunData, facts: Mapping[str, Any]) -> bytes:
     lines.append("- ledger digests: %s" % ", ".join("%s %s" % (k, v) for k, v in facts["ledgers"]["names"].items()))
     lines.append("- the full list of facts is in mechanical-checks.md and usage.txt")
     lines.extend(["", "## Reviewer checklist", ""])
-    lines.extend(checklist_lines(data, facts))
+    lines.extend(checklist_lines(data, facts, row))
     lines.append(VERDICT_LINE)
     return _lines(lines)
 
@@ -1034,7 +1065,7 @@ def stage_tree(stage_dir: str, files: Mapping[str, bytes], sanitizer: Any) -> in
     return len(cleaned)
 
 
-def _unfileable(data: RunData) -> Optional[str]:
+def _unfileable(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> Optional[str]:
     """The fixed line that refuses the filing, or None when the run may be filed.
 
     Order: no stages, then each stage's prompt, stream and cleanliness, then the chain. Filing needs the chain the
@@ -1053,30 +1084,40 @@ def _unfileable(data: RunData) -> Optional[str]:
         # live path refused (CR-01).
         if stage.record.get("problem") != "" or stage.record.get("evaluation") != _row1().STATUS_PASS:
             return MESSAGE_STAGE_NOT_CLEAN
-    return _chain_incomplete(data)
+    return _chain_incomplete(data, spec)
 
 
-def _chain_incomplete(data: RunData) -> Optional[str]:
-    """MESSAGE_STAGE_MISSING unless the stage records are exactly the chain the registry defines for row 1.
+def _chain_incomplete(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> Optional[str]:
+    """MESSAGE_STAGE_MISSING unless the stage records are exactly the chain the registry defines for the row.
 
-    The live path files only after s2 has run and runs s3 only when s2 printed a resume line, so a run that
-    stopped early (a crash, an interrupt, a harness error after a paid call) has fewer records and must not be
-    filed or refiled (second-pass CR-01). The chain record names which shape is complete: s1 and s2 with the
-    marker none, or s1, s2 and s3 with the marker found. The stage names come from the registry entry that
-    run_row walks, not from a second list.
+    The live path files only after the last /preclear turn has run and runs a resume stage only when that turn
+    printed a resume line, so a run that stopped early (a crash, an interrupt, a harness error after a paid call)
+    has fewer records and must not be filed or refiled (second-pass CR-01). The chain record names which shape is
+    complete: every stage of the entry with the marker found, or every stage but those of kind resume with the
+    marker none. A spec with no stage of kind resume therefore has one complete shape, whatever the marker. The
+    stage names come from the registry entry the runner walks, not from a second list.
     """
     row1 = _row1()
     marker = data.chain.get("marker") if isinstance(data.chain, dict) else None
     if marker not in (row1.MARKER_FOUND, row1.MARKER_NONE):
         return MESSAGE_STAGE_MISSING
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row1.ROW_ID)
+    entry = spec if spec is not None else _spec_of_run_or_none(data)
     if entry is None:
         return MESSAGE_STAGE_MISSING
-    names = [spec.name for spec in entry.stages]
-    expected = names if marker == row1.MARKER_FOUND else names[:-1]
+    if marker == row1.MARKER_FOUND:
+        expected = [stage.name for stage in entry.stages]
+    else:
+        expected = [stage.name for stage in entry.stages if stage.kind != "resume"]
     if [stage.name for stage in data.stages] != expected:
         return MESSAGE_STAGE_MISSING
     return None
+
+
+def _spec_of_run_or_none(data: RunData) -> Optional[pc_rows.RowSpec]:
+    try:
+        return _spec_of_run(data)
+    except EvidenceError:
+        return None
 
 
 _AUTHORED_ROW_FILES = frozenset(
@@ -1103,44 +1144,52 @@ def harness_authored_names(names: Iterable[str]) -> List[str]:
     """Pick the names (relative to the evidence folder, forward slashes) of files the harness wrote in its own words.
 
     Traces, replies, prompts, ledger and memory copies and stderr come from the model or the process and are not
-    in the set. The verdict-word scan covers exactly these files.
+    in the set. The verdict-word scan covers exactly these files. A row folder is any registered row id.
     """
-    row = pc_rows.ROW1
+    ids = frozenset(entry.row_id for entry in pc_rows.build_registry())
     picked: List[str] = []
     for name in names:
         parts = name.split("/")
         base = parts[-1]
         if name == "README.md":
             picked.append(name)
-        elif len(parts) == 2 and parts[0] == row and (base in _AUTHORED_ROW_FILES or base.endswith(".exit")):
+        elif len(parts) == 2 and parts[0] in ids and (base in _AUTHORED_ROW_FILES or base.endswith(".exit")):
             picked.append(name)
-        elif len(parts) == 3 and parts[0] == row and parts[1].startswith("snap-") and base in _AUTHORED_LISTINGS:
+        elif len(parts) == 3 and parts[0] in ids and parts[1].startswith("snap-") and base in _AUTHORED_LISTINGS:
             picked.append(name)
     return sorted(picked)
 
 
 def collect_files(
-    ctx: pc_rows.RunContext, data: RunData, facts: Mapping[str, Any]
+    ctx: pc_rows.RunContext, data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None
 ) -> Dict[str, bytes]:
-    """Every file to stage, keyed by its path relative to the stage folder (a README.md and the row folder)."""
-    row = pc_rows.ROW1
+    """Every file to stage, keyed by its path relative to the stage folder.
+
+    With the registry entry the staged tree holds only the row folder (named by the entry's id) and the stage file
+    labels, the Setup paragraph and the allowlist come from the entry. Without one the Phase 3 shape is kept: a
+    folder-level README beside the row folder.
+    """
+    row = spec if spec is not None else _spec_of_run(data)
+    folder = row.row_id
     clean: Callable[[str], str] = ctx.sanitizer.sanitize_text
     paths = data.paths
-    files: Dict[str, bytes] = {"README.md": render_folder_readme(ctx, data)}
+    files: Dict[str, bytes] = {}
+    if spec is None:
+        files["README.md"] = render_folder_readme(ctx, data)
 
     def put(name: str, content: bytes) -> None:
-        files[row + "/" + name] = content
+        files[folder + "/" + name] = content
 
-    put("README.md", render_row_readme(data, facts))
+    put("README.md", render_row_readme(data, facts, row))
     put("claude-version.txt", render_claude_version(data))
     put("model-id.txt", render_model_id(data))
     put("isolation-mode.txt", render_isolation_mode(data))
     put("harness-version.txt", render_harness_version(ctx))
     put("digests.txt", render_digests(ctx, data))
-    put("tools.txt", render_tools(data))
+    put("tools.txt", render_tools(data, row))
     put("settings.json", render_settings_json(data))
-    put("usage.txt", render_usage(data))
-    put("mechanical-checks.md", render_mechanical_checks(data, facts))
+    put("usage.txt", render_usage(data, row))
+    put("mechanical-checks.md", render_mechanical_checks(data, facts, row))
     measurements_txt, measurements_md = render_measurements(data)
     put("measurements.txt", measurements_txt)
     put("measurements.md", measurements_md)
@@ -1156,26 +1205,25 @@ def collect_files(
         put(target, _read_bytes(source) if os.path.isfile(source) else _lines([UNCONFIRMED]))
 
     for stage in data.stages:
-        label = STAGE_LABELS[stage.name]
+        label = stage_label(row, stage.name)
+        kind = _stage_kind(row, stage.name)
         record = stage.record
         code = record.get("returncode")
-        put(
-            "%s.exit" % ("s1" if stage.name == "s1" else label),
-            _lines(["exit %s" % (code if isinstance(code, int) and not isinstance(code, bool) else UNCONFIRMED)]),
-        )
-        put("%s.err" % ("s1" if stage.name == "s1" else label), stage.stderr)
-        if stage.name == "s1":
-            put("s1-work.out", _lines([_result_text(stage)]))
-            put("s1-work-prompt.md", (stage.prompt or "").encode("utf-8"))
-            put("s1-work-full-trace.md", render_full_trace(row, stage))
+        base = "s1" if stage.name == "s1" else label
+        put("%s.exit" % base, _lines(["exit %s" % (code if isinstance(code, int) and not isinstance(code, bool) else UNCONFIRMED)]))
+        put("%s.err" % base, stage.stderr)
+        if kind == "work":
+            put("%s.out" % label, _lines([_result_text(stage)]))
+            put("%s-prompt.md" % label, (stage.prompt or "").encode("utf-8"))
+            put("%s-full-trace.md" % label, render_full_trace(folder, stage, label))
             put("session.id", _lines([_text(record.get("session_id"))]))
-        elif stage.name == "s2":
-            put("s2-preclear-prompt.md", (stage.prompt or "").encode("utf-8"))
-            put("s2-preclear-trace.md", render_short_trace(row, stage, facts, clean))
-            put("s2-preclear-full-trace.md", render_full_trace(row, stage))
+        elif kind == "preclear":
+            put("%s-prompt.md" % label, (stage.prompt or "").encode("utf-8"))
+            put("%s-trace.md" % label, render_short_trace(folder, stage, facts, clean, label))
+            put("%s-full-trace.md" % label, render_full_trace(folder, stage, label))
         else:
-            put("s3-resume-trace.md", render_short_trace(row, stage, facts, clean))
-            put("s3-resume-full-trace.md", render_full_trace(row, stage))
+            put("%s-trace.md" % label, render_short_trace(folder, stage, facts, clean, label))
+            put("%s-full-trace.md" % label, render_full_trace(folder, stage, label))
             put("session-resume.id", _lines([_text(record.get("session_id"))]))
     chain = data.chain or {}
     line = chain.get("resume_line")
@@ -1190,19 +1238,21 @@ def collect_files(
     snaps = str(paths["snaps"])
     if os.path.isdir(snaps):
         for name in sorted(os.listdir(snaps)):
-            folder = os.path.join(snaps, name)
-            if os.path.isdir(folder) and not os.path.islink(folder):
-                for relative, content in filed_snapshot_files(folder).items():
+            snapshot = os.path.join(snaps, name)
+            if os.path.isdir(snapshot) and not os.path.islink(snapshot):
+                for relative, content in filed_snapshot_files(snapshot).items():
                     put("%s/%s" % (name, relative), content)
     return files
 
 
-def _outcome(result: Any, destination: str, count: int) -> pc_rows.RowOutcome:
+def _outcome(result: Any, destination: str, count: int, row_folder: Optional[str] = None) -> pc_rows.RowOutcome:
     code = int(result.code)
     if code == pc_exitcodes.OK:
-        return pc_rows.RowOutcome(
-            pc_exitcodes.OK, ("filed: %s, %d file(s)" % (os.path.basename(destination), count),)
-        )
+        if row_folder is None:
+            line = "filed: %s, %d file(s)" % (os.path.basename(destination), count)
+        else:
+            line = "filed: %s %s, %d file(s)" % (os.path.basename(destination), row_folder, count)
+        return pc_rows.RowOutcome(pc_exitcodes.OK, (line,))
     lines = [str(result.message)]
     for line in str(result.report_text).splitlines():
         if line.strip():
@@ -1210,8 +1260,19 @@ def _outcome(result: Any, destination: str, count: int) -> pc_rows.RowOutcome:
     return pc_rows.RowOutcome(code, tuple(lines))
 
 
-def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str, Any]] = None) -> pc_rows.RowOutcome:
-    """Stage, sanitize, gate and promote the finished run in run_root into ctx.destination.
+def file_row(
+    ctx: pc_rows.RunContext,
+    run_root: str,
+    facts: Optional[Mapping[str, Any]] = None,
+    spec: Optional[pc_rows.RowSpec] = None,
+) -> pc_rows.RowOutcome:
+    """Stage, sanitize, gate and promote the finished run in run_root into the evidence folder.
+
+    With the registry entry of the row (spec) the staged tree holds only the row folder and it is promoted to
+    ctx.destination joined with the entry's id: the dated folder may already exist and holds other rows, a row
+    folder that exists is refused with 17. The entry must be the one the run record names, or nothing is filed.
+    Without an entry the whole staged tree, folder README included, is promoted to ctx.destination, which then
+    must not exist (the Phase 3 shape).
 
     The sanitizer and the deny entries are the ones the row built before spend (ctx.sanitizer, ctx.deny_entries);
     promote is always called with both the deny entries and the config folder (review WR-14), and a context
@@ -1225,15 +1286,17 @@ def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str
     try:
         data = load_stage_data(run_root)
         found = dict(facts) if facts is not None else pc_checks.compute_facts(run_root, ctx.config_dir)
+        if spec is not None and data.run.get("row") != spec.row_id:
+            raise EvidenceError("the run record names another row")
     except (EvidenceError, pc_checks.CheckError):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_UNREADABLE,))
     if pc_checks.breaches(found):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_BREACH,))
-    problem = _unfileable(data)
+    problem = _unfileable(data, spec)
     if problem is not None:
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (problem,))
     try:
-        files = collect_files(ctx, data, found)
+        files = collect_files(ctx, data, found, spec)
     except (EvidenceError, OSError, KeyError, ValueError):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_UNREADABLE,))
     except pc_sanitize.SanitizerError:
@@ -1248,10 +1311,12 @@ def file_row(ctx: pc_rows.RunContext, run_root: str, facts: Optional[Mapping[str
         return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
     except OSError:
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STAGING,))
-    result = pc_promote.promote(
-        stage, ctx.destination, ctx.repo_root, config_dir=ctx.config_dir, deny_entries=ctx.deny_entries
-    )
-    return _outcome(result, ctx.destination, count)
+    if spec is None:
+        source, target = stage, ctx.destination
+    else:
+        source, target = os.path.join(stage, spec.row_id), os.path.join(ctx.destination, spec.row_id)
+    result = pc_promote.promote(source, target, ctx.repo_root, config_dir=ctx.config_dir, deny_entries=ctx.deny_entries)
+    return _outcome(result, ctx.destination, count, None if spec is None else spec.row_id)
 
 
 # ---------------------------------------------------------------------------------------------

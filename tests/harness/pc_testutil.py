@@ -499,6 +499,19 @@ def default_row1_stages() -> list:
     return [s1, s2, s3]
 
 
+def default_row_stages(spec: Any) -> list:
+    """The stage scripts of a clean run of any registered row: one script per stage of its spec.
+
+    A stage of kind work gets the row 1 work script (it loads the project CLAUDE.md through the audit hook, writes
+    the exporter), a stage of kind preclear the row 1 /preclear script (a wrapper status call, a checkpoint, a
+    memory file, one denied wrapper bind and a fenced resume line), and a stage of kind resume the row 1 resume
+    script (a fresh session that loads the project CLAUDE.md and reads the checkpoint). The scripts are copies,
+    so a test may change one without touching the others. The list is as long as the spec's stage tuple.
+    """
+    templates = dict(zip(("work", "preclear", "resume"), default_row1_stages()))
+    return json.loads(json.dumps([templates[stage.kind] for stage in spec.stages]))
+
+
 def stages_with(stages: list, index: int, **changes: Any) -> list:
     """Return a deep copy of the stage list with the fields of one stage replaced (ops, result, ...)."""
     copied = json.loads(json.dumps(stages))
@@ -736,12 +749,36 @@ class RowRig(object):
             source = os.path.join(_REPO_ROOT, *relative.split("/"))
             if os.path.isdir(source):
                 shutil.copytree(source, os.path.join(self.repo, *relative.split("/")))
+        self._copy_registry_sources()
         os.makedirs(os.path.join(self.repo, "tests", "evidence"), exist_ok=True)
         env = git_env({"PATH": os.pathsep.join(SYSTEM_DIRS)})
         for args in (["init", "-q"], ["symbolic-ref", "HEAD", "refs/heads/main"], ["add", "-A"],
                      ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "rig repository"]):
             subprocess.run(["git", "-C", self.repo] + args, env=env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+    def _copy_registry_sources(self) -> None:
+        """Copy every path of every implemented registry entry's sources into the throwaway repository.
+
+        A path that is already there (the fixed trees copied above) is left alone, so a row defined by its
+        registry entry alone needs nothing added to this rig. Files and folders are copied, never moved.
+        """
+        import pc_rows
+
+        for entry in pc_rows.build_registry():
+            if not entry.implemented:
+                continue
+            for relative, kind in entry.sources:
+                source = os.path.join(_REPO_ROOT, *relative.split("/"))
+                target = os.path.join(self.repo, *relative.split("/"))
+                if os.path.lexists(target):
+                    continue
+                if kind == "dir" and os.path.isdir(source):
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    shutil.copytree(source, target)
+                elif kind != "dir" and os.path.isfile(source):
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    shutil.copy2(source, target)
 
     def configure(self, stages: Optional[list] = None, **config: Any) -> None:
         """Rewrite the scripted claude's fake.json; the call counter is not reset."""

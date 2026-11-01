@@ -5,7 +5,8 @@ What a row 1 run is, in order:
   * seed_row1         the committed wrong-binding setup in a fresh run root: the scratch project (CLAUDE.md
                       filled from the committed row's fixture, the three-step plan, a git repository on main,
                       the frozen skill as untracked files), the logging wrapper, two ledgers of which only the
-                      second is bound to the work session, the audit hook and the settings file
+                      second is bound to the work session, the audit hook and the settings file (the body is
+                      pc_rowseeds.seed_helper_row; this module keeps the name and the returned keys)
   * take_snapshot     one boundary snapshot (manifest, git status, ledger listings, copies of the ledgers,
                       the helper's fallback folder and the auto-memory folder)
   * run_stage         one claude -p call: the pinned argv from pc_flags, a ledger reservation before the process
@@ -16,6 +17,9 @@ What a row 1 run is, in order:
                       ledger), then s1, s2 resumed on the same session and, when s2 printed a resume line, s3
                       in a fresh session whose prompt is that line; the chain stops at the first stage that
                       did not complete cleanly
+  * run_registered_row  the same chain read from a registry entry alone (plan 04-01): the seed, the prompt files,
+                      the session keys, the allowlist profile and the filing come from the RowSpec; the row
+                      folder is refused when it exists (17), a dated folder that exists is not a refusal
   * extract_resume_line, caller_map, finish   the resume-line rule, the sanitizer's caller map and the closing
                       lines of a completed chain
   * breach_outcome    the mechanical checks of pc_checks over the run root after every stage and in finish: a
@@ -33,13 +37,11 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib
 import json
 import os
 import re
-import shlex
 import shutil
-import subprocess
-import sys
 import uuid
 from decimal import Decimal
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -51,6 +53,7 @@ import pc_flags
 import pc_leakgate
 import pc_manifest
 import pc_rows
+import pc_rowseeds
 import pc_runroot
 import pc_sanitize
 import pc_spend
@@ -65,10 +68,10 @@ PLAN_DATA = DATA_DIR + "/row1-plan.md"
 S1_PROMPT_DATA = DATA_DIR + "/row1-s1-prompt.md"
 S2_PROMPT_COMMITTED = PUBLICATION + "/s2-preclear-prompt.md"
 FIXTURE_CLAUDE_MD = PUBLICATION + "/fixture-CLAUDE.md"
-LEDGER_A_NAME = "CONTINUITY_CLAUDE-widget-export.md"
-LEDGER_B_NAME = "CONTINUITY_CLAUDE-other-task.md"
-PLAN_NAME = "2026-10-15-widget-export.md"
-TOKEN_PROJECT = "<repo>/<run>/project"
+LEDGER_A_NAME = pc_rowseeds.LEDGER_A_NAME
+LEDGER_B_NAME = pc_rowseeds.LEDGER_B_NAME
+PLAN_NAME = pc_rowseeds.PLAN_NAME
+TOKEN_PROJECT = pc_rowseeds.TOKEN_PROJECT
 LEDGER_PLACEHOLDER = "$LEDGER"
 
 # The boundary snapshot each stage takes after its process ends.
@@ -89,7 +92,6 @@ PROBLEM_TERMINAL = "terminal"
 USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
 CONSISTENCY_TOLERANCE = Decimal("0.000001")
 _STUB_TIMEOUT_SECONDS = 60
-_ISOLATION_PREFIX = "Isolation claim: "
 
 
 def _utc_now() -> datetime.datetime:
@@ -101,19 +103,9 @@ def _read(path: str) -> bytes:
         return handle.read()
 
 
-def _within(path: str, parent: str) -> bool:
-    return path == parent or path.startswith(parent.rstrip(os.sep) + os.sep)
-
-
 def isolation_mode() -> str:
     """The isolation mode word, taken from the pinned isolation claim and never typed here."""
-    claim = pc_flags.ISOLATION_CLAIM
-    if not claim.startswith(_ISOLATION_PREFIX):
-        raise ValueError("the pinned isolation claim has an unexpected shape")
-    found = re.match(r"[A-Za-z]+", claim[len(_ISOLATION_PREFIX):])
-    if found is None:
-        raise ValueError("the pinned isolation claim has an unexpected shape")
-    return found.group(0)
+    return pc_rowseeds.isolation_mode()
 
 
 def read_stage_prompts(repo_root: str, ledger_a_path: str) -> Tuple[str, str]:
@@ -131,84 +123,6 @@ def read_stage_prompts(repo_root: str, ledger_a_path: str) -> Tuple[str, str]:
 # Seeding
 # ---------------------------------------------------------------------------------------------
 
-_SOURCE_FILES = (
-    ("skill", "SKILL.md"),
-    ("wrapper", "tests/harness/checkpoint-wrapper"),
-    ("stub", "tests/harness/checkpoint_stub.py"),
-    ("hooklog", "tests/harness/pc_hooklog.py"),
-    ("claude_md", FIXTURE_CLAUDE_MD),
-    ("ledger_a", PUBLICATION + "/snap-0-setup/" + LEDGER_A_NAME),
-    ("ledger_b", PUBLICATION + "/snap-0-setup/" + LEDGER_B_NAME),
-    ("plan", PLAN_DATA),
-)
-_SOURCE_DIRS = (
-    ("references", "references"),
-    ("fixture", "tests/fixtures/bound-ledger/project"),
-)
-
-
-def _sources(repo: str) -> Dict[str, str]:
-    """Return the absolute path of every seed source; a missing one is a SpikeError naming it repo-relative."""
-    found: Dict[str, str] = {}
-    for key, relative in _SOURCE_FILES:
-        path = os.path.join(repo, *relative.split("/"))
-        if not os.path.isfile(path):
-            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % relative)
-        found[key] = path
-    for key, relative in _SOURCE_DIRS:
-        path = os.path.join(repo, *relative.split("/"))
-        if not os.path.isdir(path):
-            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % relative)
-        found[key] = path
-    return found
-
-
-def _copy_fixture_project(source: str, dest: str) -> None:
-    """Create dest and copy the fixture project into it without its CLAUDE.md and without thoughts/ledgers."""
-    entries = pc_manifest.tree_manifest(source)
-    for entry in entries:
-        if entry["kind"] not in ("d", "f"):
-            raise ValueError("a source tree holds a symlink or special file")
-    pc_runroot.exclusive_dir(dest, 0o700)
-    for entry in entries:
-        relative = os.fsdecode(entry["path"])
-        if relative == "CLAUDE.md" or relative == "thoughts/ledgers" or relative.startswith("thoughts/ledgers/"):
-            continue
-        target = os.path.join(dest, relative)
-        if entry["kind"] == "d":
-            pc_runroot.exclusive_dir(target, 0o700)
-        else:
-            pc_runroot.write_exclusive(target, _read(os.path.join(source, relative)), 0o644)
-
-
-def _real_ledger(data: bytes, project: str) -> bytes:
-    """Return a committed ledger copy with the token project path replaced by the real project path."""
-    text = data.decode("utf-8").replace(TOKEN_PROJECT, project)
-    if "<repo>" in text or "<run>" in text:
-        raise pc_spike.SpikeError("a committed ledger copy holds a token this seed does not know")
-    return text.encode("utf-8")
-
-
-def _run_stub(interpreter: str, stub: str, project: str, ckpt: str, args: Sequence[str]) -> bytes:
-    """Call the checkpoint stub directly (never the wrapper) and return its standard output."""
-    try:
-        done = subprocess.run(
-            [interpreter, "-I", "-B", stub] + list(args),
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "CKPT_HOME": ckpt},
-            cwd=project,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=_STUB_TIMEOUT_SECONDS,
-            shell=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        raise pc_spike.SpikeError("the checkpoint stub could not run for the state setup") from None
-    if done.returncode != 0:
-        raise pc_spike.SpikeError("the checkpoint stub refused the state setup")
-    return done.stdout
-
-
 def seed_row1(
     repo_root: str,
     run_root: str,
@@ -220,121 +134,12 @@ def seed_row1(
 ) -> Dict[str, Optional[str]]:
     """Build the row 1 setup inside the already-created run root and return its paths.
 
-    Everything is created exclusively, so a second call on the same run root raises FileExistsError. Created,
-    in order: project, wrapper, ckpt (two ledgers, the second bound to the session through the stub's own bind),
-    raw (the stub's status and lint output from before the first stage), auto-memory, snaps, settings.json and
-    raw/run.json (row, model, evidence date, session id, isolation mode).
+    The body is pc_rowseeds.seed_helper_row with the row 1 parameters (ledgers A and B, the session bound to B);
+    the returned keys and the layout are the ones this function has always returned.
     """
-    try:
-        canonical = str(uuid.UUID(session_id))
-    except (ValueError, AttributeError, TypeError):
-        raise ValueError("the session id must be a UUID") from None
-    if canonical != session_id:
-        raise ValueError("the session id must be the canonical lowercase form")
-    repo = os.path.realpath(repo_root)
-    root = os.path.realpath(run_root)
-    runs = os.path.realpath(runs_dir)
-    if not os.path.isdir(root):
-        raise ValueError("the run root does not exist")
-    if not _within(root, runs) or root == runs:
-        raise ValueError("the run root must lie under the runs folder")
-    if _within(root, repo):
-        raise ValueError("the run root must be outside the repository")
-    source = _sources(repo)
-    interpreter = os.path.realpath(sys.executable)
-    if not interpreter:
-        raise ValueError("no interpreter path is known")
-
-    project = os.path.join(root, "project")
-    wrapper_dir = os.path.join(root, "wrapper")
-    wrapper = os.path.join(wrapper_dir, "checkpoint")
-    ckpt = os.path.join(root, "ckpt")
-    ledgers = os.path.join(ckpt, "ledgers")
-    ledger_a = os.path.join(ledgers, LEDGER_A_NAME)
-    ledger_b = os.path.join(ledgers, LEDGER_B_NAME)
-    auto_memory = os.path.join(root, "auto-memory")
-    raw = os.path.join(root, "raw")
-    snaps = os.path.join(root, "snaps")
-    settings = os.path.join(root, "settings.json")
-    hooklog = os.path.join(raw, "hooklog.jsonl")
-
-    _copy_fixture_project(source["fixture"], project)
-    thoughts = os.path.join(project, "thoughts")
-    if not os.path.isdir(thoughts):
-        pc_runroot.exclusive_dir(thoughts, 0o700)
-    plans = os.path.join(thoughts, "plans")
-    pc_runroot.exclusive_dir(plans, 0o700)
-    pc_runroot.write_exclusive(os.path.join(plans, PLAN_NAME), _read(source["plan"]), 0o644)
-    values = {
-        "executable": wrapper,
-        "project": project,
-        "ledger": ledger_a,
-        "fallback_directory": os.path.join(project, ".preclear"),
-    }
-    configuration = pc_spike._fill_configuration(_read(source["claude_md"]).decode("utf-8"), values)
-    pc_runroot.write_exclusive(os.path.join(project, "CLAUDE.md"), configuration.encode("utf-8"), 0o644)
-    pc_spike._run_git(project, ["init", "-q"])
-    pc_spike._run_git(project, ["symbolic-ref", "HEAD", "refs/heads/main"])
-    pc_spike._run_git(project, ["add", "-A"])
-    pc_spike._run_git(project, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial fixture commit"])
-
-    skill_dir = os.path.join(project, ".claude", "skills", "preclear")
-    pc_runroot.exclusive_dir(os.path.join(project, ".claude"), 0o700)
-    pc_runroot.exclusive_dir(os.path.join(project, ".claude", "skills"), 0o700)
-    pc_runroot.exclusive_dir(skill_dir, 0o700)
-    pc_runroot.write_exclusive(os.path.join(skill_dir, "SKILL.md"), _read(source["skill"]), 0o644)
-    pc_spike._copy_tree_with(source["references"], os.path.join(skill_dir, "references"))
-
-    pc_runroot.exclusive_dir(wrapper_dir, 0o700)
-    pc_runroot.write_exclusive(wrapper, _read(source["wrapper"]), 0o755)
-    pc_runroot.write_exclusive(os.path.join(wrapper_dir, "py"), interpreter.encode("utf-8"), 0o644)
-    pc_runroot.write_exclusive(os.path.join(wrapper_dir, "stub"), source["stub"].encode("utf-8"), 0o644)
-    pc_runroot.write_exclusive(os.path.join(wrapper_dir, "calls.log"), b"", 0o644)
-
-    pc_runroot.exclusive_dir(ckpt, 0o700)
-    pc_runroot.exclusive_dir(ledgers, 0o700)
-    pc_runroot.write_exclusive(ledger_a, _real_ledger(_read(source["ledger_a"]), project), 0o644)
-    pc_runroot.write_exclusive(ledger_b, _real_ledger(_read(source["ledger_b"]), project), 0o644)
-    _run_stub(interpreter, source["stub"], project, ckpt, ["bind", "--ledger", ledger_b, "--session", session_id])
-
-    pc_runroot.exclusive_dir(raw, 0o700)
-    status = _run_stub(interpreter, source["stub"], project, ckpt, ["status", "--session", session_id])
-    lint = _run_stub(interpreter, source["stub"], project, ckpt, ["lint"])
-    pc_runroot.write_exclusive(os.path.join(raw, "status-before.txt"), status, 0o600)
-    pc_runroot.write_exclusive(os.path.join(raw, "lint-before.txt"), lint, 0o600)
-
-    pc_runroot.exclusive_dir(auto_memory, 0o700)
-    pc_runroot.exclusive_dir(snaps, 0o700)
-    command = " ".join(shlex.quote(part) for part in (interpreter, "-I", "-B", source["hooklog"], hooklog))
-    rendered = pc_flags.render_settings(auto_memory, command)
-    pc_runroot.write_exclusive(settings, (json.dumps(rendered, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600)
-    run_facts = {
-        "row": ROW_ID,
-        "model": model,
-        "evidence_date": evidence_date,
-        "session_id": session_id,
-        "isolation": isolation_mode(),
-    }
-    pc_runroot.write_exclusive(
-        os.path.join(raw, "run.json"), (json.dumps(run_facts, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
+    return pc_rowseeds.seed_row1(
+        repo_root, run_root, session_id, harness_home_dir, runs_dir, evidence_date, model
     )
-
-    return {
-        "run_root": root,
-        "project": project,
-        "skill_dir": skill_dir,
-        "wrapper_dir": wrapper_dir,
-        "wrapper": wrapper,
-        "ckpt": ckpt,
-        "ledgers": ledgers,
-        "ledger_a": ledger_a,
-        "ledger_b": ledger_b,
-        "auto_memory": auto_memory,
-        "raw": raw,
-        "snaps": snaps,
-        "settings": settings,
-        "hooklog": hooklog,
-    }
 
 
 def paths_for(run_root: str) -> Dict[str, Optional[str]]:
@@ -689,11 +494,38 @@ class StageResult(NamedTuple):
     hooklog_lines: int = 0
 
 
-def _row_stage_keys() -> Tuple[str, ...]:
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, ROW_ID)
+def _row_stage_keys(row_id: str = ROW_ID) -> Tuple[str, ...]:
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
     if entry is None:
         raise pc_spike.SpikeError("the row is not in the registry")
-    return tuple(pc_rows.stage_key(ROW_ID, stage.name) for stage in entry.stages)
+    return tuple(pc_rows.stage_key(row_id, stage.name) for stage in entry.stages)
+
+
+def _entry_of(row_id: str) -> pc_rows.RowSpec:
+    """The implemented registry entry of a row id, matched exactly; anything else is a SpikeError."""
+    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id) if isinstance(row_id, str) else None
+    if entry is None or not entry.implemented:
+        raise pc_spike.SpikeError("the row is not in the registry")
+    return entry
+
+
+def allowed_tools(profile: str, wrapper: str) -> Tuple[str, ...]:
+    """The --allowedTools rules of an allowlist profile; a profile this harness does not know is a ValueError.
+
+    PROFILE_HELPER is the committed baseline plus one rule per model-facing verb of the logging wrapper. A new
+    profile is one more branch here and one more constant in pc_rows, never a second place that builds rules.
+    """
+    if profile == pc_rows.PROFILE_HELPER:
+        return pc_flags.build_allowed_tools(wrapper, pc_flags.MODEL_FACING_WRAPPER_VERBS)
+    raise ValueError("the allowlist profile is not known")
+
+
+def snapshot_name(stage: pc_rows.StageSpec) -> str:
+    """The boundary snapshot a stage takes after its process ends: snap-<number>-after-<kind word>.
+
+    s1 work, s2 preclear and s3 resume give the three names the Phase 3 baseline holds.
+    """
+    return "snap-%s-after-%s" % (stage.name[1:], stage.kind)
 
 
 def _git_executable(env: Mapping[str, str]) -> str:
@@ -775,8 +607,12 @@ def run_stage(
     timeout: int,
     hook_start: int = 0,
     scan: Any = None,
+    row: Optional[pc_rows.RowSpec] = None,
 ) -> StageResult:
     """Run one stage: reserve its cap, run the process, settle the cost, keep the raw bytes, snapshot.
+
+    row is the registry entry the stage belongs to (row 1 when omitted): its id keys the ledger and its allowlist
+    profile gives the --allowedTools rules.
 
     The command is built only by pc_flags (build_argv, build_env, build_allowed_tools). The reservation is a
     pessimistic launch line written before the process; the settlement replaces it with the call's own cost
@@ -787,13 +623,17 @@ def run_stage(
     log lines added since the previous stage boundary (hook_start is the line count that boundary recorded);
     the triples and the entry counts go into the stage record. scan is the cached binary lookup of the run.
     """
-    tools = pc_flags.build_allowed_tools(str(paths["wrapper"]), pc_flags.MODEL_FACING_WRAPPER_VERBS)
+    if row is None:
+        row = _entry_of(ROW_ID)
+    tools = allowed_tools(row.tools_profile, str(paths["wrapper"]))
     argv = pc_flags.build_argv(
         str(ctx.claude), session_id, str(paths["settings"]), tools, spec.max_turns, spec.cap, resume=resume, model=ctx.model
     )
     env = pc_flags.build_env(ctx.env, ctx.config_dir, str(paths["ckpt"]))
-    key = pc_rows.stage_key(ROW_ID, spec.name)
-    attempt = pc_spend.append_launch(ctx.harness_home, ROW_ID, key, spec.cap, ctx.version, _row_stage_keys())
+    key = pc_rows.stage_key(row.row_id, spec.name)
+    attempt = pc_spend.append_launch(
+        ctx.harness_home, row.row_id, key, spec.cap, ctx.version, _row_stage_keys(row.row_id)
+    )
     # The prompt is kept verbatim in raw before the process starts, so a later filing or refile needs nothing from
     # memory. It comes after the reservation: a second launch of a stage is refused by the ledger first.
     pc_runroot.write_exclusive(os.path.join(str(paths["raw"]), spec.name + ".prompt"), prompt.encode("utf-8"), 0o600)
@@ -828,10 +668,10 @@ def run_stage(
         subtype = summary["subtype"][:64]
     else:
         subtype = "no-result"
-    pc_spend.settle(ctx.harness_home, ROW_ID, key, attempt, subtype, delta, cumulative, ctx.version)
+    pc_spend.settle(ctx.harness_home, row.row_id, key, attempt, subtype, delta, cumulative, ctx.version)
 
     problem = _classify(call, events, summary)
-    snapshot = SNAPSHOT_NAMES[spec.name]
+    snapshot = snapshot_name(spec)
     vcs = _git_executable(ctx.env)
     skipped = take_snapshot(paths, snapshot, vcs, pin=ctx.setup_pin)
     pc_checks.capture_boundary_state(paths, spec.name, vcs, ctx.setup_pin)
@@ -993,6 +833,7 @@ def caller_map(paths: Mapping[str, Optional[str]], runs_root: str) -> Dict[str, 
 # ---------------------------------------------------------------------------------------------
 
 MESSAGE_DESTINATION = "REFUSED: the evidence folder already exists; a folder is never reused"
+MESSAGE_ROW_FOLDER = "REFUSED: the row folder already exists; a row folder is never reused"
 MESSAGE_SANITIZER = "FAIL: the sanitizer or the deny entries could not be built; nothing was spent"
 _STOP_TEXT = {
     PROBLEM_TIMEOUT: "timed out",
@@ -1079,13 +920,20 @@ def breach_outcome(ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]]) 
 
 
 def finish(
-    ctx: pc_rows.RunContext, paths: Mapping[str, Optional[str]], results: Sequence[StageResult]
+    ctx: pc_rows.RunContext,
+    paths: Mapping[str, Optional[str]],
+    results: Sequence[StageResult],
+    entry: Optional[pc_rows.RowSpec] = None,
 ) -> pc_rows.RowOutcome:
     """Close a completed chain: the mechanical checks, one fixed line per stage, the filing and the row total.
 
     A breach found by the checks ends the row with 11 and prints counts only. When the checks find none, the row
     is filed through pc_evidence.file_row, the last step; a refusal of the filing is its exit code and its fixed
     lines (nothing more is printed), and the raw files stay in the run root for a zero-token refile.
+
+    With the registry entry of the row, the line `stage <name>: not run (NO-RESUME-LINE)` is printed for each stage
+    of kind resume that did not run, so a spec without such a stage prints none, and the filing reads the entry.
+    Without an entry the row 1 behaviour of Phase 3 is kept.
     """
     blocked = breach_outcome(ctx, paths)
     if blocked is not None:
@@ -1103,9 +951,16 @@ def finish(
                 _cost_text(result.cumulative) or "unknown",
             )
         )
-    if len(results) == 2:
-        lines.append("stage s3: not run (%s)" % MARKER_NONE)
-    filed = pc_evidence.file_row(ctx, str(paths["run_root"]))
+    if entry is None:
+        if len(results) == 2:
+            lines.append("stage s3: not run (%s)" % MARKER_NONE)
+        filed = pc_evidence.file_row(ctx, str(paths["run_root"]))
+    else:
+        ran = frozenset(result.name for result in results)
+        for stage in entry.stages:
+            if stage.kind == "resume" and stage.name not in ran:
+                lines.append("stage %s: not run (%s)" % (stage.name, MARKER_NONE))
+        filed = pc_evidence.file_row(ctx, str(paths["run_root"]), spec=entry)
     if filed.code != pc_exitcodes.OK:
         return filed
     lines.extend(filed.lines)
@@ -1182,3 +1037,133 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
             resume_line = extract_resume_line(_result_text(result))
             _write_chain(paths, resume_line)
     return finish(ctx, paths, results)
+
+
+# ---------------------------------------------------------------------------------------------
+# The chain of any registered row (plan 04-01)
+# ---------------------------------------------------------------------------------------------
+
+
+def read_prompts(repo_root: str, entry: pc_rows.RowSpec, ledger_a_path: Optional[str]) -> Dict[str, str]:
+    """Return the prompt of each stage the entry names, read in place from its repo-relative file.
+
+    A committed prompt is never copied, so its bytes are the committed bytes. The ledger placeholder of a prompt is
+    replaced by the ledger A path when the run has a ledger A; a run without one leaves the text as it is.
+    """
+    found: Dict[str, str] = {}
+    for name, relative in entry.prompts:
+        text = _read(os.path.join(repo_root, *relative.split("/"))).decode("utf-8")
+        if ledger_a_path:
+            text = text.replace(LEDGER_PLACEHOLDER, ledger_a_path)
+        found[name] = text
+    return found
+
+
+def _resolve_seed(seed: Any) -> Any:
+    """Return the callable a registry entry names as its seed ("module:function" is imported lazily)."""
+    if callable(seed):
+        return seed
+    if isinstance(seed, str):
+        module_name, _, function_name = seed.partition(":")
+        try:
+            found = getattr(importlib.import_module(module_name), function_name)
+        except (ImportError, AttributeError, ValueError):
+            found = None
+        if callable(found):
+            return found
+    raise pc_spike.SpikeError("the row has no usable seed")
+
+
+def run_registered_row(
+    ctx: pc_rows.RunContext, row_id: str, timeout_override: Optional[int] = None
+) -> pc_rows.RowOutcome:
+    """Run one registered row from its registry entry alone: refusals first, then seed, snapshot 0 and the chain.
+
+    The entry is found by exact registry match before any path is built: an id that is not an implemented
+    registry id, with a seed, raises SpikeError and nothing is created. The row folder name is the entry's id,
+    never caller text. Order before any ledger line: an existing row folder under ctx.destination (17, nothing
+    created; an existing dated folder is fine, two rows share it), the run root (a taken name raises
+    RunRootCollision, the driver's 16), the sanitizer and the deny entries (15), the readable ledger, the seed and
+    the version control tool.
+
+    The stages are walked in the entry's order. A stage whose session is new:K starts a session (the first one is
+    the session the seed bound the ledger to, the others get a fresh UUID); a stage whose session is resume:K
+    continues the session kept under K with the resume flag and the cumulative total of that session. The prompt
+    of a stage is the file the entry names for it; a stage of kind resume without one takes the resume line the
+    last /preclear turn printed, and the chain ends there when none was printed. The chain stops at the first
+    stage that is not a clean success. The allowlist comes from the entry's profile.
+    """
+    entry = _entry_of(row_id)
+    if entry.seed is None:
+        raise pc_spike.SpikeError("the row is not in the registry")
+    seed = _resolve_seed(entry.seed)
+    if os.path.lexists(os.path.join(ctx.destination, entry.row_id)):
+        return pc_rows.RowOutcome(pc_exitcodes.PROMOTE_REFUSED, (MESSAGE_ROW_FOLDER,))
+    run_name = "%s-%s" % (entry.row_id, _utc_now().strftime("%Y%m%dT%H%M%SZ"))
+    pc_spike.ensure_runs_root(ctx.runs_root)
+    run_root = pc_runroot.allocate_run_root(ctx.runs_root, run_name)
+    provisional = {"run_root": run_root, "auto_memory": os.path.join(run_root, "auto-memory")}
+    try:
+        sanitizer = pc_sanitize.Sanitizer.from_machine(ctx.repo_root, caller_map(provisional, ctx.runs_root))
+        deny_entries = sanitizer.deny_entries()
+    except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
+        return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
+    ctx = ctx._replace(run_root=run_root, sanitizer=sanitizer, deny_entries=deny_entries)
+    pc_spend.read_records(ctx.harness_home)
+    vcs = _git_executable(ctx.env)
+    session = str(uuid.uuid4())
+    paths = seed(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
+    take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
+    ctx = ctx._replace(setup_pin=pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs, None))
+    pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
+    ledger_a = str(paths["ledger_a"]) if paths.get("ledger_a") and os.path.isfile(str(paths["ledger_a"])) else None
+    prompts = read_prompts(ctx.repo_root, entry, ledger_a)
+
+    results: List[StageResult] = []
+    sessions: Dict[str, str] = {}
+    totals: Dict[str, Optional[Decimal]] = {}
+    resume_line = ""
+    scan = BinaryScan(str(ctx.claude))
+    for stage in entry.stages:
+        timeout = timeout_override if timeout_override is not None else stage.timeout
+        boundary = results[-1].hooklog_lines if results else 0
+        if stage.name in prompts:
+            prompt = prompts[stage.name]
+        elif stage.kind == "resume":
+            if not resume_line:
+                break
+            prompt = resume_line
+        else:
+            raise pc_spike.SpikeError("a stage of the row has no prompt")
+        mode, _, key = stage.session.partition(":")
+        if mode == "new":
+            if not sessions:
+                session_id = session
+            else:
+                session_id = str(uuid.uuid4())
+                while session_id in sessions.values():
+                    session_id = str(uuid.uuid4())
+            sessions[key] = session_id
+            resume = False
+            previous: Optional[Decimal] = None
+        elif mode == "resume" and key in sessions:
+            session_id = sessions[key]
+            resume = True
+            previous = totals.get(key)
+        else:
+            raise pc_spike.SpikeError("a stage of the row names a session that was not started")
+        result = run_stage(ctx, paths, stage, session_id, prompt, resume, previous, timeout, boundary, scan, entry)
+        totals[key] = result.cumulative
+        results.append(result)
+        blocked = breach_outcome(ctx, paths)
+        if blocked is not None:
+            extra = () if result.ok else _stopped(stage.name, result.problem).lines
+            return pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra))
+        if not result.ok:
+            return _stopped(stage.name, result.problem)
+        if result.evaluation is not None and result.evaluation.status != STATUS_PASS:
+            return _isolation_stop(stage.name, result.evaluation)
+        if stage.kind == "preclear":
+            resume_line = extract_resume_line(_result_text(result))
+            _write_chain(paths, resume_line)
+    return finish(ctx, paths, results, entry)
