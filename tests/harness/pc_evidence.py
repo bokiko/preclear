@@ -1569,7 +1569,7 @@ def render_stop_text(
         "stage: %s" % stage_name,
         "exit code: %d" % exit_code,
         "result subtype: %s" % _subtype_text(data, stage_name),
-        "counts: stages run %d of %d, turns in the stopped stage %s, tool calls in the stopped stage %s"
+        "counts: stage records %d of %d, turns in the stopped stage %s, tool calls in the stopped stage %s"
         % (
             len(data.stages),
             len(row.stages),

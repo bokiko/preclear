@@ -1052,15 +1052,21 @@ class PinRequiredTests(unittest.TestCase):
         with self.assertRaises(checks().CheckError, msg="the keyword defaults to false and the pin to none"):
             pc_row1.take_snapshot(paths, pc_row1.SNAPSHOT_SETUP, real_git())
 
-    def test_the_end_to_end_row_with_the_pin_removed_ends_with_a_check_error(self) -> None:
-        stages = pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0)
-        with self.assertRaises(checks().CheckError):
-            Run(stages)
+    def check_pin_stop(self, stages) -> None:
+        """The check error of an unreadable pin is a breach stop (plan 04-03): exit 11, one label, no second stage."""
+        run = Run(stages)
+        text = "\n".join(run.outcome.lines)
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, text)
+        self.assertIn("could not be checked against the setup record", text)
+        self.assertNotIn(run.rig.base, text, "no path in the text")
+        self.assertEqual(len(run.rig.calls()), 1, "no second stage was launched")
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-row1-wrong-binding"], "one label and no row folder")
 
-    def test_the_end_to_end_row_with_the_pin_rewritten_ends_with_a_check_error(self) -> None:
-        stages = pc_testutil.seed_pin_rewritten(pc_testutil.default_row1_stages(), 0)
-        with self.assertRaises(checks().CheckError):
-            Run(stages)
+    def test_the_end_to_end_row_with_the_pin_removed_ends_with_a_breach_stop(self) -> None:
+        self.check_pin_stop(pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0))
+
+    def test_the_end_to_end_row_with_the_pin_rewritten_ends_with_a_breach_stop(self) -> None:
+        self.check_pin_stop(pc_testutil.seed_pin_rewritten(pc_testutil.default_row1_stages(), 0))
 
 
 def make_nested_plant(marker: str, committed: bool = True) -> str:

@@ -854,6 +854,10 @@ _STOP_TEXT = {
 
 
 MESSAGE_RAW_STAYS = "the raw files and snapshots stay in the run root"
+MESSAGE_RECORD_UNREADABLE = (
+    "FAIL: stage %s could not be checked against the setup record; the chain stopped; "
+    "the raw files and snapshots stay in the run root"
+)
 
 
 def _stopped(stage_name: str, problem: str) -> pc_rows.RowOutcome:
@@ -1168,7 +1172,18 @@ def _run_registered_row(
             previous = totals.get(key)
         else:
             raise pc_spike.SpikeError("a stage of the row names a session that was not started")
-        result = run_stage(ctx, paths, stage, session_id, prompt, resume, previous, timeout, boundary, scan, entry)
+        try:
+            result = run_stage(ctx, paths, stage, session_id, prompt, resume, previous, timeout, boundary, scan, entry)
+        except pc_checks.CheckError:
+            # The stage ran and was settled, but the run's own isolation record (the git pin) could not be read
+            # for its snapshot: the checks cannot run, which is a breach stop like an unreadable run root.
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.REASON_BREACH,
+                stage.name,
+                pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_RECORD_UNREADABLE % stage.name,)),
+            )
         totals[key] = result.cumulative
         results.append(result)
         blocked = breach_outcome(ctx, paths)

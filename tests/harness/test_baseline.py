@@ -130,7 +130,7 @@ class StoppedFilingTests(unittest.TestCase):
         self.assertIn("\nreason: %s\n" % reason, stop)
         self.assertIn("\nstage: %s\n" % stage, stop)
         self.assertIn("\nexit code: %d\n" % code, stop)
-        self.assertIn("\ncounts: stages run %d of 3" % ran, stop)
+        self.assertIn("\ncounts: stage records %d of 3" % ran, stop)
         readme = run.read("README.md")
         self.assertTrue(readme.startswith("# STOPPED: %s\n" % ROW1), "the heading")
         self.assertIn("\nRow: %s\nReason: %s\nStage: %s\n" % (ROW1, reason, stage), readme)

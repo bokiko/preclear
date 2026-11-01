@@ -571,8 +571,9 @@ path, and the other rows of the invocation go on. The folder holds a README, `st
 that ran, the prompt, exit, error and trace files of those stages, and `mechanical-checks.md` when the checks could
 read the run root (a fixed line says so when they could not). It never holds a raw capture, a settings file, a
 session id file or a snapshot, and everything in it goes through the same sanitizer, leak gate and promote with the
-deny entries as a complete row, so a refusal is exit 14, 15 or 17 and nothing is filed. A stop that happens before
-the run root exists, or one the runner itself cannot continue from (a removed or rewritten pin file), files no label.
+deny entries as a complete row, so a refusal is exit 14, 15 or 17 and nothing is filed. A run whose setup record
+cannot be read for a snapshot (a removed or rewritten pin file) is a breach stop with no stage record for the stage
+that was running. A stop that happens before the run root exists files no label.
 
 `stop.txt` names one reason: `turns` (the result subtype text holds max_turns), `cap` (it holds max_budget),
 `timeout`, `stream`, `isolation`, `breach`, `exit` (a non-zero exit with neither subtype) or `error` (anything

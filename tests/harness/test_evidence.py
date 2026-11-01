@@ -1555,21 +1555,21 @@ class Harn09ReproofTests(unittest.TestCase):
                     os.path.exists(os.path.join(world.rig.outside, marker)), label + ": the planted command never ran"
                 )
 
-    def test_a_removed_pin_file_ends_with_11_files_nothing_and_starts_no_git_command(self) -> None:
+    def test_a_removed_pin_file_ends_with_11_files_a_label_and_starts_no_git_command(self) -> None:
         world = World(stages=pc_testutil.seed_pin_removed(pc_testutil.default_row1_stages(), 0))
         self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
-        created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
-        self.assertEqual(created, [], "nothing was created under tests/evidence (the runner stopped before any label)")
+        assert_only_stopped(self, world, "")
+        self.assertIn("could not be checked against the setup record", world.text)
+        self.assertIn("\nreason: breach\n", read_text(os.path.join(world.destination, "STOPPED-" + ROW1, "stop.txt")))
         self.assertNotIn(world.rig.base, world.text, "no folder of the rig is printed")
         self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
         self.assertEqual(len(world.rig.calls()), 1, "the second stage was never launched")
 
 
-    def test_a_rewritten_pin_file_ends_with_11_files_nothing_and_launches_no_second_stage(self) -> None:
+    def test_a_rewritten_pin_file_ends_with_11_files_a_label_and_launches_no_second_stage(self) -> None:
         world = World(stages=pc_testutil.seed_pin_rewritten(pc_testutil.default_row1_stages(), 0))
         self.assertEqual(world.code, pc_exitcodes.PREFLIGHT_FAIL, world.text)
-        created = [name for name in os.listdir(world.evidence_dir) if name != "publication-2026-10-20"]
-        self.assertEqual(created, [], "nothing was created under tests/evidence (the runner stopped before any label)")
+        assert_only_stopped(self, world, "")
         self.assertNotIn(world.rig.base, world.text, "no folder of the rig is printed")
         self.assertEqual(world.rig.tripwire(), [], "no other claude was started")
         self.assertEqual(len(world.rig.calls()), 1, "the second stage was never launched")
