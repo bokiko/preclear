@@ -346,7 +346,7 @@ working folder, the session id as requested, and which instruction files were lo
 isolation mode is recorded as strict in the run's own record. A stage that does not complete (a
 timeout, a failed exit, a result that is not a plain success, a result with an error flag or a
 reason other than completed, a stream without exactly one result) or fails an assertion stops the
-chain and files nothing. A resumed stage that logs no new instruction entry is recorded as not
+chain; the row is filed as a STOPPED label and nothing else (see "A stopped row"). A resumed stage that logs no new instruction entry is recorded as not
 asserted on resume, which is a fact and not a failure.
 
 Permission denials are counted as facts and are not a verdict. Containment is detected after the fact
@@ -513,8 +513,8 @@ run root gives the same facts.
   character and records no for the first question; it is not edited, and a later run records the new answer.
 
 Denials are counted facts. Only a concrete write outside the approved roots (a Bash write escape included),
-a git mutation or a change to the run record ends a run with exit code 11 and files nothing; the raw bytes
-and the snapshots stay in the run root. Everything else is a fact for the reviewer.
+a git mutation or a change to the run record ends a run with exit code 11 and is filed as a STOPPED label; the
+raw bytes and the snapshots stay in the run root. Everything else is a fact for the reviewer.
 
 ### What a run files
 
@@ -561,6 +561,27 @@ A row whose precondition is not met is filed as a folder named `SKIPPED-` follow
 no session was run and why, never reads as a result, passes through the same sanitizer and gate, and the run
 exits 10, never 0.
 
+#### A stopped row
+
+A row that stops after its run root exists is filed too, as a label and not as a result. A turn limit, a budget
+cap, a timeout, a non-zero exit, a stream with no result, an isolation assertion that did not hold and a breach of
+the write or git rules each leave a folder named `STOPPED-` followed by the row folder name in the dated folder.
+The run keeps the stop's own exit code (11, or 19 for an unreadable stream), prints one `filed:` line that holds no
+path, and the other rows of the invocation go on. The folder holds a README, `stop.txt`, `usage.txt` for the stages
+that ran, the prompt, exit, error and trace files of those stages, and `mechanical-checks.md` when the checks could
+read the run root (a fixed line says so when they could not). It never holds a raw capture, a settings file, a
+session id file or a snapshot, and everything in it goes through the same sanitizer, leak gate and promote with the
+deny entries as a complete row, so a refusal is exit 14, 15 or 17 and nothing is filed. A stop that happens before
+the run root exists, or one the runner itself cannot continue from (a removed or rewritten pin file), files no label.
+
+`stop.txt` names one reason: `turns` (the result subtype text holds max_turns), `cap` (it holds max_budget),
+`timeout`, `stream`, `isolation`, `breach`, `exit` (a non-zero exit with neither subtype) or `error` (anything
+else, with the subtype text recorded). The real subtype names a limit hit prints on this build have not been
+observed; the scripted subtypes prove the filing path only, and the first real stop is checked against this mapping.
+The README names the row, the reason and the stage, says the folder is a label for a run that did not finish and not a
+result, and ends with the single line `Reviewer verdict: PENDING`. The usage file marks the row total unknown and gives
+a partial total when every stage that ran reported a cost. A retry is a new attempt, filed beside the label.
+
 `--refile RUNROOT` repeats the checks and the filing for a run folder, for zero tokens, after a
 refusal that came late (a taken name, the gate, a sanitizer error). It starts no claude, needs no budget,
 writes no ledger line, takes the evidence date and the model recorded in the run (not today's date) and calls
@@ -571,6 +592,37 @@ accepted. The folder must hold the whole chain: the first two stages, and the th
 second printed a resume line. A run in which a stage did not run (a crash, an interrupt or a harness error
 after the first call) is refused with exit 11, nothing is created and no destination name is used up, as is a
 stage that did not finish cleanly.
+
+#### Closing a folder
+
+`python3 -E -s -B tests/harness/pc_baseline.py close --folder FOLDER` gives a dated folder its top-level files; add
+`--baseline` when the folder is the new baseline. FOLDER is the name of a dated folder in the evidence tree, relative
+to the repository or absolute; anything else (a symlink, a row folder, a path outside the tree, the two frozen
+folders) is refused with exit 2 and nothing is written. The command writes `README.md` only when the folder has none,
+and a digest table and a usage table: `digest-table.md` and `usage-by-row.txt` the first time, then
+`digest-table-part-N.md` and `usage-by-row-part-N.txt` for the first free N from 2. Each part lists every row folder
+present at that moment, so after a retry is filed into the same dated folder (a new `--attempt` with the same
+`--evidence-date`) a second close adds a part and edits nothing; the latest part is the complete one. The README
+labels the folder a campaign attribution run, or with `--baseline` a new baseline on the pinned model and Claude Code
+build as the rows record them, and never a replication of the committed run.
+
+The digest table has one line per row folder, STOPPED label and SKIPPED label, layouts first and then rows in registry
+order, then by attempt, with a label directly after the folder it labels: the state, the attempt, the reason line of a
+label, the digests of the skill, the adapter, the stub and the wrapper, and the cost text exactly as the usage file
+holds it, then a total. The usage table lists the per-stage cost lines and the totals. Costs are summed with exact
+decimal arithmetic and a stopped row's partial cost is counted. Both tables read only filed files (`digests.txt`,
+`usage.txt`, `stop.txt` and the reason line of a SKIPPED README) through strict patterns, never a run root, a
+credential, the ledger or the network; a value that is not a 64-digit lower-case hex digest or a plain decimal is
+printed UNCONFIRMED and never guessed, and a dated folder with no row folder gives a table with the line `rows: 0`.
+The files are staged in a run root, go through the sanitizer and the leak gate, and are added with the one primitive
+that may put a file into an existing evidence folder (flat, created exclusively, the gate first): a name that exists,
+a symlinked folder or a folder outside the evidence tree is refused with exit 17 before anything is created.
+
+`pc_baseline.py report --folder FOLDER` prints the same two tables and writes nothing.
+`pc_baseline.py check-words --folder FOLDER` scans the files the harness wrote in its own words (the top-level files,
+and the README, `stop.txt`, `usage.txt`, checks and exit files of each row and label folder) for the vocabulary of a
+verdict, skipping only lines that begin with the quote prefix and the closing line of a README, prints counts only, and
+exits 0 when it finds none and 1 otherwise.
 
 ### Comparing a rerun with the committed row
 
