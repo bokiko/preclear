@@ -1266,8 +1266,9 @@ def file_row(
 ) -> pc_rows.RowOutcome:
     """Stage, sanitize, gate and promote the finished run in run_root into the evidence folder.
 
-    The staged tree holds only the row folder and it is promoted to ctx.destination joined with the row's id: the
-    dated folder may already exist and hold other rows, a row folder that exists is refused with 17. The row is
+    The staged tree holds only the row folder and it is promoted to ctx.destination joined with the row's folder
+    name (its id, or its id and -attempt-N for an attempt above 1, plan 04-02): the dated folder may already exist
+    and hold other rows, a row folder that exists is refused with 17. The row is
     the one the run record names, matched exactly against the registry; an entry passed as spec must be that
     same row, or nothing is filed.
 
@@ -1309,14 +1310,15 @@ def file_row(
         return pc_rows.RowOutcome(pc_exitcodes.SCANNER_ERROR, (MESSAGE_SANITIZER,))
     except OSError:
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_STAGING,))
+    folder = pc_rows.row_folder_name(entry.row_id, ctx.attempt)
     result = pc_promote.promote(
         os.path.join(stage, entry.row_id),
-        os.path.join(ctx.destination, entry.row_id),
+        os.path.join(ctx.destination, folder),
         ctx.repo_root,
         config_dir=ctx.config_dir,
         deny_entries=ctx.deny_entries,
     )
-    return _outcome(result, ctx.destination, count, entry.row_id)
+    return _outcome(result, ctx.destination, count, folder)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1353,8 +1355,12 @@ def file_skipped(
     config_dir: str,
     runs_root: str,
     clock: Callable[[], Any],
+    folder_name: Optional[str] = None,
 ) -> pc_rows.RowOutcome:
-    """File <destination>/SKIPPED-<row id>/README.md for a row whose precondition was not met.
+    """File <destination>/SKIPPED-<folder name>/README.md for a row whose precondition was not met.
+
+    The folder name is the row's folder name (its id, or its id and -attempt-N for a retry; plan 04-02) and
+    defaults to the row id. The README heading and the skipped run root keep the row id.
 
     The run is never counted as a success: the exit code is 10 (PREFLIGHT_SKIP) when the label is filed, and 14,
     15, 17 or 11 when the sanitizer, the gate, promote or the staging refuse. The reason passes through the same
@@ -1377,11 +1383,14 @@ def file_skipped(
         return pc_rows.RowOutcome(pc_exitcodes.RUNROOT_COLLISION, (MESSAGE_SKIP_COLLISION,))
     except (pc_runroot.RunRootError, pc_spike.SpikeError, OSError):
         return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_SKIP_ROW,))
-    target = os.path.join(destination, SKIPPED_PREFIX + row_id)
+    label = folder_name if folder_name is not None else row_id
+    if not pc_rows.is_valid_id(label):
+        return pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_SKIP_ROW,))
+    target = os.path.join(destination, SKIPPED_PREFIX + label)
     result = pc_promote.promote(stage, target, repo_root, config_dir=config_dir, deny_entries=deny_entries)
     if int(result.code) != pc_exitcodes.OK:
         return _outcome(result, target, 0)
     return pc_rows.RowOutcome(
         pc_exitcodes.PREFLIGHT_SKIP,
-        ("filed: %s/%s%s, 1 file(s); no session was run" % (os.path.basename(destination), SKIPPED_PREFIX, row_id),),
+        ("filed: %s/%s%s, 1 file(s); no session was run" % (os.path.basename(destination), SKIPPED_PREFIX, label),),
     )

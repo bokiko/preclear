@@ -240,6 +240,14 @@ a dry run, then one row.
   case the dry run prints, written with at most two decimals and at most five in total; a real run
   without one, or with a smaller or malformed one, is refused with exit 18 before any process
   starts.
+- `--campaign LABEL` names the dated folder `rerun-<date>-<model>-<LABEL>` and puts the label in front
+  of every ledger row id, ledger stage key and run folder name, so two campaigns never share an
+  attempt count. A label is one lowercase id of at most 24 characters and holds no part from `a1` to
+  `a9` (those words scope an attempt). A bad label is refused with exit 2 and fixed text.
+- `--evidence-date YYYY-MM-DD` replaces today's UTC date in the dated folder name, so a later retry
+  files into the original folder. A malformed date, a date that is not on the calendar and a date
+  after today (UTC) are refused with exit 2. Neither flag can be combined with `--list`,
+  `--refile` or `--authorize-retry`.
 - `--authorize-retry STAGE` takes a stage key such as `row1-s2` and appends one authorization line
   to the spend ledger, for a stage that was attempted. It prints counts only, starts no process and
   refuses an unknown or never-attempted stage with exit 2. It exists so that a retry has a hook that
@@ -610,6 +618,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_branch_table.py` - tests for the branch table
 - `test_checks.py` - tests for the mechanical checks, with seeded failing runs and a clean control
 - `test_compare.py` - tests for the comparer: the tracer against the committed row, the read-only proofs, digests, exits and vocabulary
+- `test_driver_matrix.py` - tests for the campaign driver: labels, attempts, the date override, the multi-row loop, the exit code and the invocation budget
 - `test_evidence.py` - tests for filing: the deny entries, the file set, provenance, usage, vocabulary, the checklist, SKIPPED, refile and a race
 - `test_exitcode_agreement.py` - exit literals outside `pc_exitcodes.py` agree with its constants
 - `test_flags.py` - tests for the pinned contract

@@ -14,6 +14,11 @@ Run it as python3 -E -s -B pc_matrix.py, never with -I, because the pc_ modules 
                             preflight, the argument vector and the binary scan from one path
     --budget AMOUNT         the most the caller allows a real run to cost; it must be at least the
                             worst case the plan prints, or the run is refused with exit 18
+    --campaign LABEL        name the dated folder rerun-<date>-<model>-<LABEL> and scope every ledger
+                            identity and run folder with the label (one lowercase id, at most 24
+                            characters, no part a1 to a9)
+    --evidence-date DATE    use YYYY-MM-DD instead of today's UTC date in the dated folder name, so a
+                            later retry files into the original folder; never a date after today
     --authorize-retry STAGE append one retry authorization line for a stage that was attempted (a
                             stage key such as row1-s2); a second attempt of a stage never starts
                             without it. Starts no process. A person types it; no task runs it.
@@ -60,7 +65,7 @@ import pc_stream
 PROG = "pc_matrix.py"
 USAGE_LINE = (
     "usage: pc_matrix.py (--list | --row ID | --layout NAME | --all | --authorize-retry STAGE | --refile RUNROOT) "
-    "[--dry-run] [--claude PATH] [--budget AMOUNT]"
+    "[--dry-run] [--claude PATH] [--budget AMOUNT] [--campaign LABEL] [--evidence-date YYYY-MM-DD]"
 )
 ALLOWLIST_ROLE_WRAPPER = "/role/wrapper/checkpoint"
 STUB_TIMEOUT_SECONDS = 20
@@ -80,6 +85,10 @@ MESSAGE_UNKNOWN_STAGE = "unknown stage key"
 MESSAGE_NOT_ATTEMPTED = "that stage has not been attempted"
 MESSAGE_RUN_FOLDER = "the run folder is not usable"
 MESSAGE_REFILE_BREACH = "the refile files nothing"
+MESSAGE_BAD_CAMPAIGN = (
+    "the campaign label is not one lowercase id of at most 24 characters without a part from a1 to a9"
+)
+MESSAGE_BAD_DATE = "the evidence date is not a calendar date like 2026-10-30 on or before today (UTC)"
 
 # One line per BLOCKED cause. Each equals a README bullet of the form "- `cause`: line" byte for
 # byte (test_matrix_preflight compares them). The angle token is replaced by the harness config
@@ -171,6 +180,8 @@ def build_parser(out: TextIO, err: TextIO) -> argparse.ArgumentParser:
     parser.add_argument("--budget", default=None)
     parser.add_argument("--authorize-retry", default=None, dest="authorize_retry")
     parser.add_argument("--refile", default=None)
+    parser.add_argument("--campaign", default=None)
+    parser.add_argument("--evidence-date", default=None, dest="evidence_date")
     return parser
 
 
@@ -213,7 +224,12 @@ def _stage_words(row: pc_rows.RowSpec, stage: pc_rows.StageSpec) -> str:
     return "%s, %s, %d turns, cap %s" % (stage.work, session, stage.max_turns, format(stage.cap, "f"))
 
 
-def plan_lines(row: pc_rows.RowSpec, evidence_date: str, model: str = pc_flags.PINNED_MODEL) -> List[str]:
+def plan_lines(
+    row: pc_rows.RowSpec,
+    evidence_date: str,
+    model: str = pc_flags.PINNED_MODEL,
+    campaign: Optional[str] = None,
+) -> List[str]:
     """Return the dry-run text for one implemented row. It reads nothing and starts nothing."""
     lines = ["%s: %d stages, %d sessions" % (row.row_id, len(row.stages), pc_rows.session_count(row))]
     for stage in row.stages:
@@ -221,7 +237,7 @@ def plan_lines(row: pc_rows.RowSpec, evidence_date: str, model: str = pc_flags.P
     lines.append("worst case %s USD" % _money_up(pc_rows.worst_case(row)))
     lines.append("allowlist %d rules" % _allowlist_size())
     lines.append("model %s" % model)
-    lines.append("destination tests/evidence/%s" % pc_rows.evidence_folder_name(evidence_date, model))
+    lines.append("destination tests/evidence/%s" % pc_rows.evidence_folder_name(evidence_date, model, campaign))
     return lines
 
 
@@ -270,13 +286,13 @@ def _print_plans(
     if args.all_rows:
         for entry in registry:
             if entry.implemented:
-                for line in plan_lines(entry, evidence_date):
+                for line in plan_lines(entry, evidence_date, campaign=args.campaign):
                     _write(out, line + "\n")
             else:
                 _write(out, "%s: not implemented\n" % entry.row_id)
     else:
         for entry in chosen:
-            for line in plan_lines(entry, evidence_date):
+            for line in plan_lines(entry, evidence_date, campaign=args.campaign):
                 _write(out, line + "\n")
     if args.all_rows:
         stages = sum(len(entry.stages) for entry in chosen)
@@ -311,8 +327,15 @@ def _blocked(cause: str, config_dir: Optional[str] = None) -> GateResult:
     return GateResult(pc_exitcodes.PREFLIGHT_BLOCKED, "BLOCKED", tuple(lines), cause)
 
 
-def _destination_name(clock: Callable[[], datetime.datetime], model: str = pc_flags.PINNED_MODEL) -> str:
-    return pc_rows.evidence_folder_name(clock().strftime("%Y-%m-%d"), model)
+def _destination_name(
+    clock: Callable[[], datetime.datetime],
+    model: str = pc_flags.PINNED_MODEL,
+    campaign: Optional[str] = None,
+    evidence_date: Optional[str] = None,
+) -> str:
+    """The dated folder name: the evidence date given, else the clock's UTC date, then the model and the label."""
+    date_text = evidence_date if evidence_date is not None else clock().strftime("%Y-%m-%d")
+    return pc_rows.evidence_folder_name(date_text, model, campaign)
 
 
 def _source_exists(repo_root: str, path: str, kind: str) -> bool:
@@ -326,6 +349,8 @@ def gate(
     env: Mapping[str, str],
     clock: Callable[[], datetime.datetime],
     registry: Optional[Sequence[pc_rows.RowSpec]] = None,
+    campaign: Optional[str] = None,
+    evidence_date: Optional[str] = None,
 ) -> GateResult:
     """Run the claude-free checks for one row, in order, with no process and no write.
 
@@ -359,7 +384,7 @@ def gate(
             ("FAIL: the evidence folder is missing",),
             "missing-evidence",
         )
-    name = _destination_name(clock)
+    name = _destination_name(clock, campaign=campaign, evidence_date=evidence_date)
     if os.path.lexists(os.path.join(evidence, name)):
         return GateResult(
             pc_exitcodes.PROMOTE_REFUSED,
@@ -499,10 +524,12 @@ def _run_gates(
     clock: Callable[[], datetime.datetime],
     registry: Sequence[pc_rows.RowSpec],
     out: TextIO,
+    campaign: Optional[str] = None,
+    evidence_date: Optional[str] = None,
 ) -> int:
     """Gate each selected row in order; stop at the first one that is not OK and return its code."""
     for entry in chosen:
-        result = gate(entry, repo_root, env, clock, registry)
+        result = gate(entry, repo_root, env, clock, registry, campaign, evidence_date)
         _print_result(result, out)
         if result.code != pc_exitcodes.OK:
             return result.code
@@ -530,6 +557,8 @@ def _file_skipped(
     clock: Callable[[], datetime.datetime],
     out: TextIO,
     err: TextIO,
+    campaign: Optional[str] = None,
+    evidence_date: Optional[str] = None,
 ) -> int:
     """File a SKIPPED label folder for a row whose precondition is not met and return the exit code.
 
@@ -542,7 +571,9 @@ def _file_skipped(
     except pc_spike.HomeRefused:
         _print_result(_blocked("harness-home"), out)
         return pc_exitcodes.PREFLIGHT_BLOCKED
-    destination = os.path.join(root, "tests", "evidence", _destination_name(clock))
+    destination = os.path.join(
+        root, "tests", "evidence", _destination_name(clock, campaign=campaign, evidence_date=evidence_date)
+    )
     try:
         sanitizer = pc_sanitize.Sanitizer.from_machine(root, _scratch_map(runs))
         deny_entries = sanitizer.deny_entries()
@@ -657,6 +688,8 @@ def _run_real_gates(
     registry: Sequence[pc_rows.RowSpec],
     out: TextIO,
     err: TextIO,
+    campaign: Optional[str] = None,
+    evidence_date: Optional[str] = None,
 ) -> int:
     """Gate each selected row as a real run does: a row whose precondition is not met is filed as SKIPPED (D-10).
 
@@ -664,10 +697,10 @@ def _run_real_gates(
     and never 0, whether its label folder was filed or one of the filing steps refused.
     """
     for entry in chosen:
-        result = gate(entry, repo_root, env, clock, registry)
+        result = gate(entry, repo_root, env, clock, registry, campaign, evidence_date)
         _print_result(result, out)
         if result.code == pc_exitcodes.PREFLIGHT_SKIP and result.cause == "precondition":
-            return _file_skipped(entry, result, repo_root, env, clock, out, err)
+            return _file_skipped(entry, result, repo_root, env, clock, out, err, campaign, evidence_date)
         if result.code != pc_exitcodes.OK:
             return result.code
     return pc_exitcodes.OK
@@ -772,6 +805,11 @@ def main(
         return _usage(err)
     if args.dry_run and (args.list_all or args.authorize_retry is not None or args.refile is not None):
         return _usage(err)
+    if args.campaign is not None and not pc_rows.is_valid_campaign(args.campaign):
+        return _refuse(err, MESSAGE_BAD_CAMPAIGN)
+    if args.campaign is not None or args.evidence_date is not None:
+        if args.list_all or args.authorize_retry is not None or args.refile is not None:
+            return _usage(err)
 
     source: Mapping[str, str] = dict(os.environ) if env is None else env
     root = repo_root if repo_root else _REPO_ROOT
@@ -786,10 +824,19 @@ def main(
     if args.refile is not None:
         return _refile(args.refile, source, root, out, err)
 
+    now = now_of()
+    if args.evidence_date is not None:
+        try:
+            wanted = pc_rows.parse_evidence_date(args.evidence_date)
+        except ValueError:
+            return _refuse(err, MESSAGE_BAD_DATE)
+        today = (now.astimezone(datetime.timezone.utc) if now.tzinfo is not None else now).date()
+        if wanted > today:
+            return _refuse(err, MESSAGE_BAD_DATE)
     chosen, refused = _select_entries(args, entries, err)
     if chosen is None:
         return refused
-    evidence_date = now_of().strftime("%Y-%m-%d")
+    evidence_date = args.evidence_date if args.evidence_date is not None else now.strftime("%Y-%m-%d")
     _print_plans(args, entries, chosen, evidence_date, out)
     needed = _total_worst_case(chosen)
 
@@ -798,9 +845,9 @@ def main(
             amount, code = _check_budget(args.budget, needed, err)
             if amount is None:
                 return code
-        return _run_gates(chosen, root, source, now_of, entries, out)
+        return _run_gates(chosen, root, source, now_of, entries, out, args.campaign, evidence_date)
 
-    code = _run_real_gates(chosen, root, source, now_of, entries, out, err)
+    code = _run_real_gates(chosen, root, source, now_of, entries, out, err, args.campaign, evidence_date)
     if code != pc_exitcodes.OK:
         return code
     if not chosen:
@@ -824,7 +871,9 @@ def main(
         version: Optional[str] = pc_flags.parse_banner(result.banner or "")
     except ValueError:
         version = None
-    destination = os.path.join(root, "tests", "evidence", pc_rows.evidence_folder_name(evidence_date, pc_flags.PINNED_MODEL))
+    destination = os.path.join(
+        root, "tests", "evidence", pc_rows.evidence_folder_name(evidence_date, pc_flags.PINNED_MODEL, args.campaign)
+    )
     ctx = pc_rows.RunContext(
         repo_root=root,
         env=dict(source),
@@ -841,6 +890,7 @@ def main(
         budget=amount,
         banner=result.banner,
         version=version,
+        campaign=args.campaign,
     )
     for entry in chosen:
         code = execute_row(entry, ctx, out, err)

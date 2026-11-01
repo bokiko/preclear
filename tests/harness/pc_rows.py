@@ -13,6 +13,7 @@ which of them this phase implements, and what each stage of an implemented row m
   * build_registry        the full registry, plus any rows a test injects
   * find_entry            exact, whole-id lookup; a prefix, another case or an odd value is None
   * worst_case, session_count, stage_key, evidence_folder_name
+  * campaign and attempt scoping (plan 04-02): is_valid_campaign, scoped_row, scoped_stage_key, row_folder_name
 
 Every cap is a Decimal; no float appears here. An id reaches a path only after it has matched a
 registry entry exactly. Standard library only, Python 3.9 floor, no process, no file access.
@@ -58,6 +59,15 @@ ROW_IDS: Tuple[str, ...] = (
 
 MAX_ID_LENGTH = 64
 ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+# Campaign labels and attempts (plan 04-02). A label is one lower-case id of at most 24 characters. The words a1 to a9
+# are the attempt scope of a ledger id, so no label may hold one as a whole hyphen-separated part: that would let a
+# label such as wave-a2 build the same ledger id as the label wave on its second attempt (T-04-08).
+CAMPAIGN_PATTERN = ID_PATTERN
+MAX_CAMPAIGN_LENGTH = 24
+MAX_ATTEMPT = 9
+MATRIX_SCOPE = "matrix"
+_ATTEMPT_WORD = re.compile(r"a[1-9]\Z")
 _DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 _MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 MAX_MODEL_LENGTH = 64
@@ -119,13 +129,21 @@ class RunContext(NamedTuple):
     banner: Optional[str]
     version: Optional[str]
     setup_pin: Optional[str] = None  # the gitdir digest at setup, held in memory by the runner (third-pass WR-02)
+    campaign: Optional[str] = None  # the validated campaign label of this invocation, or None
+    attempt: int = 1  # 1 to MAX_ATTEMPT; above 1 only for one explicitly selected row (a retry)
+    matrix: bool = False  # True for --all without a campaign: the ledger scope is the word matrix
 
 
 class RowOutcome(NamedTuple):
-    """What a row runner returns: an exit code and the fixed-text lines to print."""
+    """What a row runner returns: an exit code and the fixed-text lines to print.
+
+    spent is what the row settled in the spend ledger (a Decimal), or None when the runner does not report it; the
+    driver treats None as nothing spent and uses the figure for its per-invocation budget (plan 04-02).
+    """
 
     code: int
     lines: Tuple[str, ...]
+    spent: Optional[Decimal] = None
 
 
 _ROW1_STAGES: Tuple[StageSpec, ...] = (
@@ -276,11 +294,15 @@ def find_entry(registry: Sequence[RowSpec], kind: str, text: Any) -> Optional[Ro
 
 
 def worst_case(row: RowSpec) -> Decimal:
-    """The sum of the stage caps as an exact Decimal."""
+    """The most a row can cost: the smaller of the sum of its stage caps and ROW_CAP, as an exact Decimal.
+
+    The spend ledger refuses the launch that would take a row's settled spend plus that stage's cap above ROW_CAP,
+    so a row whose caps add up to more than ROW_CAP still cannot cost more than ROW_CAP (FA-6).
+    """
     total = Decimal("0")
     for stage in row.stages:
         total += stage.cap
-    return total
+    return total if total < ROW_CAP else ROW_CAP
 
 
 def session_count(row: RowSpec) -> int:
@@ -295,14 +317,80 @@ def stage_key(row_id: str, stage_name: str) -> str:
     return "%s-%s" % (row_id.split("-", 1)[0], stage_name)
 
 
-def evidence_folder_name(date_text: str, model: str) -> str:
-    """Return rerun-<date>-<model> (D-05), refusing a malformed date or a model unsafe in a folder name."""
+def parse_evidence_date(date_text: Any) -> datetime.date:
+    """Return the calendar date of a YYYY-MM-DD text, or raise ValueError (never echoing the text)."""
     if not isinstance(date_text, str) or _DATE_PATTERN.match(date_text) is None:
         raise ValueError("the evidence date must be YYYY-MM-DD")
     try:
-        datetime.date(int(date_text[0:4]), int(date_text[5:7]), int(date_text[8:10]))
+        return datetime.date(int(date_text[0:4]), int(date_text[5:7]), int(date_text[8:10]))
     except ValueError:
         raise ValueError("the evidence date is not a calendar date") from None
+
+
+def is_valid_campaign(text: Any) -> bool:
+    """True for one lower-case id of 1 to 24 characters that holds no part a1 to a9 (the attempt words)."""
+    if not isinstance(text, str) or not 1 <= len(text) <= MAX_CAMPAIGN_LENGTH:
+        return False
+    if CAMPAIGN_PATTERN.match(text) is None:
+        return False
+    return not any(_ATTEMPT_WORD.match(part) is not None for part in text.split("-"))
+
+
+def _check_scope(campaign: Optional[str], attempt: int) -> None:
+    if campaign is not None and not is_valid_campaign(campaign):
+        raise ValueError("the campaign label is not valid")
+    if type(attempt) is not int or not 1 <= attempt <= MAX_ATTEMPT:
+        raise ValueError("the attempt must be a whole number from 1 to 9")
+
+
+def _scoped(campaign: Optional[str], attempt: int, matrix: bool, tail: str) -> str:
+    _check_scope(campaign, attempt)
+    parts: List[str] = []
+    if campaign is not None:
+        parts.append(campaign)
+    elif matrix:
+        parts.append(MATRIX_SCOPE)
+    if attempt > 1:
+        parts.append("a%d" % attempt)
+    parts.append(tail)
+    text = "-".join(parts)
+    if not is_valid_id(text):
+        raise ValueError("the scoped id does not fit the id pattern")
+    return text
+
+
+def scoped_row(row_id: str, campaign: Optional[str] = None, attempt: int = 1, matrix: bool = False) -> str:
+    """Return the ledger row id of a row: <scope>-[a<N>-]<row id>.
+
+    The scope is the campaign label when there is one, else the word matrix when matrix is true, else nothing; the
+    word a<N> is added only for an attempt above 1. With neither scope nor attempt the id is the bare row id, as
+    Phase 3 wrote it. A value that does not fit the 64-character id rule of the spend ledger is a ValueError.
+    """
+    if not is_valid_id(row_id):
+        raise ValueError("a row id must match the id pattern")
+    return _scoped(campaign, attempt, matrix, row_id)
+
+
+def scoped_stage_key(
+    row_id: str, stage_name: str, campaign: Optional[str] = None, attempt: int = 1, matrix: bool = False
+) -> str:
+    """Return the ledger stage key of a stage: <scope>-[a<N>-]<stage_key(row id, stage name)>."""
+    return _scoped(campaign, attempt, matrix, stage_key(row_id, stage_name))
+
+
+def row_folder_name(row_id: str, attempt: int = 1) -> str:
+    """Return the row's folder name inside a dated folder: the bare row id, or <row id>-attempt-<N> above attempt 1."""
+    if not is_valid_id(row_id):
+        raise ValueError("a row id must match the id pattern")
+    _check_scope(None, attempt)
+    return row_id if attempt == 1 else "%s-attempt-%d" % (row_id, attempt)
+
+
+def evidence_folder_name(date_text: str, model: str, campaign: Optional[str] = None) -> str:
+    """Return rerun-<date>-<model>[-<campaign>] (D-05), refusing a malformed date, a bad label or an unsafe model."""
+    parse_evidence_date(date_text)
+    if campaign is not None and not is_valid_campaign(campaign):
+        raise ValueError("the campaign label is not valid")
     if (
         not isinstance(model, str)
         or len(model) > MAX_MODEL_LENGTH
@@ -310,4 +398,5 @@ def evidence_folder_name(date_text: str, model: str) -> str:
         or ".." in model
     ):
         raise ValueError("the model id is not safe in a folder name")
-    return "rerun-%s-%s" % (date_text, model)
+    name = "rerun-%s-%s" % (date_text, model)
+    return name if campaign is None else "%s-%s" % (name, campaign)
