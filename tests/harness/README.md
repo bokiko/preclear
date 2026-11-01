@@ -340,6 +340,16 @@ ledger and each followed by a snapshot of the run root:
 The work-turn prompt is a data file in `data/`; the `/preclear` prompt is the committed one, read in
 place from the publication folder and never copied, so it is byte-identical by construction.
 
+Rows without a helper (the plain rows 5a and 5b) run with no wrapper, no ledger and no binding: their setup holds
+an empty ledgers folder and no wrapper folder, their allowlist is the baseline plus two extra rules and never
+holds a wrapper rule, and their filed folder has no wrapper, stub or helper-state file. Their settings and the
+memory-path assertion follow the row's memory policy: with memory disabled the settings switch auto-memory off
+and keep its directory pinned inside the run root, and the init event may report no memory path (a path that
+is reported must still be the pinned one); with memory pinned an absent path still stops the row. The plain
+prompt and the plain plan are data files tied to the committed digests, and the memory facts (the files in the
+auto-memory folder, the memory-looking paths under the project, the default memory root) are counts in
+`mechanical-checks.md`.
+
 After every stage the init manifest and the instruction audit are asserted against the isolation
 baseline: permission mode, model, skills, servers, plugins, user names, the memory path as set, the
 working folder, the session id as requested, and which instruction files were loaded from where. The
