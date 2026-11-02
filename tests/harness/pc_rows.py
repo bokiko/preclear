@@ -56,6 +56,12 @@ CHAIN_PRINTED_CHECKPOINT = "printed-checkpoint"
 PROBE_NONE = ""
 PROBE_CHMOD = "chmod-denial"
 
+# Analyses (RowSpec.analyses): named, model-free readings of a finished chain that filing adds to the row folder
+# (pc_review.ANALYSES holds the functions). Row 7 files its facts and the Do-not-redo candidates (plan 04-07).
+ANALYSIS_ROW7_FACTS = "row7-facts"
+ANALYSIS_DO_NOT_REDO = "do-not-redo"
+ROW7_ANALYSES: Tuple[str, ...] = (ANALYSIS_ROW7_FACTS, ANALYSIS_DO_NOT_REDO)
+
 LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
 
 # The acceptance order of the twelve publication cases (tests/acceptance.md, Publication matrix).
@@ -136,6 +142,7 @@ class RowSpec(NamedTuple):
     hooks: Tuple[Tuple[str, str], ...] = ()  # (stage name, hook id) pairs: a hook runs after that stage (plan 04-05)
     chain: str = CHAIN_RESUME_LINE  # CHAIN_RESUME_LINE or CHAIN_PRINTED_CHECKPOINT: what feeds the resume stage (plan 04-06)
     probe: str = PROBE_NONE  # a live probe id the runner makes before any spend, or PROBE_NONE (plan 04-06)
+    analyses: Tuple[str, ...] = ()  # ids of pc_review.ANALYSES that filing runs for a completed chain (plan 04-07)
 
 
 class RunContext(NamedTuple):
@@ -429,6 +436,7 @@ def _registered_rows() -> Dict[str, RowSpec]:
             hooks=_ROW7_HOOKS,
             chain=CHAIN_PRINTED_CHECKPOINT,
             probe=PROBE_CHMOD,
+            analyses=ROW7_ANALYSES,
         ),
     }
 
