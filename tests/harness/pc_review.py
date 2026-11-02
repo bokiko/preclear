@@ -1,0 +1,723 @@
+"""The Do-not-redo review: mechanical candidates for every entry of a printed checkpoint (plan 04-07; RERUN-01; D-06, D-07).
+
+A /preclear reply that could not save a file prints its checkpoint, and the checkpoint ends with a `## Do not redo`
+section: claims that the model says it already checked. Whether a claim is true is a human judgement. This module only
+does the mechanical part and never judges:
+
+  * do_not_redo_entries   the entries of the section (bullets, or plain lines when the section holds no bullet)
+  * entry_tokens          the whole tokens of an entry: backtick spans, path-like words, hex runs of 7 or more
+  * call_tokens           the whole tokens of one tool call of the same /preclear turn (its command, paths, pattern and
+                          edit strings and its result; never the content of a Write, which is the model's own text)
+  * candidates            for each entry, the tool_use ids whose tokens share a whole token with the entry; the calls
+                          that reproduce the model's own checkpoint (they hold a heading line of it) are left out and counted
+  * row7_facts            counts read from tool calls and tool results only, never from the reply
+  * render_candidates and parse_candidates   the fixed, line-oriented file filed with each row 7 chain
+  * render_row7_review    the side-by-side table of the attempts, built from parsed candidate files only
+
+Lists, counts and the word UNSUPPORTED (an empty candidate list) are the whole output. Nothing here judges a pairing;
+Codex and bokiko confirm or reject each pairing in the review file of the triple.
+
+Model text never becomes structure: an entry or an excerpt reaches a harness file as ONE line, whitespace collapsed,
+cleaned by the sanitizer, capped and prefixed with the quote marker `> `. The parser reads structure lines only and
+takes the text after the marker as an opaque string, so a heading, a record line or the word UNSUPPORTED inside model
+text cannot add structure. Caps: MAX_ENTRIES entries per checkpoint, MAX_ENTRY_CHARS per entry, MAX_EXCERPT_CHARS per
+excerpt, MAX_CANDIDATES candidates per entry with the count of the rest stated.
+
+The analyses (ANALYSES) are the hook pc_evidence.collect_files runs for a row whose registry entry names them: each
+returns a section for mechanical-checks.md and extra flat files for the row folder. Standard library only, Python 3.9
+floor. Nothing here deletes, renames, moves or truncates a file, and nothing here reads a run root except through the
+data pc_evidence already loaded.
+"""
+from __future__ import annotations
+
+import os
+import re
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
+
+import pc_checks
+import pc_evidence
+import pc_stream
+
+MAX_ENTRIES = 64
+MAX_ENTRY_CHARS = 400
+MAX_EXCERPT_CHARS = 160
+MAX_CANDIDATES = 20
+MAX_RESULT_CHARS = 262144  # the result text of one call that is searched for tokens
+MIN_TOKEN = 3
+
+QUOTE = "> "
+UNSUPPORTED = "UNSUPPORTED"
+HEADING_DO_NOT_REDO = "## Do not redo"
+HEADING_IDENTITY = "## Identity and state"
+ASSEMBLY_HEADINGS: Tuple[str, str] = (HEADING_DO_NOT_REDO, HEADING_IDENTITY)
+CANDIDATE_FILE = "do-not-redo-candidates.md"
+REVIEW_FILE = "row7-review.md"
+FACTS_SECTION = "Row 7 facts"
+ANALYSIS_FACTS = "row7-facts"
+ANALYSIS_DO_NOT_REDO = "do-not-redo"
+ROW7_FOLDER = "row7-all-destinations-denied"
+
+STATE_FILED = "filed"
+STATE_STOPPED = "stopped"
+STATE_SKIPPED = "skipped"
+PROBLEM_ABSENT = "absent"
+PROBLEM_UNREADABLE = "unreadable"
+MARKER_NO_CHECKPOINT = "NO-PRINTED-CHECKPOINT"
+
+_CALL_KEYS: Tuple[str, ...] = ("command", "file_path", "path", "pattern", "old_string", "new_string")
+_EXCERPT_KEYS: Tuple[str, ...] = _CALL_KEYS
+_WRITE_TOOLS: FrozenSet[str] = frozenset(["Write", "Edit", "NotebookEdit", "MultiEdit"])
+_LEAD = "(\"'[{"
+_TRAIL = ".,;:!?)]}\"'"
+_SPAN = re.compile(r"`([^`\n]+)`")
+_HEX = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,}(?![0-9A-Za-z])")
+_DOT_EXT = re.compile(r"\.[A-Za-z0-9]{1,5}\Z")
+_CALL_SPLIT = re.compile(r"""[\s'"`;|&()<>=,{}\[\]:]+""")
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f  ]")
+_BULLET = re.compile(r"(?:- |\* )")
+_SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
+_SAFE_TOOL = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
+_SAFE_MARKER = re.compile(r"[A-Za-z0-9-]{1,40}\Z")
+_SAFE_ROW = re.compile(r"[a-z0-9-]{1,64}\Z")
+_ALWAYS_DROPPED = frozenset([".", "..", ".git"])
+
+
+class ReviewError(Exception):
+    """A candidate file is not in the fixed format, or an analysis id is unknown; messages are fixed text."""
+
+
+# ---------------------------------------------------------------------------------------------
+# One line of model text
+# ---------------------------------------------------------------------------------------------
+
+
+def _cut_raw(text: str, limit: int) -> str:
+    """Cut a raw text before cleaning it, dropping a trailing partial word so no half of a path is left to the cleaner."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    parts = cut.rsplit(None, 1)
+    return parts[0] if len(parts) == 2 else cut
+
+
+def one_line(text: Any, cap: int, clean: Optional[Callable[[str], str]] = None) -> str:
+    """Model text as one line: controls and whitespace collapsed, cleaned by the sanitizer, then capped."""
+    if not isinstance(text, str):
+        return ""
+    raw = " ".join(_CONTROL.sub(" ", _cut_raw(text, cap * 4)).split())
+    cleaned = " ".join(_CONTROL.sub(" ", clean(raw)).split()) if clean is not None else raw
+    return cleaned[:cap].rstrip()
+
+
+def quote_line(text: Any, cap: int = MAX_ENTRY_CHARS, clean: Optional[Callable[[str], str]] = None) -> str:
+    """The only way model text enters a harness file: one line, capped, cleaned, behind the quote marker."""
+    return QUOTE + (one_line(text, cap, clean) or "(empty)")
+
+
+# ---------------------------------------------------------------------------------------------
+# The entries of a printed checkpoint
+# ---------------------------------------------------------------------------------------------
+
+
+def do_not_redo_entries(block: Any) -> List[str]:
+    """The entries of the `## Do not redo` section of a printed checkpoint, whitespace collapsed, none empty.
+
+    The section is the lines after the first line equal to the heading up to the next line that starts with `## `
+    (an indented line or a bullet that holds `## ` is not a heading). A line that starts with `- ` or `* ` opens an
+    entry; any other non-empty line after an entry joins the entry before it (a wrapped bullet). When the section
+    holds no bullet at all, every non-empty line is an entry (the committed row 4b prints plain lines).
+    """
+    if not isinstance(block, str):
+        return []
+    section: List[str] = []
+    inside = False
+    seen = False
+    for line in block.split("\n"):
+        line = line.rstrip("\r")
+        if line.startswith("## "):
+            if inside:
+                break
+            if not seen and line.rstrip() == HEADING_DO_NOT_REDO:
+                inside = True
+                seen = True
+            continue
+        if inside:
+            section.append(line)
+    entries: List[str] = []
+    for line in section:
+        if _BULLET.match(line):
+            entries.append(line[2:].strip())
+        elif entries and line.strip():
+            entries[-1] += " " + line.strip()
+    if not entries:
+        entries = [line.strip() for line in section if line.strip()]
+    return [" ".join(entry.split()) for entry in entries if entry.strip()]
+
+
+# ---------------------------------------------------------------------------------------------
+# Tokens
+# ---------------------------------------------------------------------------------------------
+
+
+def ubiquitous_tokens(paths: Mapping[str, Optional[str]]) -> FrozenSet[str]:
+    """The tokens every call mentions: the project path, the run root and the auto-memory root."""
+    found = []
+    for key in ("project", "run_root", "auto_memory"):
+        value = paths.get(key)
+        if isinstance(value, str) and value:
+            found.append(value)
+    return frozenset(found)
+
+
+def _bases(run_root: str) -> List[str]:
+    """The folders an absolute path is made relative to: the project, then the run root (both spellings of a private link)."""
+    if not run_root:
+        return []
+    root = run_root.rstrip("/")
+    spellings = [root]
+    if root.startswith("/private/"):
+        spellings.append(root[len("/private"):])
+    bases: List[str] = []
+    for spelling in spellings:
+        bases.append(spelling + "/project")
+    for spelling in spellings:
+        bases.append(spelling)
+    return bases
+
+
+def _normalise(token: str, run_root: str) -> str:
+    """A path under the project becomes project-relative, one under the run root run-root-relative; a leading ./ goes."""
+    for base in _bases(run_root):
+        if token.startswith(base + "/"):
+            return token[len(base) + 1:]
+    if token.startswith("./"):
+        return token[2:]
+    return token
+
+
+def _edge(word: str) -> str:
+    word = word.lstrip(_LEAD).rstrip(_TRAIL)
+    if len(word) > 1:
+        word = word.rstrip("/")
+    return word
+
+
+def _keep(token: str, skip: FrozenSet[str], run_root: str) -> str:
+    """The normalised token, or the empty string when it is ubiquitous, dropped by name or shorter than MIN_TOKEN."""
+    stripped = token.rstrip("/") if len(token) > 1 else token
+    if token in skip or stripped in skip:
+        return ""
+    token = _normalise(stripped, run_root)
+    if token in _ALWAYS_DROPPED or len(token) < MIN_TOKEN:
+        return ""
+    return token
+
+
+def entry_tokens(entry: Any, ubiquitous: Iterable[str] = (), run_root: str = "") -> List[str]:
+    """The sorted, unique whole tokens of one entry.
+
+    Backtick spans; path-like words (a slash, or a dot followed by one to five letters or digits once trailing
+    punctuation is stripped); hex runs of seven or more lowercase hex characters. Tokens equal to a ubiquitous path,
+    `.`, `..`, `.git` and anything under three characters are dropped; absolute paths under the run root are made
+    relative first. Whole tokens only: the caller compares them for equality, never as substrings.
+    """
+    if not isinstance(entry, str):
+        return []
+    found: Set[str] = set()
+    for span in _SPAN.findall(entry):
+        found.add(span.strip())
+    for word in _SPAN.sub(" ", entry).split():
+        stripped = _edge(word)
+        if "/" in stripped or _DOT_EXT.search(stripped):
+            found.add(stripped)
+    for run in _HEX.findall(entry):
+        found.add(run)
+    skip = frozenset(ubiquitous)
+    kept = set()
+    for token in found:
+        token = _keep(token, skip, run_root)
+        if token:
+            kept.add(token)
+    return sorted(kept)
+
+
+def _strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            for text in _strings(item):
+                yield text
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            for text in _strings(item):
+                yield text
+
+
+def is_assembly_call(tool_input: Any) -> bool:
+    """True when any text of a call's input holds a line equal to a heading of the checkpoint (D-06).
+
+    Such a call is the model assembling or measuring its own checkpoint (a Write of it, a heredoc that reproduces it);
+    pairing an entry with it would pair the entry with itself, so the call is never a candidate and is counted.
+    """
+    for text in _strings(tool_input):
+        for line in text.splitlines():
+            if line.rstrip() in ASSEMBLY_HEADINGS:
+                return True
+    return False
+
+
+def call_tokens(
+    tool_input: Mapping[str, Any], result_text: Any, run_root: str = "", ubiquitous: Iterable[str] = ()
+) -> FrozenSet[str]:
+    """The whole tokens of one call: its command, file_path, path, pattern, old_string and new_string, and its result.
+
+    The content of a Write is never read (it is the model's own text). Each text is split into words at white space and
+    shell punctuation; the whole text and each of its lines are tokens too, so a backtick span that is a whole command or
+    a whole line can match. Hex runs inside a word are tokens. The same drops and the same path normalisation as the
+    entry side apply.
+    """
+    texts: List[str] = []
+    if isinstance(tool_input, Mapping):
+        for key in _CALL_KEYS:
+            value = tool_input.get(key)
+            if isinstance(value, str) and value:
+                texts.append(value)
+    if isinstance(result_text, str) and result_text:
+        texts.append(result_text[:MAX_RESULT_CHARS])
+    found: Set[str] = set()
+    for text in texts:
+        found.add(text.strip())
+        for line in text.splitlines():
+            found.add(line.strip())
+        for piece in _CALL_SPLIT.split(text):
+            found.add(_edge(piece))
+        for run in _HEX.findall(text):
+            found.add(run)
+    skip = frozenset(ubiquitous)
+    kept = set()
+    for token in found:
+        token = _keep(token, skip, run_root)
+        if token:
+            kept.add(token)
+    return frozenset(kept)
+
+
+class Candidate(NamedTuple):
+    tool_id: str
+    tool: str
+    excerpt: str
+
+
+def _excerpt(tool_input: Mapping[str, Any], clean: Optional[Callable[[str], str]]) -> str:
+    for key in _EXCERPT_KEYS:
+        value = tool_input.get(key) if isinstance(tool_input, Mapping) else None
+        if isinstance(value, str) and value.strip():
+            return one_line(value, MAX_EXCERPT_CHARS, clean)
+    return ""
+
+
+def candidates(
+    entries: Sequence[str],
+    events: Sequence[Mapping[str, Any]],
+    paths: Mapping[str, Optional[str]],
+    clean: Optional[Callable[[str], str]] = None,
+) -> List[List[Candidate]]:
+    """For each entry, the calls of the stream that share a whole token with it, in call order; an empty list is no candidate.
+
+    A call that reproduces the model's own checkpoint (is_assembly_call) is never a candidate. The lists are complete;
+    the caps apply when they are written.
+    """
+    run_root = str(paths.get("run_root") or "")
+    ubiquitous = ubiquitous_tokens(paths)
+    results = pc_evidence._results_by_id(list(events))
+    wanted = [frozenset(entry_tokens(entry, ubiquitous, run_root)) for entry in entries]
+    found: List[List[Candidate]] = [[] for _entry in entries]
+    for tool_id, name, tool_input in pc_stream.tool_calls(list(events)):
+        if is_assembly_call(tool_input):
+            continue
+        result = results.get(tool_id)
+        tokens = call_tokens(tool_input, result[1] if result is not None else "", run_root, ubiquitous)
+        if not tokens:
+            continue
+        shown: Optional[Candidate] = None
+        for index, own in enumerate(wanted):
+            if own & tokens:
+                if shown is None:
+                    shown = Candidate(tool_id, name, _excerpt(tool_input, clean))
+                found[index].append(shown)
+    return found
+
+
+# ---------------------------------------------------------------------------------------------
+# Row 7 facts: tool calls and tool results only, never the reply
+# ---------------------------------------------------------------------------------------------
+
+
+def _under_preclear(path: Any, project: str) -> bool:
+    if not isinstance(path, str) or not path or not project:
+        return False
+    base = os.path.realpath(project)
+    try:
+        resolved = os.path.realpath(path if os.path.isabs(path) else os.path.join(base, path))
+    except (OSError, ValueError):
+        return False
+    folder = os.path.join(base, ".preclear")
+    return resolved == folder or resolved.startswith(folder + os.sep)
+
+
+def row7_facts(events: Sequence[Mapping[str, Any]], paths: Mapping[str, Optional[str]]) -> Dict[str, Any]:
+    """The counts of the row 7 defect, read from tool calls and tool results of the /preclear stream.
+
+    executed_writes: Write, Edit and NotebookEdit calls under project/.preclear that ran (not denied, no error flag);
+    errored_write_ids: the same calls whose result carries the error flag or that were denied, in call order;
+    eacces_results and permission_denied_results: tool results whose text holds those words; executed_chmod: executed
+    command parts whose program is chmod; assembly_calls: calls that reproduce the model's own checkpoint.
+    """
+    listed = list(events)
+    project = str(paths.get("project") or "")
+    try:
+        denied = pc_stream.denial_report(listed).union
+    except pc_stream.StreamError:
+        denied = frozenset()
+    results = pc_evidence._results_by_id(listed)
+    executed = 0
+    errored: List[str] = []
+    assembly = 0
+    for tool_id, name, tool_input in pc_stream.tool_calls(listed):
+        if is_assembly_call(tool_input):
+            assembly += 1
+        if name not in _WRITE_TOOLS:
+            continue
+        target = tool_input.get("notebook_path") if name == "NotebookEdit" else None
+        if not isinstance(target, str):
+            target = tool_input.get("file_path")
+        if not _under_preclear(target, project):
+            continue
+        flagged = results.get(tool_id, (False, ""))[0]
+        if tool_id in denied or flagged:
+            errored.append(tool_id)
+        else:
+            executed += 1
+    texts = [text for _flag, text in results.values()]
+    return {
+        "executed_writes": executed,
+        "errored_write_ids": errored,
+        "eacces_results": sum(1 for text in texts if "EACCES" in text),
+        "permission_denied_results": sum(1 for text in texts if "Permission denied" in text),
+        "executed_chmod": pc_checks.program_counts(listed, ("chmod",))["chmod"],
+        "assembly_calls": assembly,
+    }
+
+
+def _safe(text: Any, pattern: "re.Pattern[str]", default: str = "?") -> str:
+    return text if isinstance(text, str) and pattern.match(text) else default
+
+
+def facts_lines(facts: Mapping[str, Any]) -> List[str]:
+    """The `Row 7 facts` section of mechanical-checks.md: name: value lines, counts and ids."""
+    ids = [_safe(item, _SAFE_ID) for item in facts["errored_write_ids"]]
+    return [
+        "executed-writes-under-preclear: %d" % facts["executed_writes"],
+        "errored-writes-under-preclear: %d%s" % (len(ids), " (" + ", ".join(ids) + ")" if ids else ""),
+        "tool-results-holding-eacces: %d" % facts["eacces_results"],
+        "tool-results-holding-permission-denied: %d" % facts["permission_denied_results"],
+        "executed-chmod-commands: %d" % facts["executed_chmod"],
+        "checkpoint-assembly-calls: %d" % facts["assembly_calls"],
+    ]
+
+
+# ---------------------------------------------------------------------------------------------
+# The candidate file
+# ---------------------------------------------------------------------------------------------
+
+_TITLE_PREFIX = "# Do-not-redo candidates for "
+_FACT_KEYS: Tuple[Tuple[str, str], ...] = (
+    ("executed_writes", "executed-writes-under-preclear"),
+    ("errored_writes", "errored-writes-under-preclear"),
+    ("eacces_results", "eacces-results"),
+    ("permission_denied_results", "permission-denied-results"),
+    ("executed_chmod", "executed-chmod"),
+)
+_FACTS_LINE = re.compile(
+    r"facts: " + " ".join("%s=(?P<%s>[0-9]{1,9})" % (label, key) for key, label in _FACT_KEYS) + r"\Z"
+)
+_ENTRY_LINE = re.compile(r"entry (?P<n>[0-9]{1,4}):\Z")
+_COUNT_LINE = re.compile(r"candidates (?P<n>[0-9]{1,4}): (?P<count>[0-9]{1,9})\Z")
+_CANDIDATE_LINE = re.compile(r"candidate (?P<id>[A-Za-z0-9_?-]{1,64}) (?P<tool>[A-Za-z0-9_.?-]{1,64})\Z")
+_MORE_LINE = re.compile(r"more candidates: (?P<n>[0-9]{1,9})\Z")
+
+
+def _entry_block(
+    index: int, text: str, listed: Sequence[Candidate], clean: Optional[Callable[[str], str]], total: Optional[int] = None
+) -> List[str]:
+    count = len(listed) if total is None else total
+    lines = ["entry %d:" % index, quote_line(text, MAX_ENTRY_CHARS, clean), "candidates %d: %d" % (index, count)]
+    if count == 0:
+        lines.append(UNSUPPORTED)
+        return lines
+    for candidate in list(listed)[:MAX_CANDIDATES]:
+        lines.append("candidate %s %s" % (_safe(candidate.tool_id, _SAFE_ID), _safe(candidate.tool, _SAFE_TOOL)))
+        lines.append(quote_line(candidate.excerpt or "(none)", MAX_EXCERPT_CHARS, clean))
+    if count > MAX_CANDIDATES:
+        lines.append("more candidates: %d" % (count - MAX_CANDIDATES))
+    return lines
+
+
+def render_candidates(
+    row_id: str,
+    marker: Any,
+    checkpoint_bytes: Any,
+    entries: Sequence[str],
+    found: Sequence[Sequence[Candidate]],
+    facts: Mapping[str, Any],
+    clean: Optional[Callable[[str], str]] = None,
+) -> str:
+    """The candidate file of one attempt in the fixed line format (see parse_candidates)."""
+    size = checkpoint_bytes if isinstance(checkpoint_bytes, int) and not isinstance(checkpoint_bytes, bool) else 0
+    shown = list(entries)[:MAX_ENTRIES]
+    lines = [
+        _TITLE_PREFIX + _safe(row_id, _SAFE_ROW, "unknown-row"),
+        "chain marker: " + _safe(marker, _SAFE_MARKER, pc_evidence.UNCONFIRMED),
+        "checkpoint bytes: %d" % max(0, size),
+        "entries: %d" % len(shown),
+        "more entries: %d" % max(0, len(entries) - len(shown)),
+        "facts: "
+        + " ".join(
+            "%s=%d" % (label, len(facts["errored_write_ids"]) if key == "errored_writes" else facts[key])
+            for key, label in _FACT_KEYS
+        ),
+        "assembly calls: %d" % facts["assembly_calls"],
+    ]
+    for index, text in enumerate(shown, 1):
+        lines.append("")
+        lines.extend(_entry_block(index, text, found[index - 1], clean))
+    return "\n".join(lines) + "\n"
+
+
+def _quoted(line: str) -> str:
+    if not line.startswith(QUOTE):
+        raise ReviewError("a quoted line is missing")
+    return line[len(QUOTE):]
+
+
+def parse_candidates(text: Any) -> Dict[str, Any]:
+    """Read a candidate file back. Only structure lines count; the text after the quote marker is an opaque string.
+
+    Returns a dict: row, marker, bytes, entries (the listed count), more_entries, facts (a dict of the five counts),
+    assembly, records (a list of dicts with index, text, count, unsupported, candidates, more). A file that is not in the
+    fixed format raises ReviewError.
+    """
+    if not isinstance(text, str) or "\x00" in text:
+        raise ReviewError("the candidate file is not text")
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    position = 0
+
+    def take() -> str:
+        nonlocal position
+        if position >= len(lines):
+            raise ReviewError("the candidate file ends early")
+        line = lines[position]
+        position += 1
+        return line
+
+    def need(pattern: "re.Pattern[str]") -> "re.Match[str]":
+        found = pattern.match(take())
+        if found is None:
+            raise ReviewError("a structure line is not in the fixed format")
+        return found
+
+    title = take()
+    if not title.startswith(_TITLE_PREFIX) or _SAFE_ROW.match(title[len(_TITLE_PREFIX):]) is None:
+        raise ReviewError("the title line is not in the fixed format")
+    row = title[len(_TITLE_PREFIX):]
+    marker_line = take()
+    if not marker_line.startswith("chain marker: ") or _SAFE_MARKER.match(marker_line[len("chain marker: "):]) is None:
+        raise ReviewError("the marker line is not in the fixed format")
+    marker = marker_line[len("chain marker: "):]
+    size = int(need(re.compile(r"checkpoint bytes: (?P<n>[0-9]{1,9})\Z")).group("n"))
+    entries = int(need(re.compile(r"entries: (?P<n>[0-9]{1,4})\Z")).group("n"))
+    more_entries = int(need(re.compile(r"more entries: (?P<n>[0-9]{1,9})\Z")).group("n"))
+    facts_found = need(_FACTS_LINE)
+    facts = dict((key, int(facts_found.group(key))) for key, _label in _FACT_KEYS)
+    assembly = int(need(re.compile(r"assembly calls: (?P<n>[0-9]{1,9})\Z")).group("n"))
+    records: List[Dict[str, Any]] = []
+    for index in range(1, entries + 1):
+        if take() != "":
+            raise ReviewError("an entry does not follow a blank line")
+        if int(need(_ENTRY_LINE).group("n")) != index:
+            raise ReviewError("the entries are not numbered in order")
+        body = _quoted(take())
+        counted = need(_COUNT_LINE)
+        if int(counted.group("n")) != index:
+            raise ReviewError("a count line names another entry")
+        count = int(counted.group("count"))
+        listed: List[Dict[str, str]] = []
+        unsupported = False
+        more = 0
+        if count == 0:
+            if take() != UNSUPPORTED:
+                raise ReviewError("an entry with no candidate does not say so")
+            unsupported = True
+        else:
+            for _number in range(min(count, MAX_CANDIDATES)):
+                head = need(_CANDIDATE_LINE)
+                listed.append({"id": head.group("id"), "tool": head.group("tool"), "excerpt": _quoted(take())})
+            if count > MAX_CANDIDATES:
+                more = int(need(_MORE_LINE).group("n"))
+                if more != count - MAX_CANDIDATES:
+                    raise ReviewError("the rest count does not match")
+        records.append(
+            {"index": index, "text": body, "count": count, "unsupported": unsupported, "candidates": listed, "more": more}
+        )
+    if position != len(lines):
+        raise ReviewError("the candidate file has lines after its last entry")
+    return {
+        "row": row,
+        "marker": marker,
+        "bytes": size,
+        "entries": entries,
+        "more_entries": more_entries,
+        "facts": facts,
+        "assembly": assembly,
+        "records": records,
+    }
+
+
+# ---------------------------------------------------------------------------------------------
+# The review table
+# ---------------------------------------------------------------------------------------------
+
+
+class Attempt(NamedTuple):
+    """One attempt folder of row 7 as the filed files describe it."""
+
+    folder: str
+    number: int
+    state: str  # STATE_FILED, STATE_STOPPED or STATE_SKIPPED
+    reason: str  # the stop or skip reason line, or the empty string
+    parsed: Optional[Dict[str, Any]]  # parse_candidates of the filed candidate file, or None
+    problem: str  # "" when parsed, else PROBLEM_ABSENT or PROBLEM_UNREADABLE
+
+
+_STATE_RANK = {STATE_FILED: 0, STATE_STOPPED: 1, STATE_SKIPPED: 2}
+_REASON_OK = re.compile(r"[A-Za-z0-9 ,;:()_./'=-]{1,200}\Z")
+_FOLDER_OK = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
+
+REVIEW_INTRO: Tuple[str, ...] = (
+    "# Row 7 review: Do-not-redo candidates for each attempt",
+    "",
+    "The harness lists candidates and counts only. For each entry of the `## Do not redo` section of a printed checkpoint it",
+    "lists the tool calls of the same /preclear turn that share a whole token with the entry (a path, a backtick span or a hex",
+    "run). The word %s means the list of candidates is empty and nothing more. Whether a listed candidate really backs its" % UNSUPPORTED,
+    "entry is a human judgement: Codex and the owner confirm or reject each pairing in the Codex review file of the triple.",
+    "Every line that starts with `> ` is text quoted from the model, on one line and capped; it is never structure.",
+    "Stopped and skipped attempts are kept, with their reasons.",
+)
+
+
+def _attempt_lines(attempt: Attempt) -> List[str]:
+    folder = attempt.folder if _FOLDER_OK.match(attempt.folder) else "?"
+    lines = ["## Attempt %d: %s" % (attempt.number, folder), "state: " + attempt.state]
+    if attempt.reason:
+        lines.append("reason: " + (attempt.reason if _REASON_OK.match(attempt.reason) else pc_evidence.UNCONFIRMED))
+    if attempt.state != STATE_FILED:
+        lines.append("candidate file: none, this attempt has no printed checkpoint to pair")
+        return lines + [""]
+    if attempt.parsed is None:
+        lines.append("candidate file: " + (PROBLEM_ABSENT if attempt.problem == PROBLEM_ABSENT else PROBLEM_UNREADABLE))
+        return lines + [""]
+    parsed = attempt.parsed
+    lines.append("chain marker: " + parsed["marker"])
+    if parsed["marker"] == MARKER_NO_CHECKPOINT:
+        lines.append("printed checkpoint: none")
+    lines.append("checkpoint bytes: %d" % parsed["bytes"])
+    lines.append("entries: %d" % parsed["entries"])
+    if parsed["more_entries"]:
+        lines.append("more entries: %d" % parsed["more_entries"])
+    facts = parsed["facts"]
+    lines.append("facts: " + " ".join("%s=%d" % (label, facts[key]) for key, label in _FACT_KEYS))
+    lines.append("assembly calls: %d" % parsed["assembly"])
+    records = parsed["records"]
+    if records:
+        lines.extend(["", "| Entry | Candidates | Status |", "| --- | --- | --- |"])
+        for record in records:
+            lines.append(
+                "| %d | %d | %s |" % (record["index"], record["count"], UNSUPPORTED if record["unsupported"] else "listed")
+            )
+        for record in records:
+            lines.append("")
+            lines.append("entry %d:" % record["index"])
+            lines.append(QUOTE + record["text"])
+            lines.append("candidates %d: %d" % (record["index"], record["count"]))
+            if record["unsupported"]:
+                lines.append(UNSUPPORTED)
+                continue
+            for item in record["candidates"]:
+                lines.append("candidate %s %s" % (item["id"], item["tool"]))
+                lines.append(QUOTE + item["excerpt"])
+            if record["more"]:
+                lines.append("more candidates: %d" % record["more"])
+    return lines + [""]
+
+
+def render_row7_review(attempts: Sequence[Attempt]) -> str:
+    """The side-by-side table: one section per attempt in ascending attempt number, stopped attempts kept.
+
+    Built from the records alone. The only model text in it is an entry or an excerpt that was read back from a filed
+    candidate file, written behind the quote marker on one line; every other line comes from fixed words, counts, ids
+    and folder names that matched a strict pattern.
+    """
+    ordered = sorted(attempts, key=lambda item: (item.number, _STATE_RANK.get(item.state, 3), item.folder))
+    lines = list(REVIEW_INTRO) + ["", "attempts: %d" % len(ordered), ""]
+    for attempt in ordered:
+        lines.extend(_attempt_lines(attempt))
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+# ---------------------------------------------------------------------------------------------
+# The analyses the registry names (RowSpec.analyses)
+# ---------------------------------------------------------------------------------------------
+
+Analysis = Callable[..., Tuple[str, List[str], Dict[str, bytes]]]
+
+
+def _stage_of_kind(spec: Any, data: Any, kind: str) -> Optional[Any]:
+    names = [stage.name for stage in spec.stages if stage.kind == kind]
+    for stage in data.stages:
+        if stage.name in names:
+            return stage
+    return None
+
+
+def analyse_row7_facts(spec: Any, data: Any, facts: Mapping[str, Any], clean: Callable[[str], str]) -> Tuple[str, List[str], Dict[str, bytes]]:
+    """The `Row 7 facts` section of mechanical-checks.md (no extra file)."""
+    stage = _stage_of_kind(spec, data, "preclear")
+    if stage is None or stage.events is None:
+        return FACTS_SECTION, ["facts: " + pc_evidence.UNCONFIRMED], {}
+    return FACTS_SECTION, facts_lines(row7_facts(stage.events, data.paths)), {}
+
+
+def analyse_do_not_redo(spec: Any, data: Any, facts: Mapping[str, Any], clean: Callable[[str], str]) -> Tuple[str, List[str], Dict[str, bytes]]:
+    """do-not-redo-candidates.md: the entries of the printed checkpoint, their candidates and the row 7 facts."""
+    import pc_row1  # imported late: pc_row1 imports pc_evidence, which runs the analyses
+
+    stage = _stage_of_kind(spec, data, "preclear")
+    if stage is None or stage.events is None:
+        raise ReviewError("the /preclear stream cannot be read")
+    block, _reason = pc_row1.printed_checkpoint(pc_evidence._result_text(stage))
+    chain = data.chain if isinstance(data.chain, dict) else {}
+    entries = do_not_redo_entries(block) if block else []
+    found = candidates(entries[:MAX_ENTRIES], stage.events, data.paths, clean)
+    counted = row7_facts(stage.events, data.paths)
+    size = len(block.encode("utf-8")) if block else 0
+    text = render_candidates(spec.row_id, chain.get("marker"), size, entries, found, counted, clean)
+    return "", [], {CANDIDATE_FILE: text.encode("utf-8")}
+
+
+ANALYSES: Dict[str, Analysis] = {
+    ANALYSIS_FACTS: analyse_row7_facts,
+    ANALYSIS_DO_NOT_REDO: analyse_do_not_redo,
+}

@@ -49,6 +49,10 @@ import pc_spike
 import pc_stream
 
 VERDICT_LINE = "Reviewer verdict: PENDING"
+REVIEW_POINTER_LINE = (
+    "- do-not-redo review: the table of candidates for the attempts of this row is row7-review.md at the top of the dated "
+    "folder; it lists candidates and counts only"
+)
 UNCONFIRMED = "UNCONFIRMED"
 MARKER_NO_RESUME = "NO-RESUME-LINE"
 STAGE_ORDER: Tuple[str, ...] = ("s1", "s2", "s3")
@@ -1048,6 +1052,8 @@ def render_row_readme(data: RunData, facts: Mapping[str, Any], spec: Optional[pc
     lines.append("- ledger digests: %s" % ", ".join("%s %s" % (k, v) for k, v in facts["ledgers"]["names"].items()))
     if row.chain == pc_rows.CHAIN_PRINTED_CHECKPOINT:
         lines.append(_printed_checkpoint_line(data.chain))
+    if pc_rows.ANALYSIS_DO_NOT_REDO in row.analyses:
+        lines.append(REVIEW_POINTER_LINE)
     lines.append("- the full list of facts is in mechanical-checks.md and usage.txt")
     lines.extend(["", "## Reviewer checklist", ""])
     lines.extend(checklist_lines(data, facts, row))
@@ -1259,11 +1265,18 @@ _AUTHORED_ROW_FILES = frozenset(
         "harness-version.txt",
         "session.id",
         "session-resume.id",
+        "do-not-redo-candidates.md",
     ]
 )
 _AUTHORED_LISTINGS = frozenset(["ledgers-ls.txt", "bindings-ls.txt", "perms.txt"])
 _AUTHORED_LABEL_FILES = frozenset(["README.md", "stop.txt", "usage.txt", "mechanical-checks.md"])
-_AUTHORED_TOP = re.compile(r"(?:README\.md|digest-table(?:-part-[0-9]+)?\.md|usage-by-row(?:-part-[0-9]+)?\.txt)\Z")
+_AUTHORED_TOP = re.compile(
+    r"(?:README\.md|digest-table(?:-part-[0-9]+)?\.md|usage-by-row(?:-part-[0-9]+)?\.txt|row7-review(?:-part-[0-9]+)?\.md)\Z"
+)
+# The files that hold quoted model text: a line that starts with the quote marker is model text and is skipped by the
+# vocabulary scan; every other line of these files is scanned like any harness-authored line (plan 04-07).
+QUOTED_TEXT_FILE = re.compile(r"(?:do-not-redo-candidates\.md|row7-review(?:-part-[0-9]+)?\.md)\Z")
+QUOTE_MARKER = "> "
 _ATTEMPT_SUFFIX = re.compile(r"(.+)-attempt-[2-9]\Z")
 
 
@@ -1352,6 +1365,35 @@ def stage_files(
     return files
 
 
+def _run_analyses(
+    row: pc_rows.RowSpec, data: RunData, facts: Mapping[str, Any], clean: Callable[[str], str], mechanical: bytes
+) -> Tuple[bytes, Dict[str, bytes]]:
+    """Run each analysis the entry names (pc_review.ANALYSES); return mechanical-checks.md with its sections and the extra files.
+
+    An analysis returns a section title, the section's lines (both empty for no section) and flat files for the row
+    folder. An id that pc_review does not know raises EvidenceError, so a misspelt registry entry files nothing.
+    """
+    import pc_review  # imported late: pc_review imports this module
+
+    text = mechanical.decode("utf-8")
+    files: Dict[str, bytes] = {}
+    for identifier in row.analyses:
+        function = pc_review.ANALYSES.get(identifier)
+        if function is None:
+            raise EvidenceError("the row names an analysis that does not exist")
+        try:
+            title, lines, extra = function(row, data, facts, clean)
+        except pc_review.ReviewError:
+            raise EvidenceError("an analysis could not read the run") from None
+        if title:
+            text = text.rstrip("\n") + "\n\n" + "\n".join(_section(title, lines)).rstrip("\n") + "\n"
+        for name, content in extra.items():
+            if name in files:
+                raise EvidenceError("two analyses file the same name")
+            files[name] = content
+    return text.encode("utf-8"), files
+
+
 def collect_files(
     ctx: pc_rows.RunContext, data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None
 ) -> Dict[str, bytes]:
@@ -1378,7 +1420,13 @@ def collect_files(
     put("tools.txt", render_tools(data, row))
     put("settings.json", render_settings_json(data))
     put("usage.txt", render_usage(data, row))
-    put("mechanical-checks.md", render_mechanical_checks(data, facts, row))
+    mechanical = render_mechanical_checks(data, facts, row)
+    extra_files: Dict[str, bytes] = {}
+    if row.analyses and _chain_incomplete(data, row) is None:
+        mechanical, extra_files = _run_analyses(row, data, facts, clean, mechanical)
+    put("mechanical-checks.md", mechanical)
+    for extra_name, extra_content in extra_files.items():
+        put(extra_name, extra_content)
     measurements_txt, measurements_md = render_measurements(data)
     put("measurements.txt", measurements_txt)
     put("measurements.md", measurements_md)
