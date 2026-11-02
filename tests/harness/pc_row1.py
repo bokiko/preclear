@@ -28,6 +28,10 @@ What a row 1 run is, in order:
   * file_stop         every stop after the run root exists (a turn limit, a cap, a timeout, a non-zero exit, an
                       unreadable stream, an isolation assertion, a breach) is filed as STOPPED-<row folder>
                       through pc_evidence.file_stopped, with the stop's own exit code kept (plan 04-03)
+  * between-stage hooks (plan 04-05)  a row may name hooks after a stage (pc_rowhooks): the chain applies them after
+                      the stage's own snapshot, state and guard, takes the hook's extra snapshot, and restores what
+                      they restricted before any filing and on every exit path; raw/boundaries.json lists the
+                      boundaries the row will take, written at setup before the setup guard
   * paths_for         the paths mapping of a run root rebuilt from the folder alone (filing and --refile)
   * finish            after clean checks, files the row through pc_evidence.file_row (plan 03-04)
 
@@ -56,6 +60,7 @@ import pc_exitcodes
 import pc_flags
 import pc_leakgate
 import pc_manifest
+import pc_rowhooks
 import pc_rows
 import pc_rowseeds
 import pc_runroot
@@ -890,20 +895,54 @@ def _isolation_stop(stage_name: str, evaluation: Evaluation) -> pc_rows.RowOutco
     )
 
 
+MESSAGE_HOOK_REFUSED = (
+    "FAIL: the between-stage hook after stage %s refused its target; nothing was changed; the chain stopped; "
+    "the raw files and snapshots stay in the run root"
+)
+MESSAGE_RESTORE_REFUSED = (
+    "FAIL: a restricted file was not restored because its target was refused; the harness changed nothing "
+    "outside the project; the raw files stay in the run root"
+)
+
+
+def restore_hooks(
+    ctx: pc_rows.RunContext,
+    paths: Mapping[str, Optional[str]],
+    entry: pc_rows.RowSpec,
+    hooks: Optional[pc_rowhooks.HookRun],
+) -> bool:
+    """Run the finalizers of the hooks that were applied; True when none is pending or all were restored.
+
+    Called before any filing and on every exit path of the chain. A refused target (a link planted after the hook, a
+    swapped parent) is False and nothing outside the project was changed; the hook is not retried.
+    """
+    if hooks is None or not hooks.pending():
+        return True
+    try:
+        pc_rowhooks.run_finalizers(ctx, paths, entry, hooks)
+    except pc_rowhooks.HookRefused:
+        return False
+    return True
+
+
 def file_stop(
     ctx: pc_rows.RunContext,
     entry: pc_rows.RowSpec,
     reason: str,
     stage_name: str,
     outcome: pc_rows.RowOutcome,
+    hooks: Optional[pc_rowhooks.HookRun] = None,
 ) -> pc_rows.RowOutcome:
     """File the STOPPED label of a stop and return the stop's own outcome with the `filed:` line added.
 
     The exit code stays the stop's (11 or 19), the lines stay as they were and one `filed:` line follows. When the
     filing is refused (14, 15, 17, or 11 for a run root the filing cannot read) the refusal's code and its fixed
     lines follow the stop's lines instead: a stop that could not be labelled is still a stop, and the raw files
-    stay in the run root for the reviewer.
+    stay in the run root for the reviewer. hooks is what the chain applied: anything it restricted is restored
+    first, before the label is filed, and a refused restoration adds one fixed line.
     """
+    if not restore_hooks(ctx, paths_for(str(ctx.run_root)), entry, hooks):
+        outcome = outcome._replace(lines=tuple(outcome.lines) + (MESSAGE_RESTORE_REFUSED,))
     filed = pc_evidence.file_stopped(ctx, str(ctx.run_root), entry, reason, stage_name, outcome.code)
     lines = tuple(outcome.lines) + tuple(filed.lines)
     if filed.code == pc_exitcodes.OK:
@@ -976,10 +1015,12 @@ def finish(
     paths: Mapping[str, Optional[str]],
     results: Sequence[StageResult],
     entry: pc_rows.RowSpec,
+    hooks: Optional[pc_rowhooks.HookRun] = None,
 ) -> pc_rows.RowOutcome:
     """Close a completed chain: the mechanical checks, one fixed line per stage, the filing and the row total.
 
-    A breach found by the checks ends the row with 11 and prints counts only. When the checks find none, the row
+    A breach found by the checks ends the row with 11 and prints counts only. When the checks find none, whatever a
+    between-stage hook restricted is restored (a refused restoration is a breach stop), and then the row
     is filed through pc_evidence.file_row with its registry entry, the last step; a refusal of the filing is its
     exit code and its fixed lines (nothing more is printed), and the raw files stay in the run root for a
     zero-token refile.
@@ -987,9 +1028,19 @@ def finish(
     The line `stage <name>: not run (NO-RESUME-LINE)` is printed for each stage of kind resume that did not run,
     so a spec without such a stage prints none.
     """
+    last_stage = results[-1].name if results else "s1"
     blocked = breach_outcome(ctx, paths)
     if blocked is not None:
-        return file_stop(ctx, entry, pc_evidence.REASON_BREACH, results[-1].name if results else "s1", blocked)
+        return file_stop(ctx, entry, pc_evidence.REASON_BREACH, last_stage, blocked, hooks)
+    if not restore_hooks(ctx, paths, entry, hooks):
+        return file_stop(
+            ctx,
+            entry,
+            pc_evidence.REASON_BREACH,
+            last_stage,
+            pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_RESTORE_REFUSED,)),
+            hooks,
+        )
     lines: List[str] = []
     for result in results:
         turns = result.summary["num_turns"] if result.summary is not None else None
@@ -1150,12 +1201,31 @@ def _run_registered_row(
     session = str(uuid.uuid4())
     paths = seed(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
     _write_scope(paths, ctx)
+    pc_rowhooks.write_boundary_list(paths, entry)  # before the setup guard, so the guard's raw listing holds it
     take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
     ctx = ctx._replace(setup_pin=pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs, None))
     pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
     ledger_a = str(paths["ledger_a"]) if paths.get("ledger_a") and os.path.isfile(str(paths["ledger_a"])) else None
     prompts = read_prompts(ctx.repo_root, entry, ledger_a)
+    hooks = pc_rowhooks.HookRun()
+    try:
+        return _walk_stages(ctx, paths, entry, session, prompts, timeout_override, hooks)
+    except BaseException:
+        # Every exit path restores what a hook restricted, an exception included; the exception goes on.
+        restore_hooks(ctx, paths, entry, hooks)
+        raise
 
+
+def _walk_stages(
+    ctx: pc_rows.RunContext,
+    paths: Mapping[str, Optional[str]],
+    entry: pc_rows.RowSpec,
+    session: str,
+    prompts: Mapping[str, str],
+    timeout_override: Optional[int],
+    hooks: pc_rowhooks.HookRun,
+) -> pc_rows.RowOutcome:
+    """The stage walk of a registered row (see _run_registered_row), then the hooks after each clean stage."""
     results: List[StageResult] = []
     sessions: Dict[str, str] = {}
     totals: Dict[str, Optional[Decimal]] = {}
@@ -1200,6 +1270,7 @@ def _run_registered_row(
                 pc_evidence.REASON_BREACH,
                 stage.name,
                 pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_RECORD_UNREADABLE % stage.name,)),
+                hooks,
             )
         totals[key] = result.cumulative
         results.append(result)
@@ -1212,6 +1283,7 @@ def _run_registered_row(
                 pc_evidence.REASON_BREACH,
                 stage.name,
                 pc_rows.RowOutcome(blocked.code, tuple(blocked.lines) + tuple(extra)),
+                hooks,
             )
         if not result.ok:
             subtype = result.summary.get("subtype") if result.summary is not None else ""
@@ -1221,6 +1293,7 @@ def _run_registered_row(
                 pc_evidence.stop_reason(result.problem, subtype),
                 stage.name,
                 _stopped(stage.name, result.problem),
+                hooks,
             )
         if result.evaluation is not None and result.evaluation.status != STATUS_PASS:
             return file_stop(
@@ -1229,8 +1302,29 @@ def _run_registered_row(
                 pc_evidence.REASON_ISOLATION,
                 stage.name,
                 _isolation_stop(stage.name, result.evaluation),
+                hooks,
             )
         if stage.kind == "preclear":
             resume_line = extract_resume_line(_result_text(result))
             _write_chain(paths, resume_line)
-    return finish(ctx, paths, results, entry)
+        try:
+            pc_rowhooks.run_after_stage(ctx, paths, entry, stage.name, hooks)
+        except pc_rowhooks.HookRefused:
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.REASON_BREACH,
+                stage.name,
+                pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_HOOK_REFUSED % stage.name,)),
+                hooks,
+            )
+        except pc_checks.CheckError:
+            return file_stop(
+                ctx,
+                entry,
+                pc_evidence.REASON_BREACH,
+                stage.name,
+                pc_rows.RowOutcome(pc_exitcodes.PREFLIGHT_FAIL, (MESSAGE_RECORD_UNREADABLE % stage.name,)),
+                hooks,
+            )
+    return finish(ctx, paths, results, entry, hooks)
