@@ -193,6 +193,10 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   touch  path: set the modification time of an existing file to now (os.utime)
 #   remove path: remove one file (os.remove). It may only aim at a file of the test's own run root.
 #   rename path, to: rename one entry (os.rename). It may only aim at an entry of the test's own run root.
+#   symlink path, target: make a symbolic link at path that points at target (plan 04-05: a planted link)
+#   link   path, target: make a second name (a hard link) at path for the existing file target (plan 04-05)
+#   mkfifo path: make a named pipe at path (plan 04-05: a path that is not a regular file)
+#   socket path: make a socket file at path (plan 04-05: a path that is not a regular file)
 #   sleep  seconds
 #   raw    line: print one line verbatim
 # Result keys: subtype, is_error, terminal_reason, text, total_cost_usd, delta (adds
@@ -350,6 +354,32 @@ def do_rename(op):
     os.rename(subst(op["path"]), subst(op["to"]))
 
 
+def do_symlink(op):
+    os.symlink(subst(op["target"]), subst(op["path"]))
+
+
+def do_link(op):
+    os.link(subst(op["target"]), subst(op["path"]))
+
+
+def do_mkfifo(op):
+    os.mkfifo(subst(op["path"]))
+
+
+def do_socket(op):
+    import socket
+
+    path = subst(op["path"])
+    here = os.getcwd()
+    os.chdir(os.path.dirname(path))  # a socket path is short only relative to its own folder
+    try:
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(os.path.basename(path))
+        listener.close()
+    finally:
+        os.chdir(here)
+
+
 def do_git(op):
     env = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
@@ -382,6 +412,14 @@ for op in stage.get("ops", []):
         do_remove(op)
     elif kind == "rename":
         do_rename(op)
+    elif kind == "symlink":
+        do_symlink(op)
+    elif kind == "link":
+        do_link(op)
+    elif kind == "mkfifo":
+        do_mkfifo(op)
+    elif kind == "socket":
+        do_socket(op)
     elif kind == "sleep":
         time.sleep(float(op.get("seconds", 0)))
     elif kind == "raw":

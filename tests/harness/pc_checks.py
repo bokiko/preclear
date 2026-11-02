@@ -213,6 +213,26 @@ def write_boundary(snaps_dir: str, names: Sequence[str]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------------------------
 
 
+COUNTED_PROGRAMS: Tuple[str, ...] = ("chmod", "touch")
+
+
+def program_counts(events: Sequence[Dict[str, Any]], programs: Sequence[str]) -> Dict[str, int]:
+    """Count, for each named program, the executed Bash command parts whose program word is that program.
+
+    The commands are the executed ones only (a denied call never ran, see executed_bash_commands) and are read with
+    the rules the write checks use: the pre-pass that drops comments, heredoc bodies and quoted text and lifts each
+    command substitution into a command of its own, the split into parts, the removal of redirections, assignments,
+    env and wrappers, and the basename of the program word (so a path to the program counts). A part that does not
+    parse is not counted here (it is counted in bash-unparsed-parts). Counts only: a count is a fact, never a verdict.
+    """
+    counts = dict((program, 0) for program in programs)
+    for command in executed_bash_commands(events):
+        for program in _executed_programs(command):
+            if program in counts:
+                counts[program] += 1
+    return counts
+
+
 def executed_bash_commands(events: Sequence[Dict[str, Any]]) -> List[str]:
     """The command text of every Bash call that was executed (its tool_use id is not in the denial union)."""
     union = pc_stream.denial_report(events).union
@@ -1663,6 +1683,31 @@ def _read_unit(text: str, tally: _Tally) -> None:
         _judge(words, chdirs, redirects, tally, certain)
 
 
+def _executed_programs(command: str) -> List[str]:
+    """The program word (basename) of every parsed part of one command, the substitution bodies included."""
+    try:
+        units = _units(command)
+    except _Unparsed:
+        return []
+    found: List[str] = []
+    for unit in units:
+        for part, _after in pc_allowlist.split_compound_connected(unit):
+            if part == _GROUP_MARK:
+                continue
+            read = _read_redirections(part)
+            if read is None:
+                continue
+            blanked = _lead_words(read[1])
+            head = blanked.split(None, 1)[0] if blanked.split() else ""
+            if head in _RESERVED_STANDALONE or head in _RESERVED_HEADERS:
+                continue
+            split = _split_part(blanked)
+            if split is None or not split[0]:
+                continue
+            found.append(os.path.basename(split[0][0]))
+    return found
+
+
 def bash_mentions(
     events: Sequence[Dict[str, Any]], approved_abs: Sequence[str], ignore: Sequence[str] = ()
 ) -> Dict[str, Any]:
@@ -2266,6 +2311,154 @@ def session_facts(
 
 
 # ---------------------------------------------------------------------------------------------
+# The recorded boundary list (plan 04-05): which boundaries a row takes, in order
+# ---------------------------------------------------------------------------------------------
+
+BOUNDARIES_NAME = "boundaries.json"
+LEGACY_BOUNDARIES: Tuple[Tuple[str, str], ...] = tuple(zip(GUARD_ORDER, SNAPSHOT_ORDER))
+MAX_BOUNDARIES = 32
+_STAGE_BOUNDARY = re.compile(r"s[1-9]\Z")
+_HOOK_BOUNDARY = re.compile(r"(s[1-9])-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_SNAPSHOT_SHAPE = re.compile(r"snap-[0-9]+[a-z]?(?:-[a-z0-9]+)+\Z")
+_EVIDENCE_SUFFIXES = (".record.json", ".git.json", ".guard.json")
+
+
+def is_stage_boundary(name: str) -> bool:
+    """True for a stage boundary name (s1 to s9); a hook boundary and setup are not."""
+    return isinstance(name, str) and _STAGE_BOUNDARY.match(name) is not None
+
+
+def validate_boundaries(planned: Any) -> List[Tuple[str, str]]:
+    """Return the planned list as (boundary name, snapshot name) pairs, or raise CheckError (fixed text, no path).
+
+    The list starts with setup and its snapshot, every name is a known shape (setup, a stage s1 to s9, or a hook
+    boundary named after the stage it follows), every snapshot name is a snapshot shape, nothing repeats, and a hook
+    boundary follows the stage boundary it names or another hook of that stage. A list is at most MAX_BOUNDARIES long.
+    """
+    if not isinstance(planned, (list, tuple)) or not 1 <= len(planned) <= MAX_BOUNDARIES:
+        raise CheckError("the boundary list has an unexpected shape")
+    found: List[Tuple[str, str]] = []
+    names: set = set()
+    snapshots: set = set()
+    last_stage = ""
+    for item in planned:
+        if isinstance(item, dict):
+            if sorted(item) != ["name", "snapshot"]:
+                raise CheckError("the boundary list has an unexpected shape")
+            name, snapshot = item["name"], item["snapshot"]
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            name, snapshot = item
+        else:
+            raise CheckError("the boundary list has an unexpected shape")
+        if not isinstance(name, str) or not isinstance(snapshot, str) or _SNAPSHOT_SHAPE.match(snapshot) is None:
+            raise CheckError("the boundary list has an unexpected shape")
+        if not found:
+            if (name, snapshot) != LEGACY_BOUNDARIES[0]:
+                raise CheckError("the boundary list does not start with setup")
+        elif is_stage_boundary(name):
+            last_stage = name
+        else:
+            hook = _HOOK_BOUNDARY.match(name)
+            if hook is None or hook.group(1) != last_stage:
+                raise CheckError("the boundary list names an unknown boundary")
+        if name in names or snapshot in snapshots:
+            raise CheckError("the boundary list repeats a name")
+        names.add(name)
+        snapshots.add(snapshot)
+        found.append((name, snapshot))
+    return found
+
+
+def boundaries_recorded(raw_dir: str) -> bool:
+    """True when raw/boundaries.json exists (a run root made by this plan or later), whatever it holds."""
+    return os.path.lexists(os.path.join(raw_dir, BOUNDARIES_NAME))
+
+
+def read_boundaries(raw_dir: str) -> List[Tuple[str, str]]:
+    """The planned boundaries of a run root, in execution order, as (boundary name, snapshot name) pairs.
+
+    When raw/boundaries.json does not exist at all the legacy fixed order is returned (setup, s1, s2, s3 with their
+    Phase 3 snapshot names), so a run root made before this plan reads as it always did. A file that exists but is
+    not a regular file, is not valid JSON or holds a list that breaks validate_boundaries is a CheckError and never
+    a fallback.
+    """
+    path = os.path.join(raw_dir, BOUNDARIES_NAME)
+    if not os.path.lexists(path):
+        return list(LEGACY_BOUNDARIES)
+    if _kind_of(path) != "file":
+        raise CheckError("the boundary list is not a regular file")
+    data = _read_json(path, "the boundary list")
+    if not isinstance(data, dict) or sorted(data) != ["boundaries"]:
+        raise CheckError("the boundary list has an unexpected shape")
+    return validate_boundaries(data["boundaries"])
+
+
+def write_boundaries(raw_dir: str, planned: Sequence[Tuple[str, str]]) -> None:
+    """Write raw/boundaries.json exclusively with the validated planned list (the one write of this section)."""
+    checked = validate_boundaries(list(planned))
+    body = {"boundaries": [{"name": name, "snapshot": snapshot} for name, snapshot in checked]}
+    pc_runroot.write_exclusive(
+        os.path.join(raw_dir, BOUNDARIES_NAME), (json.dumps(body, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
+    )
+
+
+def present_boundaries(raw_dir: str, snaps_dir: str) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """Return (planned, present): the planned list and the boundaries of it that the run root holds, in plan order.
+
+    With the list recorded the rule is strict (T-04-20): a snapshot folder, a stage record, a git state file or a
+    guard file that the plan does not name is a CheckError; the present boundaries are a prefix of the plan in order
+    (a boundary after an absent one is a CheckError); and a present boundary holds its snapshot folder, its git state
+    file and its guard file, so a missing file never removes a comparison. A stage record is not required here: a
+    stage whose record is missing is still compared, and the filing refuses the row because the stage did not run.
+    Without the list the legacy rule is kept as it was: the snapshot folders of the fixed order, anything else
+    ignored here (the guard reports it).
+    """
+    planned = read_boundaries(raw_dir)
+    if not boundaries_recorded(raw_dir):
+        return planned, [pair for pair in planned if os.path.isdir(os.path.join(snaps_dir, pair[1]))]
+    try:
+        raw_names = sorted(os.listdir(raw_dir))
+        snap_names = sorted(os.listdir(snaps_dir))
+    except OSError:
+        raise CheckError("the run root could not be listed for the boundary list") from None
+    named = set(name for name, _snapshot in planned)
+    planned_snapshots = set(snapshot for _name, snapshot in planned)
+    stage_names = set(name for name in named if is_stage_boundary(name))
+    if any(entry not in planned_snapshots for entry in snap_names):
+        raise CheckError("a snapshot is not named in the boundary list")
+    for entry in raw_names:
+        for suffix in _EVIDENCE_SUFFIXES:
+            if entry.endswith(suffix):
+                allowed = stage_names if suffix == ".record.json" else named
+                if entry[: -len(suffix)] not in allowed:
+                    raise CheckError("a run-root record is not named in the boundary list")
+    present: List[Tuple[str, str]] = []
+    gap = False
+    for name, snapshot in planned:
+        stage = name in stage_names
+        held = (
+            os.path.lexists(os.path.join(snaps_dir, snapshot)),
+            os.path.lexists(os.path.join(raw_dir, name + ".git.json")),
+            os.path.lexists(os.path.join(raw_dir, name + ".guard.json")),
+            stage and os.path.lexists(os.path.join(raw_dir, name + ".record.json")),
+        )
+        if not any(held):
+            gap = True
+            continue
+        if gap:
+            raise CheckError("the boundaries on disk are not a prefix of the boundary list")
+        complete = (
+            os.path.isdir(os.path.join(snaps_dir, snapshot))
+            and os.path.isfile(os.path.join(raw_dir, name + ".git.json"))
+            and os.path.isfile(os.path.join(raw_dir, name + ".guard.json"))
+        )
+        if not complete:
+            raise CheckError("a boundary on disk is missing one of its records")
+        present.append((name, snapshot))
+    return planned, present
+
+
+# ---------------------------------------------------------------------------------------------
 # The run root's own record: raw/ and snaps/ are guarded at every boundary (WR-01)
 # ---------------------------------------------------------------------------------------------
 
@@ -2326,12 +2519,16 @@ def capture_guard(paths: Mapping[str, Optional[str]], name: str) -> None:
     and a prefix flag: n/a at setup, yes when the bytes recorded at the previous boundary are still the start of
     the file, no after a rewrite, a truncation, a deletion or a replacement by a link. A boundary after setup
     needs the previous boundary's guard (CheckError otherwise). Only reads; the one write is exclusive.
+
+    The previous boundary is the one before name in the recorded boundary list (read_boundaries): a hook boundary
+    between two stages is guarded like a stage, and the next stage is compared with it.
     """
-    if name not in GUARD_ORDER:
-        raise CheckError("an unknown guard boundary")
-    index = GUARD_ORDER.index(name)
     raw_dir, snaps_dir = str(paths["raw"]), str(paths["snaps"])
-    previous = load_guard(raw_dir, GUARD_ORDER[index - 1]) if index > 0 else None
+    order = [boundary for boundary, _snapshot in read_boundaries(raw_dir)]
+    if name not in order:
+        raise CheckError("an unknown guard boundary")
+    index = order.index(name)
+    previous = load_guard(raw_dir, order[index - 1]) if index > 0 else None
     raw: Dict[str, str] = {}
     try:
         raw_names = sorted(os.listdir(raw_dir))
@@ -2386,31 +2583,48 @@ def load_guard(raw_dir: str, name: str) -> Dict[str, Any]:
     return guard
 
 
-def _window_names(name: str) -> set:
-    """The raw names the harness itself writes between the previous boundary's guard and this one."""
-    index = GUARD_ORDER.index(name)
-    previous = GUARD_ORDER[index - 1]
+def _window_names(name: str, previous: Optional[str] = None) -> set:
+    """The raw names the harness itself writes between the previous boundary's guard and this one.
+
+    previous is the boundary before name in the boundary list (the legacy fixed order when omitted). A stage takes
+    its prompt, streams, git state and record; a hook boundary takes its git state only. chain.json is written after
+    the guard of a preclear stage (s2 in every row so far), so the window after s2 or after a hook of s2 may hold it.
+    """
+    if previous is None:
+        previous = GUARD_ORDER[GUARD_ORDER.index(name) - 1]
     allowed = set([previous + ".guard.json"])
-    for suffix in (".prompt", ".stdout", ".stderr", ".git.json", ".record.json"):
-        allowed.add(name + suffix)
-    if previous != "setup":
+    if is_stage_boundary(name):
+        for suffix in (".prompt", ".stdout", ".stderr", ".git.json", ".record.json"):
+            allowed.add(name + suffix)
+    else:
+        allowed.add(name + ".git.json")
+    if is_stage_boundary(previous):
         allowed.add(previous + ".record.json")
-    if previous == "s2":
+    if previous.split("-", 1)[0] == "s2":
         allowed.add("chain.json")
     return allowed
 
 
-def guard_violations(previous: Mapping[str, Any], current: Mapping[str, Any], name: str) -> List[str]:
+def guard_violations(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+    name: str,
+    planned: Optional[Sequence[Tuple[str, str]]] = None,
+) -> List[str]:
     """Compare two consecutive guards; one kind name per offending entry (pure).
 
     A recorded raw file or snapshot that changed or is gone, a new raw name the harness does not write in this
     window, a new snapshot folder other than the one this boundary takes, and a hook log whose earlier bytes
-    were rewritten. The hook log may grow: the hook appends to it during a stage.
+    were rewritten. The hook log may grow: the hook appends to it during a stage. planned is the boundary list
+    (the legacy fixed order when omitted); the boundary before name and the snapshot name take come from it.
     """
-    if name not in GUARD_ORDER or name == GUARD_ORDER[0]:
+    order_pairs = list(planned) if planned is not None else list(LEGACY_BOUNDARIES)
+    order = [boundary for boundary, _snapshot in order_pairs]
+    if name not in order or name == order[0]:
         raise CheckError("an unknown guard window")
-    allowed = _window_names(name)
-    own_snapshot = SNAPSHOT_ORDER[GUARD_ORDER.index(name)]
+    position = order.index(name)
+    allowed = _window_names(name, order[position - 1])
+    own_snapshot = order_pairs[position][1]
     found: List[str] = []
     for entry in sorted(previous["raw"]):
         if current["raw"].get(entry) != previous["raw"][entry]:
@@ -2434,9 +2648,9 @@ def guard_violations(previous: Mapping[str, Any], current: Mapping[str, Any], na
 # ---------------------------------------------------------------------------------------------
 
 
-def _stage_records(raw: str) -> Dict[str, Dict[str, Any]]:
+def _stage_records(raw: str, names: Sequence[str] = STAGE_NAMES) -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
-    for name in STAGE_NAMES:
+    for name in names:
         path = os.path.join(raw, name + ".record.json")
         if not os.path.isfile(path):
             continue
@@ -2462,11 +2676,13 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
     snaps = os.path.join(root, "snaps")
     project = os.path.join(root, "project")
     approved_abs = [os.path.join(root, name) for name in APPROVED_ROOTS]
-    names = [name for name in SNAPSHOT_ORDER if os.path.isdir(os.path.join(snaps, name))]
+    planned, present = present_boundaries(raw, snaps)
+    names = [snapshot for _name, snapshot in present]
     if not names:
         raise CheckError("the run root holds no boundary snapshot")
-    records = _stage_records(raw)
-    stages = [name for name in STAGE_NAMES if name in records]
+    stage_names = [name for name, _snapshot in planned if is_stage_boundary(name)]
+    records = _stage_records(raw, stage_names)
+    stages = [name for name in stage_names if name in records]
 
     events_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     streams: Dict[str, str] = {}
@@ -2488,10 +2704,13 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
         "write_escapes": {"count": 0, "programs": {}},
     }
     executed_commands: List[str] = []
+    counted = dict((program, 0) for program in COUNTED_PROGRAMS)
     for name in stages:
         events = events_by_stage.get(name)
         if events is None:
             continue
+        for program, number in program_counts(events, COUNTED_PROGRAMS).items():
+            counted[program] += number
         trace.update(trace_write_paths(events, project, approved_abs, root))
         found = bash_mentions(events, approved_abs, [os.path.join(root, "wrapper", "checkpoint")])
         for key in ("commands", "outside_path_tokens", "unparsed_parts"):
@@ -2503,17 +2722,17 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
             mentions["write_escapes"]["programs"][program] = mentions["write_escapes"]["programs"].get(program, 0) + count
         executed_commands.extend(executed_bash_commands(events))
 
+    boundaries = [SETUP_STATE] + stages if not boundaries_recorded(raw) else [name for name, _snapshot in present]
     states = []
-    for name in [SETUP_STATE] + stages:
+    for name in boundaries:
         if not os.path.isfile(os.path.join(raw, name + ".git.json")):
             raise CheckError("a git state file is missing")  # a missing file must not remove a comparison
         states.append(load_git_state(raw, name))
 
-    boundaries = [SETUP_STATE] + stages
     guards = [load_guard(raw, name) for name in boundaries]
     guard_kinds: Dict[str, int] = {}
     for number in range(1, len(guards)):
-        for kind in guard_violations(guards[number - 1], guards[number], boundaries[number]):
+        for kind in guard_violations(guards[number - 1], guards[number], boundaries[number], planned):
             guard_kinds[kind] = guard_kinds.get(kind, 0) + 1
 
     log_path = os.path.join(root, "wrapper", "calls.log")
@@ -2535,6 +2754,8 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
     return {
         "snapshots": names,
         "stages": stages,
+        "boundaries": boundaries,
+        "program_counts": counted,
         "streams": streams,
         "write_boundary": write_boundary(snaps, names),
         "trace_writes": {"count": len(trace), "paths": sorted(trace)},

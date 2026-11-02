@@ -502,6 +502,28 @@ def _count_names(root: str, skip_top: Sequence[str] = (), needle: Optional[str] 
     return count
 
 
+def program_count_lines(row: pc_rows.RowSpec, facts: Mapping[str, Any]) -> List[str]:
+    """The executed chmod and touch counts, for a row whose allowlist holds those rules (rows 6 and 7).
+
+    Each line is a count of the executed Bash command parts whose program word is that program, taken from the
+    executed commands only (pc_checks.program_counts): a fact for the reviewer about the model's own use of the
+    program, never a verdict, and nothing was prevented or hidden. A row whose allowlist holds neither rule prints
+    nothing; a facts mapping with no counts prints UNCONFIRMED.
+    """
+    rules = list(pc_flags.BASELINE_ALLOWED_TOOLS) + list(row.extra_tools)
+    counts = facts.get("program_counts")
+    lines: List[str] = []
+    for program in pc_checks.COUNTED_PROGRAMS:
+        if "Bash(%s:*)" % program not in rules:
+            continue
+        value = counts.get(program) if isinstance(counts, dict) else None
+        lines.append(
+            "executed-%s-commands: %s"
+            % (program, value if isinstance(value, int) and not isinstance(value, bool) else UNCONFIRMED)
+        )
+    return lines
+
+
 def memory_fact_lines(data: RunData, facts: Mapping[str, Any]) -> List[str]:
     """The memory facts of a run as counts and names only: the setting, the files in the pinned auto-memory folder, the
     memory-looking paths under the project (its git folder left out) and the default memory root."""
@@ -843,13 +865,14 @@ def render_mechanical_checks(
                 "run-record-changes: %d" % facts["guard"]["count"],
                 "default-memory-folder: %s" % facts["memory_probe"],
             ]
-            + memory_fact_lines(data, facts),
+            + memory_fact_lines(data, facts)
+            + program_count_lines(row, facts),
         )
     )
 
     states = facts["git"]["states"]
     mutations = facts["git"]["mutations"]
-    names = [pc_checks.SETUP_STATE] + [name for name in facts["stages"]]
+    names = list(facts["boundaries"]) if "boundaries" in facts else [pc_checks.SETUP_STATE] + [name for name in facts["stages"]]
     git_lines = ["states: %d" % len(states)]
     for name, state in zip(names, states):
         git_lines.append(
@@ -1214,7 +1237,7 @@ _AUTHORED_ROW_FILES = frozenset(
         "session-resume.id",
     ]
 )
-_AUTHORED_LISTINGS = frozenset(["ledgers-ls.txt", "bindings-ls.txt"])
+_AUTHORED_LISTINGS = frozenset(["ledgers-ls.txt", "bindings-ls.txt", "perms.txt"])
 _AUTHORED_LABEL_FILES = frozenset(["README.md", "stop.txt", "usage.txt", "mechanical-checks.md"])
 _AUTHORED_TOP = re.compile(r"(?:README\.md|digest-table(?:-part-[0-9]+)?\.md|usage-by-row(?:-part-[0-9]+)?\.txt)\Z")
 _ATTEMPT_SUFFIX = re.compile(r"(.+)-attempt-[2-9]\Z")

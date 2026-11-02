@@ -797,5 +797,385 @@ class PlainChainTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(folder), "the stray folder is the scripted write")
 
 
+# ---------------------------------------------------------------------------------------------
+# Row 6 (plan 04-05): a between-stage hook restricts the plan file after s1
+# ---------------------------------------------------------------------------------------------
+
+ROW6 = "row6-readonly-plan"
+PLAN_NAME = "2026-10-15-widget-export.md"
+PLAN_RELATIVE = "thoughts/plans/" + PLAN_NAME
+PERMS_LINE = re.compile(r"[^ ]+ [0-7]{3}\n\Z")
+RESTRICTION_SNAPSHOT = "snap-1b-after-restriction"
+EXPECTED_BOUNDARIES = [
+    {"name": "setup", "snapshot": "snap-0-setup"},
+    {"name": "s1", "snapshot": "snap-1-after-work"},
+    {"name": "s1-restrict-plan-444", "snapshot": RESTRICTION_SNAPSHOT},
+    {"name": "s2", "snapshot": "snap-2-after-preclear"},
+]
+
+
+def checks():
+    import pc_checks
+
+    return pc_checks
+
+
+def rowhooks():
+    import pc_rowhooks
+
+    return pc_rowhooks
+
+
+def plan_path(run_root: str) -> str:
+    return os.path.join(run_root, "project", *PLAN_RELATIVE.split("/"))
+
+
+def plan_mode(run_root: str) -> int:
+    return os.stat(plan_path(run_root)).st_mode & 0o777
+
+
+class Row6Run(object):
+    """One scripted row 6 run; the mode of the plan file is recorded at the start of every stage."""
+
+    def __init__(self, stages=None, wrap=None, rig=None) -> None:
+        self.spec = spec_of(ROW6)
+        scripted = stages if stages is not None else pc_testutil.default_row_stages(self.spec)
+        self.modes = {}
+        original = row1().run_stage
+        recorder = self
+
+        def watching(ctx, paths, spec, *args, **kwargs):
+            recorder.modes[spec.name] = plan_mode(str(paths["run_root"]))
+            if wrap is not None:
+                wrap(ctx, paths, spec)
+            return original(ctx, paths, spec, *args, **kwargs)
+
+        with mock.patch.object(row1(), "run_stage", watching):
+            self.run = Registered(ROW6, stages=scripted) if rig is None else Registered(ROW6, rig=rig)
+
+    def __getattr__(self, name):
+        return getattr(self.run, name)
+
+    def read(self, name: str) -> str:
+        return read_text(os.path.join(self.run.row_dir, name))
+
+
+def row6_stages_with_commands(commands, denied=()):
+    """The scripted row 6 stages with Bash tool calls added to the /preclear stage (they are announced, not run)."""
+    stages = pc_testutil.default_row_stages(spec_of(ROW6))
+    ops = list(stages[1]["ops"])
+    for command in commands:
+        ops.insert(0, {"op": "tool", "name": "Bash", "input": {"command": command}, "content": ""})
+    for command in denied:
+        ops.insert(0, {"op": "tool", "name": "Bash", "input": {"command": command}, "denied": True})
+    stages[1]["ops"] = ops
+    return stages
+
+
+class Row6RegistryTests(unittest.TestCase):
+    def test_row6_is_registered_with_the_two_committed_stages_the_plain_policy_pinned_memory_and_the_hook(self) -> None:
+        pc_rows = rows()
+        spec = spec_of(ROW6)
+        self.assertTrue(spec.implemented)
+        self.assertEqual([stage.name for stage in spec.stages], ["s1", "s2"])
+        self.assertEqual([stage.max_turns for stage in spec.stages], [15, 60])
+        self.assertEqual([str(stage.cap) for stage in spec.stages], ["0.30", "1.30"])
+        self.assertEqual([stage.session for stage in spec.stages], ["new:A", "resume:A"])
+        self.assertEqual(pc_rows.session_count(spec), 1)
+        self.assertEqual(spec.tools_profile, pc_rows.PROFILE_PLAIN)
+        self.assertEqual(list(spec.extra_tools), EXTRA_RULES)
+        self.assertEqual(spec.memory, pc_rows.MEMORY_PINNED)
+        self.assertEqual(spec.hooks, (("s1", "restrict-plan-444"),))
+        self.assertEqual(dict(spec.prompts)["s1"], "tests/harness/data/plain-s1-prompt.md")
+        self.assertEqual(dict(spec.prompts)["s2"], "tests/evidence/publication-2026-10-20/row6-readonly-plan/s2-preclear-prompt.md")
+        self.assertTrue(spec.setup_text.startswith("Setup: "))
+        self.assertIsNone(SHAPED.search(spec.setup_text))
+        self.assertTrue(spec.setup_text.isascii())
+        for relative, kind in spec.sources:
+            full = os.path.join(ROOT, *relative.split("/"))
+            self.assertTrue(os.path.isdir(full) if kind == "dir" else os.path.isfile(full), "a source is missing")
+
+    def test_row6_the_hooks_field_is_defaulted_and_only_row6_names_a_hook(self) -> None:
+        pc_rows = rows()
+        built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
+        self.assertEqual(built.hooks, ())
+        named = [entry.row_id for entry in pc_rows.build_registry() if entry.hooks]
+        self.assertEqual(named, [ROW6])
+
+    def test_row6_every_hook_of_the_registry_is_known_names_a_stage_of_its_row_and_has_a_snapshot_and_a_finalizer(self) -> None:
+        hooks = rowhooks()
+        for entry in rows().build_registry():
+            stage_names = [stage.name for stage in entry.stages]
+            for stage_name, hook in entry.hooks:
+                self.assertIn(stage_name, stage_names)
+                self.assertIn(hook, hooks.HOOKS)
+                self.assertIn(hook, hooks.HOOK_SNAPSHOTS)
+                self.assertIn(hooks.FINALIZER_OF[hook], hooks.FINALIZERS)
+                self.assertIn(hook, hooks.TARGETS)
+
+    def test_row6_list_marks_the_row_implemented_with_two_stages_and_one_session(self) -> None:
+        lines = matrix().list_lines(rows().build_registry())
+        cells = dict((line.split()[1], line.split()) for line in lines[1:])
+        self.assertEqual(cells[ROW6][2:], ["2", "1", "yes"])
+
+    def test_row6_the_dry_run_prints_the_plan_and_starts_no_process(self) -> None:
+        code, text, tripwire, base = RegistryTests.dry_run(None, ROW6)
+        self.assertEqual(code, 0, text)
+        self.assertIn("%s: 2 stages, 1 sessions" % ROW6, text)
+        lines = [line for line in text.splitlines() if line.strip().startswith(("s1", "s2"))]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("15 turns", lines[0])
+        self.assertIn("cap 0.30", lines[0])
+        self.assertIn("60 turns", lines[1])
+        self.assertIn("cap 1.30", lines[1])
+        # The caps sum to 1.60 (the same plan defect as rows 4a, 5a and 5b: the plan text says 2.00).
+        self.assertIn("worst case 1.60 USD", text)
+        self.assertIn("allowlist 35 rules", text)
+        self.assertEqual(tripwire, [])
+        self.assertFalse(os.path.exists(os.path.join(base, "hh")), "a dry run creates no harness home")
+
+
+class Row6SeedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.seeded = SeededPlain(ROW6, "plain-seed-row6")
+
+    def test_row6_the_seeded_claude_md_equals_the_committed_fixture_and_the_digest_rows_6_to_12_share(self) -> None:
+        data = read_bytes(os.path.join(self.seeded.paths["project"], "CLAUDE.md"))
+        self.assertEqual(data, read_bytes(committed(ROW6, "fixture-CLAUDE.md")))
+        digest = hashlib.sha256(data).hexdigest()
+        self.assertTrue(digest.startswith("ed03447e9df43888"), digest)
+        self.assertEqual(digest, sha_lines(ROW6)["project/CLAUDE.md"])
+
+    def test_row6_the_plan_equals_the_plain_data_file_hashes_to_the_committed_digest_and_is_mode_644(self) -> None:
+        path = plan_path(self.seeded.run_root)
+        self.assertEqual(read_bytes(path), read_bytes(os.path.join(DATA, "plain-plan.md")))
+        self.assertEqual(hashlib.sha256(read_bytes(path)).hexdigest(), PLAN_DIGEST)
+        self.assertEqual(sha_lines(ROW6)["project/thoughts/plans/" + PLAN_NAME], PLAN_DIGEST)
+        self.assertEqual(plan_mode(self.seeded.run_root), 0o644)
+
+    def test_row6_memory_is_pinned_the_settings_show_the_enabled_switch_and_the_run_record_names_the_row(self) -> None:
+        settings = read_json(self.seeded.paths["settings"])
+        self.assertIs(settings["autoMemoryEnabled"], True)
+        self.assertEqual(settings["autoMemoryDirectory"], os.path.realpath(self.seeded.paths["auto_memory"]))
+        self.assertIs(read_json(committed(ROW6, "settings.json"))["autoMemoryEnabled"], True)
+        record = read_json(os.path.join(self.seeded.paths["raw"], "run.json"))
+        self.assertEqual(record["row"], ROW6)
+        self.assertEqual(record["memory"], rows().MEMORY_PINNED)
+        self.assertEqual(record["bound_ledger"], "none")
+
+    def test_row6_the_project_is_a_repository_on_main_with_one_commit_and_no_wrapper_or_ledger(self) -> None:
+        self.assertEqual(self.seeded.commit_count(), 1)
+        self.assertFalse(os.path.lexists(os.path.join(self.seeded.run_root, "wrapper")))
+        self.assertEqual(os.listdir(self.seeded.paths["ledgers"]), [])
+        self.assertIn("thoughts/plans/" + PLAN_NAME, self.seeded.tracked())
+
+    def test_row6_the_seed_writes_no_boundary_list_the_engine_records_it_at_setup(self) -> None:
+        self.assertFalse(os.path.lexists(os.path.join(self.seeded.paths["raw"], "boundaries.json")))
+
+
+class Row6ChainTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.chain = Row6Run()
+        assert cls.chain.outcome.code == 0, "\n".join(cls.chain.outcome.lines)
+
+    def test_row6_a_scripted_chain_restricts_the_plan_after_s1_and_restores_it_before_filing(self) -> None:
+        chain = self.chain
+        self.assertEqual(chain.modes, {"s1": 0o644, "s2": 0o444})
+        self.assertEqual(plan_mode(chain.run_root), 0o644, "the plan is back to 644 after the row")
+        self.assertEqual(len(chain.rig.calls()), 2)
+        first, second = chain.rig.calls()
+        self.assertNotIn("--resume", first["args"])
+        self.assertIn("--resume", second["args"])
+        self.assertEqual(os.listdir(chain.ctx.destination), [ROW6])
+
+    def test_row6_the_boundary_list_names_setup_each_stage_and_the_hook_boundary_in_order(self) -> None:
+        listed = read_json(self.chain.raw("boundaries.json"))
+        self.assertEqual(listed, {"boundaries": EXPECTED_BOUNDARIES})
+        planned = checks().read_boundaries(os.path.join(self.chain.run_root, "raw"))
+        self.assertEqual(planned, [(item["name"], item["snapshot"]) for item in EXPECTED_BOUNDARIES])
+        self.assertEqual(rowhooks().plan_boundaries(self.chain.spec), planned)
+
+    def test_row6_the_boundary_list_is_created_before_the_setup_guard_so_the_guard_holds_it(self) -> None:
+        guard = read_json(self.chain.raw("setup.guard.json"))
+        self.assertIn("boundaries.json", guard["raw"])
+        self.assertEqual(guard["raw"]["boundaries.json"], hashlib.sha256(read_bytes(self.chain.raw("boundaries.json"))).hexdigest())
+
+    def test_row6_the_restriction_snapshot_holds_a_mode_only_perms_file_and_the_filed_folder_holds_both(self) -> None:
+        text = read_text(os.path.join(self.chain.run_root, "snaps", RESTRICTION_SNAPSHOT, "perms.txt"))
+        self.assertEqual(text, PLAN_RELATIVE + " 444\n")
+        for line in text.splitlines(True):
+            self.assertIsNotNone(PERMS_LINE.match(line), "mode-only: a path and an octal mode, nothing else")
+            self.assertEqual(len(line.split()), 2)
+        filed = tree_names(self.chain.run.row_dir)
+        self.assertIn(RESTRICTION_SNAPSHOT + "/", filed)
+        self.assertIn(RESTRICTION_SNAPSHOT + "/perms.txt", filed)
+        self.assertEqual(self.chain.read(RESTRICTION_SNAPSHOT + "/perms.txt"), text)
+        for other in ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear"):
+            self.assertIn(other + "/", filed)
+            self.assertNotIn(other + "/perms.txt", filed, "only the restriction boundary lists modes")
+        self.assertEqual(
+            [n for n in filed if n.startswith("snap-") and n.endswith("/") and n.count("/") == 1],
+            ["snap-0-setup/", "snap-1-after-work/", RESTRICTION_SNAPSHOT + "/", "snap-2-after-preclear/"],
+        )
+
+    def test_row6_perms_text_holds_no_owner_group_date_size_or_login_name(self) -> None:
+        import pwd
+
+        text = self.chain.read(RESTRICTION_SNAPSHOT + "/perms.txt")
+        login = pwd.getpwuid(os.getuid()).pw_name
+        group = os.stat(plan_path(self.chain.run_root)).st_gid
+        self.assertNotIn(login, text)
+        self.assertNotIn(str(group), text.split()[1:])
+        self.assertIsNone(SHAPED.search(text))
+        self.assertTrue(text.isascii())
+        self.assertEqual(text.count("\n"), 1)
+
+    def test_row6_the_plan_digest_is_readable_in_the_four_filed_snapshots_and_never_changed(self) -> None:
+        for name in ("snap-0-setup", "snap-1-after-work", RESTRICTION_SNAPSHOT, "snap-2-after-preclear"):
+            listing = self.chain.read(name + "/sha.txt").splitlines()
+            digests = [line.split("  ")[0] for line in listing if line.endswith("  project/" + PLAN_RELATIVE)]
+            self.assertEqual(digests, [PLAN_DIGEST], name)
+
+    def test_row6_the_mechanical_checks_print_zero_chmod_and_touch_counts_and_the_hook_boundary_state(self) -> None:
+        lines = self.chain.read("mechanical-checks.md").splitlines()
+        self.assertIn("executed-chmod-commands: 0", lines)
+        self.assertIn("executed-touch-commands: 0", lines)
+        states = [line.split(":")[0] for line in lines if line.startswith("state ")]
+        self.assertEqual(states, ["state setup", "state s1", "state s1-restrict-plan-444", "state s2"])
+        self.assertIn("states: 4", lines)
+
+    def test_row6_the_facts_read_the_boundaries_through_the_list(self) -> None:
+        facts = checks().compute_facts(self.chain.run_root, self.chain.ctx.config_dir)
+        self.assertEqual(facts["boundaries"], [item["name"] for item in EXPECTED_BOUNDARIES])
+        self.assertEqual(facts["snapshots"], [item["snapshot"] for item in EXPECTED_BOUNDARIES])
+        self.assertEqual(facts["stages"], ["s1", "s2"])
+        self.assertEqual(len(facts["git"]["states"]), 4)
+        self.assertEqual(facts["guard"]["count"], 0)
+        self.assertEqual(checks().breaches(facts), [])
+        self.assertEqual(facts["program_counts"], {"chmod": 0, "touch": 0})
+
+    def test_row6_the_readme_ends_with_the_pending_line_and_the_setup_paragraph_is_the_registry_text(self) -> None:
+        text = self.chain.read("README.md")
+        self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"))
+        self.assertEqual(text.count(VERDICT_LINE), 1)
+        body = text[: -len(VERDICT_LINE) - 1]
+        self.assertIn(self.chain.spec.setup_text, body)
+        self.assertIsNone(evidence().verdict_pattern().search(body))
+        self.assertEqual(body.splitlines()[0].split(",")[0], "# Row 6: read-only canonical plan (1P)")
+
+    def test_row6_the_stage_commands_carry_the_35_plain_rules_and_the_enabled_memory_switch(self) -> None:
+        for call in self.chain.rig.calls():
+            argv = call["args"]
+            self.assertEqual(argv[argv.index("--allowedTools") + 1].split(","), list(pc_flags.BASELINE_ALLOWED_TOOLS) + EXTRA_RULES)
+            settings_path = argv[argv.index("--settings") + 1]
+            self.assertIs(read_json(settings_path)["autoMemoryEnabled"], True)
+        self.assertEqual(self.chain.read("tools.txt"), ",".join(list(pc_flags.BASELINE_ALLOWED_TOOLS) + EXTRA_RULES) + "\n")
+
+    def test_row6_the_ledger_holds_two_launches_and_two_settlements_for_the_row(self) -> None:
+        self.assertEqual(
+            [(r["kind"], r["stage"]) for r in self.chain.ledger()],
+            [("launch", "row6-s1"), ("settle", "row6-s1"), ("launch", "row6-s2"), ("settle", "row6-s2")],
+        )
+
+
+class Row6CommandCountTests(unittest.TestCase):
+    def test_row6_a_scripted_chmod_and_touch_are_counted_in_the_checks_and_the_row_is_still_filed(self) -> None:
+        stages = row6_stages_with_commands(["chmod 644 " + PLAN_RELATIVE + " && touch notes.txt", "/bin/chmod 600 CLAUDE.md"])
+        chain = Row6Run(stages)
+        self.assertEqual(chain.outcome.code, 0, "\n".join(chain.outcome.lines))
+        lines = chain.read("mechanical-checks.md").splitlines()
+        self.assertIn("executed-chmod-commands: 2", lines)
+        self.assertIn("executed-touch-commands: 1", lines)
+        self.assertEqual(plan_mode(chain.run_root), 0o644)
+
+    def test_row6_a_denied_chmod_never_ran_and_is_not_counted(self) -> None:
+        stages = row6_stages_with_commands(["touch notes.txt"], denied=["chmod 644 " + PLAN_RELATIVE])
+        chain = Row6Run(stages)
+        self.assertEqual(chain.outcome.code, 0, "\n".join(chain.outcome.lines))
+        lines = chain.read("mechanical-checks.md").splitlines()
+        self.assertIn("executed-chmod-commands: 0", lines)
+        self.assertIn("executed-touch-commands: 1", lines)
+
+    def test_row6_the_counts_are_counts_and_no_verdict_word_reaches_a_harness_authored_file(self) -> None:
+        stages = row6_stages_with_commands(["chmod 644 " + PLAN_RELATIVE])
+        chain = Row6Run(stages)
+        pattern = evidence().verdict_pattern()
+        names = []
+        for dirpath, _dirnames, filenames in os.walk(chain.ctx.destination):
+            for name in filenames:
+                names.append(os.path.relpath(os.path.join(dirpath, name), chain.ctx.destination).replace(os.sep, "/"))
+        authored = evidence().harness_authored_names(sorted(names))
+        self.assertIn(ROW6 + "/" + RESTRICTION_SNAPSHOT + "/perms.txt", authored)
+        for name in authored:
+            text = read_text(os.path.join(chain.ctx.destination, name))
+            if name == ROW6 + "/README.md":
+                text = text[: -len(VERDICT_LINE) - 1]
+            self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+
+    def test_row6_program_counts_count_parts_of_executed_commands_only(self) -> None:
+        pc_checks = checks()
+        events = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "chmod 444 a; touch b && touch c"}},
+                {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "echo chmod touch"}},
+                {"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "env FOO=1 /usr/bin/chmod 600 d"}},
+                {"type": "tool_use", "id": "t4", "name": "Read", "input": {"command": "chmod x"}},
+            ]}},
+            {"type": "result", "subtype": "success", "is_error": False, "permission_denials": []},
+        ]
+        counts = pc_checks.program_counts(events, ("chmod", "touch", "ln"))
+        self.assertEqual(counts, {"chmod": 2, "touch": 2, "ln": 0})
+        quiet = [{"type": "result", "subtype": "success", "is_error": False, "permission_denials": []}]
+        self.assertEqual(pc_checks.program_counts(quiet, ("chmod",)), {"chmod": 0})
+
+    def test_row6_a_row_with_a_helper_allowlist_prints_no_chmod_or_touch_lines(self) -> None:
+        pc_rows = rows()
+        run = Registered(pc_rows.ROW4A)
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        text = read_text(os.path.join(run.row_dir, "mechanical-checks.md"))
+        self.assertNotIn("executed-chmod-commands", text)
+        self.assertNotIn("executed-touch-commands", text)
+
+
+class Row6BoundaryWindowTests(unittest.TestCase):
+    def test_row6_a_write_outside_the_roots_in_s2_ends_the_row_with_11_and_the_plan_is_restored(self) -> None:
+        stages = pc_testutil.seed_outside_write(pc_testutil.default_row_stages(spec_of(ROW6)), 1)
+        chain = Row6Run(stages)
+        self.assertEqual(chain.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(chain.outcome.lines))
+        self.assertEqual(os.listdir(chain.ctx.destination), ["STOPPED-" + ROW6])
+        self.assertEqual(plan_mode(chain.run_root), 0o644, "restored before the label was filed")
+        snaps = os.path.join(chain.run_root, "snaps")
+        found = checks().write_boundary(snaps, [RESTRICTION_SNAPSHOT, "snap-2-after-preclear"])
+        self.assertEqual(found["paths"], ["outside.txt"], "the restriction snapshot is the comparison base for s2")
+
+    def test_row6_a_git_commit_in_s2_is_a_mutation_between_the_restriction_state_and_the_s2_state(self) -> None:
+        stages = pc_testutil.seed_git_commit(pc_testutil.default_row_stages(spec_of(ROW6)), 1)
+        chain = Row6Run(stages)
+        self.assertEqual(chain.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(chain.outcome.lines))
+        facts = checks().compute_facts(chain.run_root, chain.ctx.config_dir)
+        states = facts["git"]["states"]
+        self.assertEqual(len(states), 4)
+        self.assertEqual(states[1]["head"], states[2]["head"], "no change in the hook window")
+        self.assertNotEqual(states[2]["head"], states[3]["head"], "the change is seen against the restriction state")
+
+    def test_row6_a_stop_in_s2_restores_the_plan_and_files_a_label(self) -> None:
+        stages = pc_testutil.stages_with(pc_testutil.default_row_stages(spec_of(ROW6)), 1, exit=1)
+        chain = Row6Run(stages)
+        self.assertEqual(chain.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(chain.outcome.lines))
+        self.assertEqual(os.listdir(chain.ctx.destination), ["STOPPED-" + ROW6])
+        self.assertEqual(chain.modes["s2"], 0o444)
+        self.assertEqual(plan_mode(chain.run_root), 0o644)
+
+    def test_row6_a_stop_in_s1_never_applies_the_hook_and_leaves_the_plan_at_644(self) -> None:
+        stages = pc_testutil.stages_with(pc_testutil.default_row_stages(spec_of(ROW6)), 0, exit=1)
+        chain = Row6Run(stages)
+        self.assertEqual(chain.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(chain.outcome.lines))
+        self.assertEqual(plan_mode(chain.run_root), 0o644)
+        self.assertFalse(os.path.lexists(os.path.join(chain.run_root, "snaps", RESTRICTION_SNAPSHOT)))
+        self.assertEqual(sorted(chain.modes), ["s1"])
+
+
 if __name__ == "__main__":
     unittest.main()

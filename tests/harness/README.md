@@ -350,6 +350,27 @@ prompt and the plain plan are data files tied to the committed digests, and the 
 auto-memory folder, the memory-looking paths under the project, the default memory root) are counts in
 `mechanical-checks.md`.
 
+A row may name a between-stage hook (row 6 does). The hook runs in the harness process after the named stage's own
+snapshot, git state and guard. Row 6 sets the plan file to mode 444, then the engine takes an extra snapshot
+(`snap-1b-after-restriction`) with its own git state and guard, and writes `perms.txt` into it as mode-only lines,
+`<path relative to the project> <octal mode>`, read from the file's own status and never from a directory listing, so
+no owner, group, date, size or login name can reach a filed file. The next stage runs against the restricted file and
+is compared with the restriction snapshot. Before any filing, and on every exit path of the row (a stop, a breach and
+an exception included), the harness sets the file back to mode 644. Both changes refuse a target that is a symbolic
+link, a path with a link in any part below the project, a file with a second name, anything that is not a regular file
+of the running user, or a file whose real location is outside the project; a refusal ends the row as a STOPPED
+breach with exit code 11 and nothing is changed. The harness deletes, renames and moves nothing, and a hook is never
+in an allowlist: the model's own chmod and touch are never prevented or hidden, they are counted (see the
+mechanical checks).
+
+Which boundaries a row takes is recorded, not assumed: `raw/boundaries.json` is created at setup, before the setup
+guard, and lists the planned boundaries in order (setup, each stage, each hook boundary) with their snapshot names.
+The checks read the snapshots, stage records, git states and guards through that list. The boundaries on disk must be
+a prefix of the plan (a row that stopped early has fewer), and a snapshot folder, stage record, git state file or
+guard file that the list does not name is a check error: nothing is filed and the row ends with exit code 11. A run
+root made before the list existed has no such file and is read with the fixed legacy order (setup, s1, s2, s3), so an
+older run root can still be refiled; a list file that exists but is malformed is an error and never a fallback.
+
 After every stage the init manifest and the instruction audit are asserted against the isolation
 baseline: permission mode, model, skills, servers, plugins, user names, the memory path as set, the
 working folder, the session id as requested, and which instruction files were loaded from where. The
@@ -507,7 +528,13 @@ run root gives the same facts.
   body used to be judged line by line as if its lines were commands, which caught such a script by accident, and
   cutting the body removes that accident. The pinned allowlist and the binary's own permission layer are the
   first net, and the snapshot diff and the Write and Edit trace are the others.
-- The run record guard. A guard file is written into the raw folder at setup and after every stage, holding
+- Executed chmod and touch counts. For a row whose allowlist holds the chmod or touch rule (rows 6 and 7), the
+  Write boundary section of `mechanical-checks.md` prints `executed-chmod-commands` and `executed-touch-commands`:
+  the number of executed Bash command parts whose program is that program, read with the same rules as the write
+  checks (comments, heredoc bodies and quoted text are data, a command substitution is a command of its own, a path
+  to the program counts, a denied call never ran and is not counted). They are counts for the reviewer, not a verdict.
+- The run record guard. A guard file is written into the raw folder at setup and after every stage and every hook
+  boundary, holding
   the digest of every raw file except the append-only hook log, the tree digest of every snapshot folder, and
   the hook log's size and digest with a flag saying whether the bytes recorded at the previous boundary are
   still its start. Two consecutive guards are compared: a recorded raw file or snapshot that changed or is
@@ -700,6 +727,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_row1.py` - row 1: the seed, the snapshots, the three-stage chain and the init and instruction-audit assertions
+- `pc_rowhooks.py` - the between-stage hooks and their finalizers, the boundary plan of a row and the mode-only `perms.txt`
 - `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a and 5b setups
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
@@ -713,6 +741,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_allowlist.py` - tests for the allowlist model
 - `test_baseline.py` - tests for stopped rows, promote_into and the top-level files of a dated folder
 - `test_bash_shims.py` - bash 3.2 lint of the shims and a run under the system bash
+- `test_boundaries.py` - tests for the recorded boundary list, its legacy fallback, the guard chain and the hook safety checks
 - `test_branch_table.py` - tests for the branch table
 - `test_checks.py` - tests for the mechanical checks, with seeded failing runs and a clean control
 - `test_compare.py` - tests for the comparer: the tracer against the committed row, the read-only proofs, digests, exits and vocabulary

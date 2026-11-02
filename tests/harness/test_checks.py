@@ -786,8 +786,8 @@ class StatusFactTests(unittest.TestCase):
 
 
 FACT_NAMES = [
-    "bash_mentions", "denials", "git", "guard", "helper_calls", "ledgers", "memory_probe", "session", "snapshots",
-    "stages", "streams", "trace_writes", "write_boundary",
+    "bash_mentions", "boundaries", "denials", "git", "guard", "helper_calls", "ledgers", "memory_probe",
+    "program_counts", "session", "snapshots", "stages", "streams", "trace_writes", "write_boundary",
 ]
 
 
@@ -800,6 +800,9 @@ class RefileFactsTests(unittest.TestCase):
         self.assertEqual(facts["stages"], ["s1", "s2", "s3"])
         self.assertEqual(facts["streams"], {"s1": "ok", "s2": "ok", "s3": "ok"})
         self.assertEqual(facts["snapshots"], [SNAP_SETUP, SNAP_ONE, SNAP_TWO, SNAP_THREE])
+        # Plan 04-05: the boundary names the run took (setup first, then each stage) and the chmod and touch counts.
+        self.assertEqual(facts["boundaries"], ["setup", "s1", "s2", "s3"])
+        self.assertEqual(facts["program_counts"], {"chmod": 0, "touch": 0})
 
     def test_the_git_state_files_exist_after_a_run_and_are_exclusive(self) -> None:
         import shutil
