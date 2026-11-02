@@ -32,6 +32,10 @@ What a row 1 run is, in order:
                       the stage's own snapshot, state and guard, takes the hook's extra snapshot, and restores what
                       they restricted before any filing and on every exit path; raw/boundaries.json lists the
                       boundaries the row will take, written at setup before the setup guard
+  * the printed-checkpoint chain and the live probe (plan 04-06)  a row whose chain is CHAIN_PRINTED_CHECKPOINT feeds
+                      its resume stage with extract_printed_checkpoint of the /preclear reply (marker found or
+                      NO-PRINTED-CHECKPOINT); a row that names a probe runs it right after the seed, before the first
+                      snapshot and any ledger line, and a machine where it does not hold files the row as SKIPPED (10)
   * paths_for         the paths mapping of a run root rebuilt from the folder alone (filing and --refile)
   * finish            after clean checks, files the row through pc_evidence.file_row (plan 03-04)
 
@@ -829,6 +833,78 @@ def extract_resume_line(result_text: Any) -> str:
     return line
 
 
+MAX_PRINTED_CHECKPOINT_BYTES = 8192
+MARKER_NO_CHECKPOINT = "NO-PRINTED-CHECKPOINT"
+CHECKPOINT_HEADINGS = ("## Identity and state", "## Do not redo")
+REASON_CHECKPOINT_NONE = "none"
+REASON_CHECKPOINT_TOO_LARGE = "too-large"
+REASON_CHECKPOINT_NUL = "nul"
+_FENCE_OPEN = re.compile(r"^ {0,3}(`{3,})[^`]*$")
+_FENCE_CLOSE = re.compile(r"^ {0,3}(`{3,})[ \t]*$")
+
+
+def fenced_blocks(text: str) -> List[str]:
+    """Every closed fenced block of a text as its body (the lines between the fences, joined with newlines).
+
+    A line-based scan: an opening fence is three or more backticks (at most three spaces of indent) with an optional
+    info string that holds no backtick; it closes on the first later line of at least that many backticks and nothing else. A block that holds a
+    shorter inner fence is therefore not cut short; an inner fence of the same length or longer does close it (that is
+    the rule of the fence, tested). A fence that is never closed is not a block. Blocks do not nest.
+    """
+    blocks: List[str] = []
+    lines = text.split("\n")
+    index = 0
+    while index < len(lines):
+        opened = _FENCE_OPEN.match(lines[index].rstrip("\r"))
+        index += 1
+        if opened is None:
+            continue
+        length = len(opened.group(1))
+        body: List[str] = []
+        closed = False
+        while index < len(lines):
+            line = lines[index].rstrip("\r")
+            index += 1
+            found = _FENCE_CLOSE.match(line)
+            if found is not None and len(found.group(1)) >= length:
+                closed = True
+                break
+            body.append(line)
+        if closed:
+            blocks.append("\n".join(body))
+    return blocks
+
+
+def printed_checkpoint(result_text: Any) -> Tuple[str, str]:
+    """The printed checkpoint of an s2 reply and the reason there is none: (text, reason).
+
+    The checkpoint is the last fenced block that holds both required headings as heading lines. A last candidate that
+    breaks a bound is not replaced by an earlier one: over MAX_PRINTED_CHECKPOINT_BYTES is REASON_CHECKPOINT_TOO_LARGE
+    and a NUL anywhere in it is REASON_CHECKPOINT_NUL, both with the empty text; no candidate is REASON_CHECKPOINT_NONE.
+    A found checkpoint has the reason empty. The text is model text: it is stored raw only and never executed.
+    """
+    if not isinstance(result_text, str):
+        return "", REASON_CHECKPOINT_NONE
+    candidates = []
+    for block in fenced_blocks(result_text):
+        heading_lines = set(line.rstrip() for line in block.split("\n"))
+        if all(heading in heading_lines for heading in CHECKPOINT_HEADINGS):
+            candidates.append(block)
+    if not candidates:
+        return "", REASON_CHECKPOINT_NONE
+    block = candidates[-1]
+    if "\x00" in block:
+        return "", REASON_CHECKPOINT_NUL
+    if len(block.encode("utf-8")) > MAX_PRINTED_CHECKPOINT_BYTES:
+        return "", REASON_CHECKPOINT_TOO_LARGE
+    return block, ""
+
+
+def extract_printed_checkpoint(result_text: Any) -> str:
+    """The printed checkpoint of an s2 reply, or the empty string (see printed_checkpoint for the reasons)."""
+    return printed_checkpoint(result_text)[0]
+
+
 def _users_prefix(path: str) -> Optional[str]:
     """The two-component prefix of a path under a users or home root (a folder the gate reads as a home)."""
     parts = path.split(os.sep)
@@ -971,6 +1047,24 @@ def _write_chain(paths: Mapping[str, Optional[str]], line: str) -> None:
     )
 
 
+def _write_chain_checkpoint(paths: Mapping[str, Optional[str]], text: str, reason: str) -> None:
+    """Record whether s2 printed a usable checkpoint (the printed-checkpoint chain). The text itself is not repeated.
+
+    The checkpoint is model text: it reaches raw only as the stored prompt of the resume stage (and inside the stored
+    stream of s2), never in this record and never in a printed line.
+    """
+    record = {
+        "marker": MARKER_FOUND if text else MARKER_NO_CHECKPOINT,
+        "checkpoint_bytes": len(text.encode("utf-8")) if text else 0,
+        "checkpoint_reason": None if text else reason,
+    }
+    pc_runroot.write_exclusive(
+        os.path.join(str(paths["raw"]), "chain.json"),
+        (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        0o600,
+    )
+
+
 def _chain_totals(results: Sequence[StageResult]) -> List[Optional[Decimal]]:
     """The final cumulative total of each session chain, once (s1 sits inside the s2 chain)."""
     last: Dict[str, Optional[Decimal]] = {}
@@ -1025,8 +1119,9 @@ def finish(
     exit code and its fixed lines (nothing more is printed), and the raw files stay in the run root for a
     zero-token refile.
 
-    The line `stage <name>: not run (NO-RESUME-LINE)` is printed for each stage of kind resume that did not run,
-    so a spec without such a stage prints none.
+    The line `stage <name>: not run (NO-RESUME-LINE)` is printed for each stage of kind resume that did not run
+    (with NO-PRINTED-CHECKPOINT for a row whose chain is the printed-checkpoint one), so a spec without such a stage
+    prints none.
     """
     last_stage = results[-1].name if results else "s1"
     blocked = breach_outcome(ctx, paths)
@@ -1055,9 +1150,10 @@ def finish(
             )
         )
     ran = frozenset(result.name for result in results)
+    missing_marker = MARKER_NO_CHECKPOINT if entry.chain == pc_rows.CHAIN_PRINTED_CHECKPOINT else MARKER_NONE
     for stage in entry.stages:
         if stage.kind == "resume" and stage.name not in ran:
-            lines.append("stage %s: not run (%s)" % (stage.name, MARKER_NONE))
+            lines.append("stage %s: not run (%s)" % (stage.name, missing_marker))
     filed = pc_evidence.file_row(ctx, str(paths["run_root"]), spec=entry)
     if filed.code != pc_exitcodes.OK:
         return filed
@@ -1159,6 +1255,27 @@ def run_registered_row(
     return outcome._replace(spent=spent if spent is not None else Decimal("0"))
 
 
+def _skipped(ctx: pc_rows.RunContext, entry: pc_rows.RowSpec, reason: str) -> pc_rows.RowOutcome:
+    """File the SKIPPED label of a row whose live probe did not hold: exit 10, no session, no ledger line (T-04-25).
+
+    The label folder is SKIPPED- and the row's folder name; the reason is fixed words. The run root made for this
+    attempt stays on disk, empty of sessions: nothing is deleted. A refusal of the filing is its own code and lines.
+    """
+    filed = pc_evidence.file_skipped(
+        ctx.repo_root,
+        ctx.destination,
+        entry.row_id,
+        reason,
+        ctx.sanitizer,
+        ctx.deny_entries,
+        ctx.config_dir,
+        ctx.runs_root,
+        _utc_now,
+        pc_rows.row_folder_name(entry.row_id, ctx.attempt),
+    )
+    return pc_rows.RowOutcome(filed.code, ("SKIPPED: %s" % reason,) + tuple(filed.lines))
+
+
 def _run_registered_row(
     ctx: pc_rows.RunContext, row_id: str, timeout_override: Optional[int] = None
 ) -> pc_rows.RowOutcome:
@@ -1202,6 +1319,12 @@ def _run_registered_row(
     paths = seed(ctx.repo_root, run_root, session, ctx.harness_home, ctx.runs_root, ctx.evidence_date, ctx.model)
     _write_scope(paths, ctx)
     pc_rowhooks.write_boundary_list(paths, entry)  # before the setup guard, so the guard's raw listing holds it
+    if entry.probe:
+        # The live probe (HARN-12): after the seed, before snapshot 0 and the setup guard (so the guard's first raw
+        # listing already holds the probe folder) and before any ledger line, so a skip never costs anything.
+        skip_reason = pc_rowhooks.run_probe(entry.probe, paths)
+        if skip_reason is not None:
+            return _skipped(ctx, entry, skip_reason)
     take_snapshot(paths, SNAPSHOT_SETUP, vcs, setup=True)
     ctx = ctx._replace(setup_pin=pc_checks.capture_boundary_state(paths, pc_checks.SETUP_STATE, vcs, None))
     pc_checks.capture_guard(paths, pc_checks.SETUP_STATE)
@@ -1305,8 +1428,12 @@ def _walk_stages(
                 hooks,
             )
         if stage.kind == "preclear":
-            resume_line = extract_resume_line(_result_text(result))
-            _write_chain(paths, resume_line)
+            if entry.chain == pc_rows.CHAIN_PRINTED_CHECKPOINT:
+                resume_line, checkpoint_reason = printed_checkpoint(_result_text(result))
+                _write_chain_checkpoint(paths, resume_line, checkpoint_reason)
+            else:
+                resume_line = extract_resume_line(_result_text(result))
+                _write_chain(paths, resume_line)
         try:
             pc_rowhooks.run_after_stage(ctx, paths, entry, stage.name, hooks)
         except pc_rowhooks.HookRefused:

@@ -31,6 +31,7 @@ ROW4A = "row4a-unknown-backend"
 ROW5A = "row5a-no-memory"
 ROW5B = "row5b-disabled-memory"
 ROW6 = "row6-readonly-plan"
+ROW7 = "row7-all-destinations-denied"
 
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
@@ -42,6 +43,18 @@ PROFILE_PLAIN = "plain"
 # pinned inside the run root. MEMORY_PINNED is the Phase 3 setting (on); MEMORY_DISABLED turns it off (rows 5a and 5b).
 MEMORY_PINNED = "pinned"
 MEMORY_DISABLED = "disabled"
+
+# Chain strategies (RowSpec.chain): how the stage of kind resume gets its prompt. CHAIN_RESUME_LINE is the Phase 3 rule
+# (the fenced `Resume ...` line the /preclear turn printed, marker found or NO-RESUME-LINE). CHAIN_PRINTED_CHECKPOINT is
+# row 7's (a row that could save no file prints no resume line): the last fenced block of the /preclear reply that holds
+# both required headings, marker found or NO-PRINTED-CHECKPOINT (plan 04-06).
+CHAIN_RESUME_LINE = "resume-line"
+CHAIN_PRINTED_CHECKPOINT = "printed-checkpoint"
+
+# Live probes (RowSpec.probe): a named check the row runner makes after the seed and before any spend. The empty word is
+# no probe. PROBE_CHMOD proves that a folder at mode 555 refuses a create on the machine that runs the row (plan 04-06).
+PROBE_NONE = ""
+PROBE_CHMOD = "chmod-denial"
 
 LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
 
@@ -121,6 +134,8 @@ class RowSpec(NamedTuple):
     extra_tools: Tuple[str, ...] = ()  # rules appended to the profile's list, in order (plan 04-04)
     memory: str = MEMORY_PINNED  # MEMORY_PINNED or MEMORY_DISABLED: the memory switch of the run settings
     hooks: Tuple[Tuple[str, str], ...] = ()  # (stage name, hook id) pairs: a hook runs after that stage (plan 04-05)
+    chain: str = CHAIN_RESUME_LINE  # CHAIN_RESUME_LINE or CHAIN_PRINTED_CHECKPOINT: what feeds the resume stage (plan 04-06)
+    probe: str = PROBE_NONE  # a live probe id the runner makes before any spend, or PROBE_NONE (plan 04-06)
 
 
 class RunContext(NamedTuple):
@@ -262,6 +277,30 @@ _ROW6_SETUP_TEXT = (
     "(`snap-1b-after-restriction`, with a mode-only `perms.txt`); the /preclear turn then asks for a plan update in "
     "the same session. The harness sets the plan file back to mode 644 after the last snapshot and before filing."
 )
+# Row 7 (all destinations denied): the committed three stages; the project folder is made read-only by the harness after
+# s1 and the third stage is a fresh session fed with the checkpoint the /preclear reply printed.
+_PUBLICATION_7 = _PUBLICATION_ROOT + "/row7-all-destinations-denied"
+_ROW7_HOOKS: Tuple[Tuple[str, str], ...] = (("s1", "restrict-project-555"),)
+_ROW7_STAGES: Tuple[StageSpec, ...] = _ROW1_STAGES
+_ROW7_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger, and "
+    "no established handoff location. Before any session the harness proves on this machine that a folder at mode 555 "
+    "refuses a new file; a machine where it does not is filed as skipped and no session runs. A work turn comes "
+    "first. After it the harness sets the project folder to mode 555, so that no checkpoint file can be saved, and "
+    "takes an extra snapshot (`snap-1b-after-restriction`, with a mode-only `perms.txt`); the /preclear turn then runs "
+    "in the same session. A fresh session then receives the checkpoint the /preclear reply printed, taken verbatim, "
+    "and the restriction stays in place through it. The harness sets the project folder back to mode 755 after the "
+    "last snapshot and before filing."
+)
+
+
+def _chmod_precondition() -> Optional[str]:
+    """The row 7 precondition, resolved lazily so this module imports nothing heavy (write-free; plan 04-06)."""
+    import pc_rowhooks  # imported late: pc_rowhooks imports this module
+
+    return pc_rowhooks.chmod_precondition()
+
+
 _ROW1_SETUP_TEXT = (
     "Setup: the configuration names ledger A (`CONTINUITY_CLAUDE-widget-export.md`); the harness bound the "
     "session to ledger B (`CONTINUITY_CLAUDE-other-task.md`, a different workstream in the same fixture root). "
@@ -371,6 +410,25 @@ def _registered_rows() -> Dict[str, RowSpec]:
             extra_tools=_PLAIN_EXTRA_TOOLS,
             memory=MEMORY_PINNED,
             hooks=_ROW6_HOOKS,
+        ),
+        ROW7: RowSpec(
+            ROW7,
+            KIND_ROW,
+            "Row 7: all checkpoint destinations denied (1P)",
+            _ROW7_STAGES,
+            True,
+            _chmod_precondition,
+            _lazy_runner(ROW7),
+            _plain_sources(_PUBLICATION_7),
+            seed="pc_rowseeds:seed_row7",
+            prompts=_plain_prompts(_PUBLICATION_7),
+            setup_text=_ROW7_SETUP_TEXT,
+            tools_profile=PROFILE_PLAIN,
+            extra_tools=_PLAIN_EXTRA_TOOLS,
+            memory=MEMORY_PINNED,
+            hooks=_ROW7_HOOKS,
+            chain=CHAIN_PRINTED_CHECKPOINT,
+            probe=PROBE_CHMOD,
         ),
     }
 

@@ -895,12 +895,12 @@ class Row6RegistryTests(unittest.TestCase):
             full = os.path.join(ROOT, *relative.split("/"))
             self.assertTrue(os.path.isdir(full) if kind == "dir" else os.path.isfile(full), "a source is missing")
 
-    def test_row6_the_hooks_field_is_defaulted_and_only_row6_names_a_hook(self) -> None:
+    def test_row6_the_hooks_field_is_defaulted_and_only_rows_6_and_7_name_a_hook(self) -> None:
         pc_rows = rows()
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
         self.assertEqual(built.hooks, ())
         named = [entry.row_id for entry in pc_rows.build_registry() if entry.hooks]
-        self.assertEqual(named, [ROW6])
+        self.assertEqual(named, [ROW6, "row7-all-destinations-denied"])  # row 7 names the project-folder hook (plan 04-06)
 
     def test_row6_every_hook_of_the_registry_is_known_names_a_stage_of_its_row_and_has_a_snapshot_and_a_finalizer(self) -> None:
         hooks = rowhooks()

@@ -197,6 +197,10 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   link   path, target: make a second name (a hard link) at path for the existing file target (plan 04-05)
 #   mkfifo path: make a named pipe at path (plan 04-05: a path that is not a regular file)
 #   socket path: make a socket file at path (plan 04-05: a path that is not a regular file)
+#   try_write path, text: an exclusive create at path (plan 04-06). On success the file is written and a Write tool call
+#          with an accepted result is announced; on PermissionError a Write tool_use and a tool_result with the error
+#          flag true and a content text that begins `EACCES: permission denied` are emitted and nothing is written
+#          (the write op would raise inside a folder at mode 555)
 #   sleep  seconds
 #   raw    line: print one line verbatim
 # Result keys: subtype, is_error, terminal_reason, text, total_cost_usd, delta (adds
@@ -380,6 +384,30 @@ def do_socket(op):
         os.chdir(here)
 
 
+def do_try_write(op):
+    ensure_init()
+    path = subst(op["path"])
+    state["tools"] += 1
+    tool_id = "toolu_%04d" % state["tools"]
+    emit({"type": "assistant", "session_id": sid,
+          "message": {"role": "assistant", "content": [
+              {"type": "tool_use", "id": tool_id, "name": "Write", "input": {"file_path": path}}]}})
+    failed = False
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except PermissionError:
+        failed = True
+        content = "EACCES: permission denied, open '" + path + "'"
+    else:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(subst(op.get("text", "")))
+        content = "File created successfully at: " + path
+    emit({"type": "user", "session_id": sid, "tool_result_meta": "reject" if failed else "accept",
+          "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                                    "content": content, "is_error": failed}]}})
+
+
 def do_git(op):
     env = {"PATH": os.environ.get("PATH", ""), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
@@ -404,6 +432,8 @@ for op in stage.get("ops", []):
         do_tool(op)
     elif kind == "write":
         do_write(op)
+    elif kind == "try_write":
+        do_try_write(op)
     elif kind == "git":
         do_git(op)
     elif kind == "touch":
@@ -537,6 +567,26 @@ def default_row1_stages() -> list:
     return [s1, s2, s3]
 
 
+def printed_checkpoint_stage() -> dict:
+    """The /preclear script of a row that can save no file (row 7, plan 04-06): a denied create, then a printed checkpoint.
+
+    The stage lists the folder, tries an exclusive create of the checkpoint file under the project (a project folder at
+    mode 555 refuses it with EACCES, as a tool result with the error flag), and ends with a reply that names the
+    failure and prints the checkpoint as one fenced block holding every section heading. It writes nothing under the
+    project, so it also runs when the folder is restricted.
+    """
+    block = "\n".join("## %s\nA short body for this section.\n" % name for name in _CHECKPOINT_SECTIONS).rstrip("\n")
+    return {
+        "ops": [
+            {"op": "tool", "name": "Bash", "input": {"command": "ls"}, "content": "CLAUDE.md"},
+            {"op": "try_write", "path": "$PROJECT/.preclear/widget-export/checkpoint.md", "text": "a checkpoint\n"},
+            {"op": "text", "text": "the checkpoint could not be saved"},
+        ],
+        "result": {"text": "Persistence is BLOCKED.\n\n```markdown\n" + block + "\n```\n",
+                   "total_cost_usd": 0.09, "delta": 0.06, "num_turns": 5},
+    }
+
+
 def default_row_stages(spec: Any) -> list:
     """The stage scripts of a clean run of any registered row: one script per stage of its spec.
 
@@ -545,10 +595,17 @@ def default_row_stages(spec: Any) -> list:
     memory file, one denied wrapper bind and a fenced resume line), and a stage of kind resume the row 1 resume
     script (a fresh session that loads the project CLAUDE.md and reads the checkpoint). The scripts are copies,
     so a test may change one without touching the others. The list is as long as the spec's stage tuple. A spec
-    whose allowlist profile is not the helper profile gets the scripts without the wrapper and memory-file ops.
+    whose allowlist profile is not the helper profile gets the scripts without the wrapper and memory-file ops. A
+    spec whose chain is the printed-checkpoint one gets printed_checkpoint_stage for its /preclear stage.
     """
     templates = dict(zip(("work", "preclear", "resume"), default_row1_stages()))
     chosen = json.loads(json.dumps([templates[stage.kind] for stage in spec.stages]))
+    if getattr(spec, "chain", "resume-line") == "printed-checkpoint":
+        # A row whose /preclear turn prints the checkpoint (row 7): its s2 is the denied-create script, because the
+        # default one writes the checkpoint file and would raise inside a project folder at mode 555.
+        for index, stage in enumerate(spec.stages):
+            if stage.kind == "preclear":
+                chosen[index] = printed_checkpoint_stage()
     if getattr(spec, "tools_profile", "helper") != "helper":
         # A row with no helper (a plain row) has no wrapper to call and no memory file to write: the scripts lose the
         # ops that name the wrapper and the auto-memory folder, and keep the listing, the checkpoint and the replies.

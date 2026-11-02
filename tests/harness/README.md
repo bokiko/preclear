@@ -363,6 +363,26 @@ breach with exit code 11 and nothing is changed. The harness deletes, renames an
 in an allowlist: the model's own chmod and touch are never prevented or hidden, they are counted (see the
 mechanical checks).
 
+Row 7 (all checkpoint destinations denied) adds a live probe and a different third stage. Right after the seed, before
+the first snapshot and before any ledger line, the row runner proves on this machine that a folder at mode 555 refuses a
+new file: it creates `raw/probe-chmod/` exclusively inside the run root, so the setup guard already lists it, sets that
+folder to mode 555, and an exclusive create inside it must fail with permission denied. A root account, a file that was
+created and any other error are each a fixed-words reason: the row is filed as `SKIPPED-row7-all-destinations-denied`,
+no session runs, no spend line is written, and the exit code is 10, never 0. The probe folder is returned to mode 755 on
+every path and never deleted; the dry run does not probe, it only reports a root account. The rest of the row is a
+hook: after the work turn the project folder alone is set to mode 555 (existing files stay writable, so only a new
+entry in the project, such as a `.preclear` folder, is refused) and `perms.txt` lists the project folder as a dot and
+`thoughts/plans`, mode only. The restriction stays through the third stage and the project folder is set back to mode 755
+after the last snapshot and the breach check, before filing, on every exit path. The third stage is a fresh session whose
+prompt is the checkpoint the `/preclear` reply printed, because a row that can save no file prints no resume line: the
+last fenced block of the reply that holds both the `## Identity and state` and the `## Do not redo` heading lines, found
+by a line-based scan that honours the opening fence length, at most 8192 bytes and without a NUL. The text is model
+output: it is stored in raw as the stage prompt only and the harness never executes or follows anything in it. When there
+is no such block the run records the marker `NO-PRINTED-CHECKPOINT` with the reason (none, too-large or nul) in
+`raw/chain.json`, starts no third process and files the two stages that ran; `--refile` accepts exactly those two
+shapes for this row, a block with three stages and none with two. A reply whose block holds a NUL cannot be filed at
+all, because the leak gate refuses any file with a NUL byte.
+
 Which boundaries a row takes is recorded, not assumed: `raw/boundaries.json` is created at setup, before the setup
 guard, and lists the planned boundaries in order (setup, each stage, each hook boundary) with their snapshot names.
 The checks read the snapshots, stage records, git states and guards through that list. The boundaries on disk must be
@@ -726,9 +746,9 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_preflight.py` - zero-token check that claude is present, in the tested set and logged in
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
-- `pc_row1.py` - row 1: the seed, the snapshots, the three-stage chain and the init and instruction-audit assertions
-- `pc_rowhooks.py` - the between-stage hooks and their finalizers, the boundary plan of a row and the mode-only `perms.txt`
-- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a and 5b setups
+- `pc_row1.py` - row 1 and the engine every row runs through: the seed, the snapshots, the stage chain (resume line or printed checkpoint), the probe call and the init and instruction-audit assertions
+- `pc_rowhooks.py` - the between-stage hooks and their finalizers, the live chmod probe, the boundary plan of a row and the mode-only `perms.txt`
+- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
@@ -765,6 +785,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_row1_seed.py` - tests for the row 1 seed, the snapshots and the first stage
 - `test_row_generic.py` - tests for a row run from its registry entry: row 4a, the seed byte-tie, per-row filing and the row 1 parity
 - `test_rows_plain.py` - tests for the plain rows 5a and 5b: the seed byte-tie, the 35-rule allowlist, the memory settings and assertion and a scripted chain of each
+- `test_row7.py` - tests for row 7: the live chmod probe and the SKIPPED label, the 555 restriction and its restore, the printed-checkpoint chain and its fence scanner, including the committed replies
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
 - `test_selftest_shim.py` - tests for the `selftest` shim with a tripwire claude

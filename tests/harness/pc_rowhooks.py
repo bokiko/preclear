@@ -20,6 +20,11 @@ What is here:
                       file's own status and never from an ls listing, so no owner, group, date, size or login name
                       can reach a filed file (T-04-21)
   * HookRun           what the engine keeps of one run: which hooks were applied and which were restored
+  * CHANGES           hook id to the table of what it actually changes, when that is less than what perms.txt lists
+                      (restrict-project-555 changes the project folder only and lists it with thoughts/plans)
+  * PROBES            probe id to the live probe the row runner makes before any spend (chmod-denial: a folder at mode
+                      555 must refuse a create with EACCES, else the row is skipped); chmod_precondition is the
+                      write-free registry check (plan 04-06; HARN-12, D-08)
 
 Safety (T-04-19). Before it touches anything a hook or finalizer checks the target against its own table: the project
 folder is a real folder directly inside the run root, no part of the path below it is a symbolic link, the last part is
@@ -33,6 +38,7 @@ Standard library only, Python 3.9 floor.
 """
 from __future__ import annotations
 
+import errno
 import os
 import stat
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -48,10 +54,17 @@ KIND_DIR = "dir"
 HOOK_RESTRICT_PLAN = "restrict-plan-444"
 FINALIZER_RESTORE_PLAN = "restore-plan-644"
 
+HOOK_RESTRICT_PROJECT = "restrict-project-555"
+FINALIZER_RESTORE_PROJECT = "restore-project-755"
+
 MODE_RESTRICTED = 0o444
 MODE_RESTORED = 0o644
+MODE_PROJECT_RESTRICTED = 0o555
+MODE_PROJECT_RESTORED = 0o755
 
 PLAN_RELATIVE = "thoughts/plans/" + pc_rowseeds.PLAN_NAME
+PROJECT_RELATIVE = "."  # in a target table: the project folder itself (a folder entry only)
+PLANS_RELATIVE = "thoughts/plans"
 PERMS_NAME = "perms.txt"
 
 MESSAGE_REFUSED = "the hook target is not a plain file inside the project; nothing was changed"
@@ -61,11 +74,23 @@ MESSAGE_UNKNOWN = "the row names a hook that is not known"
 # The table of what each hook may touch: path relative to the project, and whether it is a regular file or a folder.
 TARGETS: Dict[str, Tuple[Tuple[str, str], ...]] = {
     HOOK_RESTRICT_PLAN: ((PLAN_RELATIVE, KIND_FILE),),
+    HOOK_RESTRICT_PROJECT: ((PROJECT_RELATIVE, KIND_DIR), (PLANS_RELATIVE, KIND_DIR)),
+}
+# What a hook changes, for a hook that lists more in perms.txt than it changes. A hook not named here changes exactly
+# the entries of its TARGETS row.
+CHANGES: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    HOOK_RESTRICT_PROJECT: ((PROJECT_RELATIVE, KIND_DIR),),
 }
 # The extra snapshot each hook makes the engine take (its name sorts between the stage's snapshot and the next one's).
-HOOK_SNAPSHOTS: Dict[str, str] = {HOOK_RESTRICT_PLAN: "snap-1b-after-restriction"}
+HOOK_SNAPSHOTS: Dict[str, str] = {
+    HOOK_RESTRICT_PLAN: "snap-1b-after-restriction",
+    HOOK_RESTRICT_PROJECT: "snap-1b-after-restriction",
+}
 # The finalizer that undoes each hook.
-FINALIZER_OF: Dict[str, str] = {HOOK_RESTRICT_PLAN: FINALIZER_RESTORE_PLAN}
+FINALIZER_OF: Dict[str, str] = {
+    HOOK_RESTRICT_PLAN: FINALIZER_RESTORE_PLAN,
+    HOOK_RESTRICT_PROJECT: FINALIZER_RESTORE_PROJECT,
+}
 
 
 class HookRefused(Exception):
@@ -140,6 +165,8 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _table_entry(relative: str, kind: str) -> List[str]:
+    if relative == PROJECT_RELATIVE and kind == KIND_DIR:
+        return []  # the project folder itself
     parts = relative.split("/")
     if kind not in (KIND_FILE, KIND_DIR) or not parts or any(part in ("", ".", "..") for part in parts):
         raise HookRefused(MESSAGE_REFUSED)
@@ -173,7 +200,7 @@ def _open_target(paths: Mapping[str, Optional[str]], relative: str, kind: str) -
             raise HookRefused(MESSAGE_REFUSED) from None
         if not stat.S_ISDIR(status.st_mode):
             raise HookRefused(MESSAGE_REFUSED)
-    full = os.path.join(current, parts[-1])
+    full = os.path.join(current, parts[-1]) if parts else project
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
     if kind == KIND_DIR:
         flags |= getattr(os, "O_DIRECTORY", 0)
@@ -202,7 +229,7 @@ def _set_modes(paths: Mapping[str, Optional[str]], hook_id: str, mode: int) -> N
         raise HookRefused(MESSAGE_UNKNOWN)
     opened: List[int] = []
     try:
-        for relative, kind in TARGETS[hook_id]:
+        for relative, kind in CHANGES.get(hook_id, TARGETS[hook_id]):
             opened.append(_open_target(paths, relative, kind))
         for descriptor in opened:
             try:
@@ -224,8 +251,127 @@ def restore_plan_644(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) ->
     _set_modes(paths, HOOK_RESTRICT_PLAN, MODE_RESTORED)
 
 
-HOOKS: Dict[str, Any] = {HOOK_RESTRICT_PLAN: restrict_plan_444}
-FINALIZERS: Dict[str, Any] = {FINALIZER_RESTORE_PLAN: restore_plan_644}
+def restrict_project_555(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) -> None:
+    """Set mode 555 on the project folder (and nothing else) after its checks: no new entry can be made directly in it.
+
+    Existing files stay writable and the folders below it keep their modes, so a destination under the project that
+    does not exist yet (a `.preclear` folder) cannot be created, which is what row 7 restricts.
+    """
+    _set_modes(paths, HOOK_RESTRICT_PROJECT, MODE_PROJECT_RESTRICTED)
+
+
+def restore_project_755(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) -> None:
+    """Set the project folder back to mode 755 with the same checks as the restriction (owner read is kept at 555)."""
+    _set_modes(paths, HOOK_RESTRICT_PROJECT, MODE_PROJECT_RESTORED)
+
+
+HOOKS: Dict[str, Any] = {HOOK_RESTRICT_PLAN: restrict_plan_444, HOOK_RESTRICT_PROJECT: restrict_project_555}
+FINALIZERS: Dict[str, Any] = {
+    FINALIZER_RESTORE_PLAN: restore_plan_644,
+    FINALIZER_RESTORE_PROJECT: restore_project_755,
+}
+
+
+# ---------------------------------------------------------------------------------------------
+# The live chmod probe (HARN-12, D-08)
+# ---------------------------------------------------------------------------------------------
+
+PROBE_CHMOD = pc_rows.PROBE_CHMOD
+PROBE_DIR_NAME = "probe-chmod"
+PROBE_MODE_DENY = 0o555
+PROBE_MODE_OPEN = 0o755
+
+# Fixed words only: a reason becomes the README of a SKIPPED folder, so it never holds a path, a name or a number.
+REASON_PROBE_ROOT = "the account is root, so a folder at mode 555 does not refuse a new file"
+REASON_PROBE_CREATED = "a file was created inside a folder at mode 555, so the denial does not hold on this machine"
+REASON_PROBE_OTHER = "the create inside a folder at mode 555 was refused with an error other than permission denied"
+REASON_PROBE_SETUP = "the probe folder could not be prepared or returned to its normal mode"
+
+
+def _effective_user() -> int:
+    """The effective user id (one place, so a test can stand in a root account without touching the os module)."""
+    return os.geteuid()
+
+
+def _chmod_path(path: str, mode: int) -> None:
+    """The one mode change the probe makes on a path (one place, so a test can stand in a mount that ignores modes)."""
+    os.chmod(path, mode)
+
+
+def _create_probe_file(path: str) -> None:
+    """The one create the probe attempts inside the folder at mode 555 (an exclusive create, never following a link)."""
+    pc_runroot.write_exclusive(path, b"", 0o600)
+
+
+def chmod_precondition() -> Optional[str]:
+    """The registry precondition of row 7: write-free, a fixed reason only when the effective user is root.
+
+    A dry run calls this and creates nothing, so the live probe (chmod_denial_probe) is the real proof and runs only in
+    the row runner. Everything else about the machine is left to the probe.
+    """
+    return REASON_PROBE_ROOT if _effective_user() == 0 else None
+
+
+def _probe_chmod(raw_dir: str, probe: str, mode: int) -> None:
+    """Set the mode of the probe folder this module created, after checking it is that folder (T-04-23).
+
+    The folder must be a real folder (not a link) of the running user whose real path is the probe name directly inside
+    the real raw folder. Anything else is an OSError and nothing is changed.
+    """
+    status = os.lstat(probe)
+    expected = os.path.join(os.path.realpath(raw_dir), PROBE_DIR_NAME)
+    if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.geteuid() or os.path.realpath(probe) != expected:
+        raise OSError(errno.EPERM, "the probe folder is not the folder this module created")
+    _chmod_path(probe, mode)
+
+
+def chmod_denial_probe(raw_dir: str) -> Optional[str]:
+    """Prove on this machine that a folder at mode 555 refuses a create; return None when it does, else a fixed reason.
+
+    Order: the effective user must not be root (nothing is made then); raw/probe-chmod is created exclusively; its mode
+    is set to 555; an exclusive create inside it must raise PermissionError whose errno is EACCES, which is the only
+    effective result; a file that was created, any other error and a folder that cannot be prepared are reasons. The
+    folder is returned to 755 on every path and is never deleted, so a later listing of raw can hold it. The one object
+    this function changes is the folder it created, named by this module and never by the model, the environment or the
+    command line. Fixed words only: no path reaches a reason.
+    """
+    if _effective_user() == 0:
+        return REASON_PROBE_ROOT
+    probe = os.path.join(raw_dir, PROBE_DIR_NAME)
+    try:
+        pc_runroot.exclusive_dir(probe, 0o700)
+    except OSError:
+        return REASON_PROBE_SETUP
+    reason: Optional[str] = REASON_PROBE_SETUP
+    try:
+        _probe_chmod(raw_dir, probe, PROBE_MODE_DENY)
+        try:
+            _create_probe_file(os.path.join(probe, "x"))
+        except PermissionError as problem:
+            reason = None if problem.errno == errno.EACCES else REASON_PROBE_OTHER
+        except OSError:
+            reason = REASON_PROBE_OTHER
+        else:
+            reason = REASON_PROBE_CREATED
+    except OSError:
+        reason = REASON_PROBE_SETUP
+    finally:
+        try:
+            _probe_chmod(raw_dir, probe, PROBE_MODE_OPEN)
+        except OSError:
+            reason = reason if reason is not None else REASON_PROBE_SETUP
+    return reason
+
+
+PROBES: Dict[str, Any] = {PROBE_CHMOD: chmod_denial_probe}
+
+
+def run_probe(probe_id: str, paths: Mapping[str, Optional[str]]) -> Optional[str]:
+    """Run the named probe in the run root's raw folder; None when it holds, else its fixed reason (an unknown id too)."""
+    probe = PROBES.get(probe_id)
+    if probe is None:
+        return REASON_PROBE_SETUP
+    return probe(str(paths["raw"]))
 
 
 # ---------------------------------------------------------------------------------------------
