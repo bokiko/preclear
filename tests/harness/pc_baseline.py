@@ -1,6 +1,6 @@
 """Closing a dated evidence folder: its README, a digest table and a usage table (plan 04-03; RERUN-03; D-03).
 
-Three subcommands, all model-free:
+Four subcommands, all model-free:
 
   close        files README.md (only when the folder has none), digest-table.md and usage-by-row.txt for part 1, or
                digest-table-part-N.md and usage-by-row-part-N.txt for the first free N from 2 when the part-1 files
@@ -11,6 +11,11 @@ Three subcommands, all model-free:
   report       prints the same two tables to standard output and writes nothing.
   check-words  scans the harness-authored files of the folder for the vocabulary the harness never writes (EVID-05);
                prints counts only; exit 0 when it finds none and 1 otherwise.
+  row7-review  builds the side-by-side Do-not-redo review of the row 7 attempts of the folder from the filed candidate
+               files and stop files only (never a run root) and adds it as row7-review.md, or as the first free
+               row7-review-part-N.md, through the same staging, sanitizer, leak gate and promote_into as close. It lists
+               candidates and counts and decides nothing (plan 04-07; D-06, D-07). A folder with no row 7 attempt is
+               refused with exit 2.
 
 The tables read only filed files, never a run root: digests.txt, usage.txt, stop.txt and the reason line of a SKIPPED
 README, each through a strict pattern. A value that does not match (not 64 lowercase hex digits for a digest, not a
@@ -39,16 +44,18 @@ import pc_evidence
 import pc_exitcodes
 import pc_leakgate
 import pc_promote
+import pc_review
 import pc_rows
 import pc_runroot
 import pc_sanitize
 import pc_spike
 
 PROG = "pc_baseline.py"
-USAGE_LINE = "usage: pc_baseline.py {close|report|check-words} --folder FOLDER [--baseline]"
+USAGE_LINE = "usage: pc_baseline.py {close|report|check-words|row7-review} --folder FOLDER [--baseline]"
 MESSAGE_USAGE = "see the usage line"
 MESSAGE_FOLDER = "REFUSED: the folder is not a dated folder of the evidence tree this step may read"
 MESSAGE_FROZEN = "REFUSED: a frozen evidence folder is never closed"
+MESSAGE_NO_ROW7 = "REFUSED: the folder holds no row 7 attempt; nothing was filed"
 MESSAGE_BLOCKED = "BLOCKED: the harness home or the runs root is not usable; nothing was filed"
 MESSAGE_COLLISION = "RUNROOT_COLLISION: a run folder already exists; nothing was filed"
 MESSAGE_STAGING = "ERROR: the files could not be staged; nothing was filed"
@@ -70,6 +77,7 @@ PRECISION = 60
 README_FILE = "README.md"
 DIGEST_FILE = "digest-table.md"
 USAGE_FILE = "usage-by-row.txt"
+REVIEW_FILE = pc_review.REVIEW_FILE
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _PLAIN_DECIMAL = re.compile(r"[0-9]+(?:\.[0-9]+)?\Z")
@@ -486,6 +494,53 @@ def _scratch_map(runs: str) -> Dict[str, str]:
     return pc_row1.caller_map({"run_root": os.path.join(runs, "placeholder"), "auto_memory": None}, runs)
 
 
+def _add_flat_files(
+    folder: str,
+    root: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime.datetime],
+    files: Mapping[str, bytes],
+    run_name: str,
+    out: TextIO,
+) -> Tuple[int, int]:
+    """Stage flat files in a run root, sanitize them and add them to the folder with promote_into: (exit code, files added).
+
+    Every refusal prints its fixed lines to `out` and returns the code; nothing is overwritten. run_name is the name
+    of the run folder in the runs root (the stamp is added by the caller).
+    """
+    try:
+        runs = pc_spike.runs_root(env, home_dir=env.get("HOME") or None, repo_root=root)
+        harness = pc_spike.harness_home(env, env.get("HOME") or None, root)
+    except pc_spike.HomeRefused:
+        _write(out, MESSAGE_BLOCKED + "\n")
+        return pc_exitcodes.PREFLIGHT_BLOCKED, 0
+    config_dir = os.path.join(harness, pc_spike.CONFIG_DIR_NAME)
+    try:
+        pc_spike.ensure_runs_root(runs)
+        run_root = pc_runroot.allocate_run_root(runs, run_name)
+        stage = pc_evidence.new_stage_dir(run_root)
+        sanitizer = pc_sanitize.Sanitizer.from_machine(root, _scratch_map(runs))
+        deny_entries = sanitizer.deny_entries()
+        count = pc_evidence.stage_tree(stage, dict(files), sanitizer)
+    except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
+        _write(out, MESSAGE_SANITIZER + "\n")
+        return pc_exitcodes.SCANNER_ERROR, 0
+    except pc_runroot.RunRootCollision:
+        _write(out, MESSAGE_COLLISION + "\n")
+        return pc_exitcodes.RUNROOT_COLLISION, 0
+    except (pc_runroot.RunRootError, pc_spike.SpikeError, OSError):
+        _write(out, MESSAGE_STAGING + "\n")
+        return pc_exitcodes.PREFLIGHT_FAIL, 0
+    result = pc_promote.promote_into(stage, folder, root, config_dir=config_dir, deny_entries=deny_entries)
+    if int(result.code) != pc_exitcodes.OK:
+        _write(out, str(result.message) + "\n")
+        for line in str(result.report_text).splitlines():
+            if line.strip():
+                _write(out, line + "\n")
+        return int(result.code), 0
+    return pc_exitcodes.OK, count
+
+
 def close_folder(
     folder: str,
     root: str,
@@ -495,13 +550,6 @@ def close_folder(
     out: TextIO,
 ) -> int:
     """Stage the part files (and the README when absent), sanitize them and add them with promote_into."""
-    try:
-        runs = pc_spike.runs_root(env, home_dir=env.get("HOME") or None, repo_root=root)
-        harness = pc_spike.harness_home(env, env.get("HOME") or None, root)
-    except pc_spike.HomeRefused:
-        _write(out, MESSAGE_BLOCKED + "\n")
-        return pc_exitcodes.PREFLIGHT_BLOCKED
-    config_dir = os.path.join(harness, pc_spike.CONFIG_DIR_NAME)
     part, digest_name, usage_name = part_names(folder)
     items = read_items(folder)
     files: Dict[str, bytes] = {
@@ -512,32 +560,85 @@ def close_folder(
     if not readme_kept:
         files[README_FILE] = render_folder_readme(folder, items, baseline).encode("utf-8")
     stamp = clock().strftime("%Y%m%dT%H%M%SZ")
-    try:
-        pc_spike.ensure_runs_root(runs)
-        run_root = pc_runroot.allocate_run_root(runs, "close-%s-part-%d" % (stamp, part))
-        stage = pc_evidence.new_stage_dir(run_root)
-        sanitizer = pc_sanitize.Sanitizer.from_machine(root, _scratch_map(runs))
-        deny_entries = sanitizer.deny_entries()
-        count = pc_evidence.stage_tree(stage, files, sanitizer)
-    except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
-        _write(out, MESSAGE_SANITIZER + "\n")
-        return pc_exitcodes.SCANNER_ERROR
-    except pc_runroot.RunRootCollision:
-        _write(out, MESSAGE_COLLISION + "\n")
-        return pc_exitcodes.RUNROOT_COLLISION
-    except (pc_runroot.RunRootError, pc_spike.SpikeError, OSError):
-        _write(out, MESSAGE_STAGING + "\n")
-        return pc_exitcodes.PREFLIGHT_FAIL
-    result = pc_promote.promote_into(stage, folder, root, config_dir=config_dir, deny_entries=deny_entries)
-    if int(result.code) != pc_exitcodes.OK:
-        _write(out, str(result.message) + "\n")
-        for line in str(result.report_text).splitlines():
-            if line.strip():
-                _write(out, line + "\n")
-        return int(result.code)
+    code, count = _add_flat_files(folder, root, env, clock, files, "close-%s-part-%d" % (stamp, part), out)
+    if code != pc_exitcodes.OK:
+        return code
     _write(out, "closed: %s, part %d, %d file(s)\n" % (os.path.basename(folder), part, count))
     if readme_kept:
         _write(out, "%s: already present, kept as it is\n" % README_FILE)
+    return pc_exitcodes.OK
+
+
+# ---------------------------------------------------------------------------------------------
+# row7-review
+# ---------------------------------------------------------------------------------------------
+
+_REVIEW_STATES = {STATE_FILED: pc_review.STATE_FILED, STATE_STOPPED: pc_review.STATE_STOPPED, STATE_SKIPPED: pc_review.STATE_SKIPPED}
+
+
+def row7_attempts(folder: str) -> List[pc_review.Attempt]:
+    """The row 7 attempts of a dated folder as filed: the bare folder is attempt 1, then -attempt-N, STOPPED- and SKIPPED- labels.
+
+    Read from the filed files only: a filed attempt's do-not-redo-candidates.md (absent or unreadable is recorded as
+    such, not skipped), a stopped or skipped attempt's reason line. Ordering is left to pc_review (by attempt number).
+    """
+    found: List[pc_review.Attempt] = []
+    for item in read_items(folder):
+        if item.row_id != pc_rows.ROW7 or item.state not in _REVIEW_STATES:
+            continue
+        parsed: Optional[Dict[str, Any]] = None
+        problem = ""
+        reason = ""
+        if item.state == STATE_FILED:
+            text = _read_text(os.path.join(folder, item.folder, pc_review.CANDIDATE_FILE))
+            if text is None:
+                problem = pc_review.PROBLEM_ABSENT
+            else:
+                try:
+                    parsed = pc_review.parse_candidates(text)
+                except pc_review.ReviewError:
+                    problem = pc_review.PROBLEM_UNREADABLE
+        else:
+            reason = item.reason if item.reason != NO_REASON else ""
+        found.append(
+            pc_review.Attempt(item.folder, item.attempt, _REVIEW_STATES[item.state], reason, parsed, problem)
+        )
+    return found
+
+
+def review_part_name(folder: str) -> str:
+    """row7-review.md when it is absent, else the first free row7-review-part-N.md from 2."""
+    if not os.path.lexists(os.path.join(folder, REVIEW_FILE)):
+        return REVIEW_FILE
+    number = 2
+    while os.path.lexists(os.path.join(folder, "row7-review-part-%d.md" % number)):
+        number += 1
+    return "row7-review-part-%d.md" % number
+
+
+def review_folder(
+    folder: str,
+    root: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime.datetime],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Build row7-review from the filed attempts and add it as a new flat file; an earlier part is never touched."""
+    attempts = row7_attempts(folder)
+    if not attempts:
+        _write(err, MESSAGE_NO_ROW7 + "\n")
+        return pc_exitcodes.USAGE
+    name = review_part_name(folder)
+    stamp = clock().strftime("%Y%m%dT%H%M%SZ")
+    suffix = "" if name == REVIEW_FILE else name[len("row7-review"):-len(".md")]
+    code, _count = _add_flat_files(
+        folder, root, env, clock, {name: pc_review.render_row7_review(attempts).encode("utf-8")},
+        "review-%s%s" % (stamp, suffix or "-part-1"), out,
+    )
+    if code != pc_exitcodes.OK:
+        return code
+    _write(out, "review: %s, %s, %d attempt(s)\n" % (os.path.basename(folder), name, len(attempts)))
     return pc_exitcodes.OK
 
 
@@ -619,7 +720,7 @@ class _Parser(argparse.ArgumentParser):
         _write(self._err, USAGE_LINE + "\n")
 
 
-COMMANDS = ("close", "report", "check-words")
+COMMANDS = ("close", "report", "check-words", "row7-review")
 
 
 def build_parser(out: TextIO, err: TextIO, command: str) -> argparse.ArgumentParser:
@@ -669,7 +770,7 @@ def main(
     if folder is None:
         _write(err, MESSAGE_FOLDER + "\n")
         return pc_exitcodes.USAGE
-    if command == "close" and is_frozen(folder):
+    if command in ("close", "row7-review") and is_frozen(folder):
         _write(err, MESSAGE_FROZEN + "\n")
         return pc_exitcodes.USAGE
     try:
@@ -681,6 +782,8 @@ def main(
             scanned, hits = check_words(folder)
             _write(out, "check-words: %d file(s) scanned, %d hit(s)\n" % (scanned, hits))
             return pc_exitcodes.OK if hits == 0 else pc_exitcodes.PREFLIGHT_FAIL
+        if command == "row7-review":
+            return review_folder(folder, root, source, clock or _utc_now, out, err)
         return close_folder(folder, root, source, clock or _utc_now, bool(args.baseline), out)
     except OSError:
         _write(err, MESSAGE_FOLDER + "\n")

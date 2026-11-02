@@ -15,7 +15,12 @@ from __future__ import annotations
 import os
 import re
 import unittest
+from unittest import mock
 
+import pc_exitcodes
+import pc_seeds
+import pc_testutil
+from test_baseline import DATED, drive_matrix, make_item_folder, run_baseline, tree_snapshot
 from test_row7 import (
     ROW7,
     SECTIONS,
@@ -503,6 +508,375 @@ class ScriptedChainTests(unittest.TestCase):
         spec = spec_of(ROW7)._replace(analyses=("no-such-analysis",))
         with self.assertRaises(pc_evidence.EvidenceError):
             pc_evidence._run_analyses(spec, data, {}, lambda text: text, b"# x\n")
+
+
+DATED_NAME = "rerun-2026-10-30-model-x"
+BARE = ROW7
+ATTEMPT_2 = ROW7 + "-attempt-2"
+STOPPED_3 = "STOPPED-" + ROW7 + "-attempt-3"
+_WORLD = {}
+
+
+def baseline():
+    import pc_baseline
+
+    return pc_baseline
+
+
+class Row7World(object):
+    """A scratch repository whose dated folder holds three row 7 attempts filed by three driver invocations of scripted chains.
+
+    Attempt 1 prints a checkpoint with two entries (one UNSUPPORTED, one with a candidate), attempt 2 prints none
+    (NO-PRINTED-CHECKPOINT, two stages), attempt 3 stops in s1 (a STOPPED label).
+    """
+
+    def __init__(self) -> None:
+        found = row7_stages(
+            reply=reply_with(block_with(ENTRIES)), extra_s2_ops=[READ_PLAN, ASSEMBLE_WRITE, ASSEMBLE_BASH]
+        )
+        none = row7_stages(reply="No block here at all.\n")[:2]
+        stopped = pc_testutil.stages_with(row7_stages(), 0, exit=1)[:1]
+        self.rig = pc_testutil.RowRig(stages=found + none + stopped)
+        self.codes = []
+        for args in (["--row", ROW7], ["--row", ROW7, "--attempt", "2"], ["--row", ROW7, "--attempt", "3"]):
+            code, _text = drive_matrix(self.rig, args)
+            self.codes.append(code)
+
+    @property
+    def dated(self) -> str:
+        return os.path.join(self.rig.repo, "tests", "evidence", DATED)
+
+    def relative(self) -> str:
+        return os.path.join("tests", "evidence", DATED)
+
+    def read(self, *parts: str) -> str:
+        return read_text(os.path.join(self.dated, *parts))
+
+
+def row7_world() -> Row7World:
+    if "world" not in _WORLD:
+        _WORLD["world"] = Row7World()
+    return _WORLD["world"]
+
+
+def copy_of_world() -> Row7World:
+    import shutil
+
+    source = row7_world()
+    copy = Row7World.__new__(Row7World)
+    copy.rig = pc_testutil.RowRig(stages=[])
+    copy.codes = list(source.codes)
+    shutil.copytree(source.dated, copy.dated)
+    return copy
+
+
+def scratch(files_by_folder, dated=DATED_NAME):
+    """A scratch repository with a hand-made dated folder: {folder name: {file name: text}}."""
+    rig = pc_testutil.RowRig(stages=[])
+    for name, files in files_by_folder.items():
+        make_item_folder(rig, name, files, dated=dated)
+    return rig, os.path.join("tests", "evidence", dated)
+
+
+def candidate_text(entries, found=None, marker="found", size=300, facts=None):
+    r = review()
+    found = found if found is not None else [[] for _entry in entries]
+    return r.render_candidates(ROW7, marker, size, entries, found, facts or r.row7_facts(stream([]), PATHS))
+
+
+def sections_of(text: str) -> list:
+    """The `## Attempt` sections of a review as a list of line lists."""
+    parts = re.split(r"(?m)^(?=## Attempt )", text)
+    return [part.splitlines() for part in parts[1:]]
+
+
+class ReviewTableTests(unittest.TestCase):
+    def test_the_world_was_built_through_the_driver_and_holds_three_attempt_folders(self) -> None:
+        w = row7_world()
+        self.assertEqual(w.codes, [0, 0, 11], w.codes)
+        self.assertEqual(sorted(os.listdir(w.dated)), sorted([BARE, ATTEMPT_2, STOPPED_3]))
+        self.assertTrue(os.path.isfile(os.path.join(w.dated, BARE, CANDIDATES)))
+        self.assertTrue(os.path.isfile(os.path.join(w.dated, ATTEMPT_2, CANDIDATES)))
+        self.assertFalse(os.path.exists(os.path.join(w.dated, STOPPED_3, CANDIDATES)), "a stopped row has no printed checkpoint to pair")
+
+    def test_the_review_lists_the_attempts_in_attempt_order_not_folder_name_order(self) -> None:
+        w = copy_of_world()
+        code, out, err = run_baseline(w.rig, ["row7-review", "--folder", w.relative()])
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("review: %s, row7-review.md, 3 attempt(s)" % DATED, out)
+        text = w.read("row7-review.md")
+        headings = [line for line in text.splitlines() if line.startswith("## Attempt ")]
+        self.assertEqual(headings, [
+            "## Attempt 1: " + BARE, "## Attempt 2: " + ATTEMPT_2, "## Attempt 3: " + STOPPED_3,
+        ])
+        self.assertLess(STOPPED_3, BARE, "the stopped folder sorts first by name, so the order is the number")
+
+    def test_the_stopped_attempt_shows_its_reason_and_no_entries(self) -> None:
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        stopped = sections_of(w.read("row7-review.md"))[2]
+        self.assertIn("state: stopped", stopped)
+        reason = [line for line in stopped if line.startswith("reason: ")]
+        self.assertEqual(len(reason), 1)
+        self.assertRegex(reason[0], r"^reason: exit at s1$")
+        self.assertFalse([line for line in stopped if line.startswith(("entries:", "| Entry", "entry "))])
+        stop_reason = [line for line in w.read(STOPPED_3, "stop.txt").splitlines() if line.startswith("reason: ")]
+        self.assertEqual(stop_reason, ["reason: exit"], "the reason comes from stop.txt")
+
+    def test_the_found_attempt_shows_two_entries_one_unsupported_and_one_candidate(self) -> None:
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        first = sections_of(w.read("row7-review.md"))[0]
+        self.assertIn("state: filed", first)
+        self.assertIn("chain marker: found", first)
+        self.assertIn("entries: 2", first)
+        self.assertIn("| 1 | 0 | UNSUPPORTED |", first)
+        self.assertIn("| 2 | 1 | listed |", first)
+        self.assertEqual(len([line for line in first if "UNSUPPORTED" in line]), 2, "once in the table and once under the entry")
+        self.assertIn("candidate toolu_0003 Read", first)
+        self.assertIn("assembly calls: 2", first)
+
+    def test_an_attempt_with_no_printed_checkpoint_is_listed_as_such_with_no_table_body(self) -> None:
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        second = sections_of(w.read("row7-review.md"))[1]
+        self.assertIn("chain marker: NO-PRINTED-CHECKPOINT", second)
+        self.assertIn("printed checkpoint: none", second)
+        self.assertIn("entries: 0", second)
+        self.assertFalse([line for line in second if line.startswith(("| Entry", "entry "))], "no table body")
+
+    def test_an_attempt_whose_candidate_file_says_zero_entries_gets_a_section_and_no_table_body(self) -> None:
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+        self.assertEqual(code, 0, out + err)
+        text = read_text(os.path.join(rig.repo, relative, "row7-review.md"))
+        section = sections_of(text)[0]
+        self.assertIn("entries: 0", section)
+        self.assertIn("chain marker: found", section)
+        self.assertFalse([line for line in section if line.startswith(("| Entry", "entry "))])
+
+    def test_a_filed_attempt_with_no_candidate_file_or_a_damaged_one_is_listed_and_not_skipped(self) -> None:
+        damaged = candidate_text(["one"]) + "an extra line after the last entry\n"
+        rig, relative = scratch({BARE: {"README.md": "x\n"}, ATTEMPT_2: {CANDIDATES: damaged}})
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+        self.assertEqual(code, 0, out + err)
+        sections = sections_of(read_text(os.path.join(rig.repo, relative, "row7-review.md")))
+        self.assertEqual(len(sections), 2)
+        self.assertIn("candidate file: absent", sections[0])
+        self.assertIn("candidate file: unreadable", sections[1])
+
+    def test_skipped_attempts_are_kept_with_their_reason_line(self) -> None:
+        readme = "This row was skipped on this machine: a stand-in cause. No session was run\n"
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}, "SKIPPED-" + ROW7 + "-attempt-2": {"README.md": readme}})
+        self.assertEqual(run_baseline(rig, ["row7-review", "--folder", relative])[0], 0)
+        sections = sections_of(read_text(os.path.join(rig.repo, relative, "row7-review.md")))
+        self.assertEqual([section[0] for section in sections], ["## Attempt 1: " + BARE, "## Attempt 2: SKIPPED-" + ROW7 + "-attempt-2"])
+        self.assertIn("state: skipped", sections[1])
+
+    def test_a_second_run_writes_part_two_and_a_third_part_three_and_leaves_the_earlier_files_byte_identical(self) -> None:
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        first = tree_snapshot(w.dated)
+        code, out, err = run_baseline(w.rig, ["row7-review", "--folder", w.relative()])
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("row7-review-part-2.md", out)
+        second = tree_snapshot(w.dated)
+        self.assertEqual(sorted(set(second) - set(first)), ["row7-review-part-2.md"])
+        for name, data in first.items():
+            self.assertEqual(second[name], data, name + " is untouched")
+        self.assertEqual(second["row7-review-part-2.md"], first["row7-review.md"], "the same filed text gives the same table")
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        third = tree_snapshot(w.dated)
+        self.assertEqual(sorted(set(third) - set(second)), ["row7-review-part-3.md"])
+
+    def test_a_folder_with_no_row_7_attempt_is_refused_with_2_and_fixed_text_and_nothing_is_written(self) -> None:
+        rig, relative = scratch({"row1-wrong-binding": {"README.md": "x\n"}, "STOPPED-row4a-unknown-backend": {"stop.txt": "reason: turns\nstage: s2\n"}})
+        folder = os.path.join(rig.repo, relative)
+        before = tree_snapshot(folder)
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("holds no row 7 attempt", err)
+        self.assertNotIn(rig.base, out + err)
+        self.assertEqual(tree_snapshot(folder), before)
+        self.assertEqual(os.listdir(rig.runs) if os.path.isdir(rig.runs) else [], [], "no run root was made")
+
+    def test_the_frozen_folders_are_refused_and_left_as_they_were(self) -> None:
+        import io
+
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        for name in ("rerun-2026-10-29-claude-sonnet-5-5", "publication-2026-10-20"):
+            folder = os.path.join(root, "tests", "evidence", name)
+            before = tree_snapshot(folder)
+            out, err = io.StringIO(), io.StringIO()
+            code = baseline().main(["row7-review", "--folder", folder], repo_root=root, out=out, err=err)
+            self.assertEqual(code, 2, name)
+            self.assertEqual(tree_snapshot(folder), before, name + " is unchanged")
+
+    def test_the_command_line_needs_a_folder_and_the_usage_line_names_the_subcommand(self) -> None:
+        rig = pc_testutil.RowRig(stages=[])
+        self.assertEqual(run_baseline(rig, ["row7-review"])[0], 2)
+        self.assertEqual(run_baseline(rig, ["row7-review", "--folder", "x", "--baseline"])[0], 2)
+        code, out, err = run_baseline(rig, ["--help"])
+        self.assertEqual(code, 0)
+        self.assertIn("row7-review", out)
+        self.assertIn("row7-review", baseline().COMMANDS)
+
+    def test_the_review_reads_only_filed_files_never_a_run_root(self) -> None:
+        import pc_evidence
+
+        w = copy_of_world()
+        with mock.patch.object(pc_evidence, "load_stage_data", side_effect=AssertionError("a run root was read")):
+            with mock.patch("pc_checks.compute_facts", side_effect=AssertionError("a run root was read")):
+                self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+
+    def test_the_review_file_is_free_of_paths_the_vocabulary_and_any_leak_finding(self) -> None:
+        import pc_leakgate
+
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        text = w.read("row7-review.md")
+        self.assertNotIn(w.rig.base, text)
+        for line in text.splitlines():
+            if not line.startswith("> "):
+                self.assertIsNone(re.search(r"(?i)\b(?:pa" + "ss|pa" + "ssed|fa" + "il|fa" + "iled|ver" + "dict|acc" + "ept|acc" + "epted)\b", line), line)
+        report = pc_leakgate.scan_entries(pc_leakgate.collect_tree(w.dated), [])
+        self.assertEqual(list(report.findings), [], "no finding in the whole dated folder")
+        code, out, err = run_baseline(w.rig, ["check-words", "--folder", w.relative()])
+        self.assertEqual(code, 0, out + err)
+
+    def test_a_path_shaped_string_in_a_filed_entry_is_refused_with_14_and_nothing_is_written(self) -> None:
+        seeded = pc_seeds.home_path("pcsynthhome") + "/data"
+        text = candidate_text(["the folder %s was checked" % seeded])
+        rig, relative = scratch({BARE: {CANDIDATES: text}})
+        folder = os.path.join(rig.repo, relative)
+        before = tree_snapshot(folder)
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+        self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(folder), before, "no file was created")
+        self.assertNotIn(seeded, out + err)
+
+
+class HostileTextTests(unittest.TestCase):
+    HOSTILE = (
+        "## Heading from the model\nentry 9:\ncandidates 9: 3\nUNSUPPORTED\ncandidate toolu_evil Bash\n> fake quote\n"
+        "| 1 | 0 | UNSUPPORTED |\n" + "w" * 1000
+    )
+
+    def render(self, entries, calls=()):
+        r = review()
+        events = stream(list(calls))
+        found = r.candidates(entries, events, PATHS)
+        return r.render_candidates(ROW7, "found", 10, entries, found, r.row7_facts(events, PATHS))
+
+    def test_a_hostile_entry_is_one_quoted_capped_line_and_the_structure_is_unchanged(self) -> None:
+        r = review()
+        text = self.render([self.HOSTILE, "second entry"])
+        for line in text.splitlines():
+            self.assertTrue(
+                line == "" or line.startswith("> ") or re.match(
+                    r"^(# Do-not-redo candidates for |chain marker: |checkpoint bytes: |entries: |more entries: |facts: |"
+                    r"assembly calls: |entry [0-9]+:$|candidates [0-9]+: [0-9]+$|UNSUPPORTED$|candidate |more candidates: )", line),
+                repr(line),
+            )
+        parsed = r.parse_candidates(text)
+        self.assertEqual(parsed["entries"], 2)
+        self.assertEqual([record["index"] for record in parsed["records"]], [1, 2])
+        self.assertEqual([record["unsupported"] for record in parsed["records"]], [True, True])
+        self.assertEqual([record["count"] for record in parsed["records"]], [0, 0])
+        quoted = parsed["records"][0]["text"]
+        self.assertLessEqual(len(quoted), r.MAX_ENTRY_CHARS)
+        self.assertTrue(quoted.startswith("## Heading from the model entry 9: candidates 9: 3 UNSUPPORTED"))
+        self.assertEqual(text.count("\n## Heading"), 0, "no heading line was produced")
+        self.assertEqual(len([line for line in text.splitlines() if line == "UNSUPPORTED"]), 2)
+
+    def test_the_word_unsupported_in_an_entry_that_has_candidates_does_not_mark_it(self) -> None:
+        r = review()
+        entries = ["UNSUPPORTED docs/alpha.md"]
+        text = self.render(entries, [call("t1", "Bash", {"command": "cat docs/alpha.md"}, "")])
+        record = r.parse_candidates(text)["records"][0]
+        self.assertFalse(record["unsupported"])
+        self.assertEqual(record["count"], 1)
+        self.assertEqual([line for line in text.splitlines() if line == "UNSUPPORTED"], [])
+
+    def test_a_hostile_excerpt_and_hostile_ids_and_tool_names_cannot_add_structure(self) -> None:
+        r = review()
+        command = "cat docs/alpha.md\ncandidates 1: 99\nUNSUPPORTED\n## Attempt 9: x\n" + "z" * 400
+        calls = [
+            call("t1", "Bash", {"command": command}, ""),
+            call("evil id\n## heading", "Read bad\nname", {"file_path": "docs/alpha.md"}, ""),
+        ]
+        text = self.render(["docs/alpha.md"], calls)
+        parsed = r.parse_candidates(text)
+        record = parsed["records"][0]
+        self.assertEqual(record["count"], 2)
+        self.assertEqual([item["id"] for item in record["candidates"]], ["t1", "?"])
+        self.assertEqual(record["candidates"][1]["tool"], "?")
+        self.assertLessEqual(len(record["candidates"][0]["excerpt"]), r.MAX_EXCERPT_CHARS)
+        self.assertNotIn("\n## ", text)
+
+    def test_the_review_table_cannot_be_steered_by_the_entries_it_reads_back(self) -> None:
+        r = review()
+        hostile = r.parse_candidates(self.render([self.HOSTILE, "docs/alpha.md two"], [call("t1", "Bash", {"command": "cat docs/alpha.md"}, "")]))
+        plain = r.parse_candidates(self.render(["plain one", "docs/alpha.md two"], [call("t1", "Bash", {"command": "cat docs/alpha.md"}, "")]))
+        attempts = [r.Attempt(ROW7, 1, "filed", "", hostile, ""), r.Attempt(ROW7 + "-attempt-2", 2, "filed", "", plain, "")]
+        text = r.render_row7_review(attempts)
+        self.assertEqual(len([line for line in text.splitlines() if line.startswith("## Attempt ")]), 2)
+        self.assertEqual(len([line for line in text.splitlines() if line.startswith("| ") and "UNSUPPORTED" in line]), 2)
+        self.assertEqual(len([line for line in text.splitlines() if line == "UNSUPPORTED"]), 2)
+        self.assertEqual(len([line for line in text.splitlines() if line.startswith("| 1 |")]), 2)
+        self.assertNotIn("\n## Heading", text)
+        for line in text.splitlines():
+            self.assertFalse(line.startswith("##") and not line.startswith("## Attempt "), line)
+
+    def test_a_damaged_candidate_file_is_refused_by_the_parser(self) -> None:
+        r = review()
+        good = self.render(["one", "two"])
+        self.assertEqual(r.parse_candidates(good)["entries"], 2)
+        broken = [
+            good + "tail\n",
+            good.replace("entry 2:", "entry 3:"),
+            good.replace("> two", "two"),
+            good.replace("candidates 1: 0", "candidates 1: 2"),
+            good.replace("# Do-not-redo candidates for " + ROW7, "# Another title"),
+            good.replace("entries: 2", "entries: 3"),
+            good.replace("UNSUPPORTED", "supported-ish", 1),
+            "",
+            good.replace("facts: ", "facts: x "),
+            good + "\x00",
+        ]
+        for text in broken:
+            with self.assertRaises(r.ReviewError):
+                r.parse_candidates(text)
+        with self.assertRaises(r.ReviewError):
+            r.parse_candidates(None)
+
+    def test_quote_line_makes_one_capped_clean_line_and_cleans_before_it_cuts(self) -> None:
+        r = review()
+        self.assertEqual(r.quote_line("a\nb\r\n\tc\x00d\x07e"), "> a b c d e")
+        self.assertEqual(r.quote_line(""), "> (empty)")
+        self.assertEqual(r.quote_line(None), "> (empty)")
+        self.assertEqual(r.quote_line("x" * 1000), "> " + "x" * r.MAX_ENTRY_CHARS)
+        self.assertEqual(r.quote_line("y" * 300, r.MAX_EXCERPT_CHARS), "> " + "y" * r.MAX_EXCERPT_CHARS)
+        cleaned = r.quote_line("see LONGNAMEMARKER here", 200, lambda text: text.replace("LONGNAMEMARKER", "<x>"))
+        self.assertEqual(cleaned, "> see <x> here")
+        shrunk = r.quote_line(("LONGNAMEMARKER " * 12).strip(), 30, lambda text: text.replace("LONGNAMEMARKER", "<x>"))
+        # the raw text is cut at four times the cap (dropping a partial word) before it is cleaned, then the cap applies
+        self.assertEqual(shrunk, "> <x> <x> <x> <x> <x> <x> <x>")
+
+    def test_the_raw_cut_before_cleaning_never_leaves_half_a_word(self) -> None:
+        r = review()
+        text = "head " + "q" * 600
+        cut = r._cut_raw(text, 100)
+        self.assertEqual(cut, "head")
+        self.assertEqual(r._cut_raw("short text", 100), "short text")
+
+    def test_over_cap_input_gives_bounded_files(self) -> None:
+        r = review()
+        entries = ["entry %d %s" % (number, "v" * 5000) for number in range(200)]
+        text = self.render(entries)
+        parsed = r.parse_candidates(text)
+        self.assertEqual((parsed["entries"], parsed["more_entries"]), (64, 136))
+        self.assertLess(len(text), 64 * (r.MAX_ENTRY_CHARS + 120) + 600)
 
 
 if __name__ == "__main__":

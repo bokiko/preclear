@@ -611,8 +611,8 @@ REVIEW_INTRO: Tuple[str, ...] = (
     "",
     "The harness lists candidates and counts only. For each entry of the `## Do not redo` section of a printed checkpoint it",
     "lists the tool calls of the same /preclear turn that share a whole token with the entry (a path, a backtick span or a hex",
-    "run). The word %s means the list of candidates is empty and nothing more. Whether a listed candidate really supports its" % UNSUPPORTED,
-    "entry is a human judgement: Codex and bokiko confirm or reject each pairing in the Codex review file of the triple.",
+    "run). The word %s means the list of candidates is empty and nothing more. Whether a listed candidate really backs its" % UNSUPPORTED,
+    "entry is a human judgement: Codex and the owner confirm or reject each pairing in the Codex review file of the triple.",
     "Every line that starts with `> ` is text quoted from the model, on one line and capped; it is never structure.",
     "Stopped and skipped attempts are kept, with their reasons.",
 )
