@@ -45,6 +45,7 @@ ROW4A_FOLDER = PUBLICATION_ROOT + "/row4a-unknown-backend"
 ROW5A_FOLDER = PUBLICATION_ROOT + "/row5a-no-memory"
 ROW5B_FOLDER = PUBLICATION_ROOT + "/row5b-disabled-memory"
 ROW6_FOLDER = PUBLICATION_ROOT + "/row6-readonly-plan"
+ROW7_FOLDER = PUBLICATION_ROOT + "/row7-all-destinations-denied"
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
 PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
@@ -626,4 +627,33 @@ def seed_row6(
         pc_rows.ROW6,
         ROW6_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW6),
+    )
+
+
+def seed_row7(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 7 setup: a plain project with memory enabled and pinned and the canonical plan.
+
+    The project instruction file is the committed row 7 fixture, copied byte for byte (its digest is the one rows 6 to
+    12 share). The restriction itself is not part of the seed: the engine applies the between-stage hook of the entry
+    after the work turn (pc_rowhooks), and the live probe runs before the first snapshot (pc_rowhooks.chmod_denial_probe).
+    """
+    return seed_plain_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW7,
+        ROW7_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW7),
     )

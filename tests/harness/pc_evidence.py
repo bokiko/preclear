@@ -999,6 +999,22 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_r
     ]
 
 
+def _printed_checkpoint_line(chain: Optional[Mapping[str, Any]]) -> str:
+    """The README line that says which shape a printed-checkpoint chain had, in the harness's words (plan 04-06)."""
+    record = chain if isinstance(chain, Mapping) else {}
+    if record.get("marker") == _row1().MARKER_FOUND:
+        size = record.get("checkpoint_bytes")
+        return (
+            "- chain shape: the /preclear reply printed a checkpoint (%s bytes) and a fresh session was started from it"
+            % (size if isinstance(size, int) and not isinstance(size, bool) else UNCONFIRMED)
+        )
+    return (
+        "- chain shape: the /preclear reply printed no checkpoint the harness could take (%s: reason %s); "
+        "no fresh session was run"
+        % (_row1().MARKER_NO_CHECKPOINT, _text(record.get("checkpoint_reason")))
+    )
+
+
 def render_row_readme(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_rows.RowSpec] = None) -> bytes:
     """The row README: setup, stage table, mechanical facts, then the checklist, then the one verdict line.
 
@@ -1030,6 +1046,8 @@ def render_row_readme(data: RunData, facts: Mapping[str, Any], spec: Optional[pc
             % (name, counts["attempted"], counts["executed"], counts["denied"], counts["compound_refusals"])
         )
     lines.append("- ledger digests: %s" % ", ".join("%s %s" % (k, v) for k, v in facts["ledgers"]["names"].items()))
+    if row.chain == pc_rows.CHAIN_PRINTED_CHECKPOINT:
+        lines.append(_printed_checkpoint_line(data.chain))
     lines.append("- the full list of facts is in mechanical-checks.md and usage.txt")
     lines.extend(["", "## Reviewer checklist", ""])
     lines.extend(checklist_lines(data, facts, row))
@@ -1199,10 +1217,16 @@ def _chain_incomplete(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> 
     """
     row1 = _row1()
     marker = data.chain.get("marker") if isinstance(data.chain, dict) else None
-    if marker not in (row1.MARKER_FOUND, row1.MARKER_NONE):
-        return MESSAGE_STAGE_MISSING
     entry = spec if spec is not None else _spec_of_run_or_none(data)
     if entry is None:
+        return MESSAGE_STAGE_MISSING
+    # The marker word of the none shape belongs to the row's chain strategy: a row that feeds its resume stage with a
+    # printed checkpoint (plan 04-06) has NO-PRINTED-CHECKPOINT and refuses NO-RESUME-LINE, and every other row the
+    # reverse. Anything else is not a shape the registry defines.
+    none_marker = (
+        row1.MARKER_NO_CHECKPOINT if entry.chain == pc_rows.CHAIN_PRINTED_CHECKPOINT else row1.MARKER_NONE
+    )
+    if marker not in (row1.MARKER_FOUND, none_marker):
         return MESSAGE_STAGE_MISSING
     if marker == row1.MARKER_FOUND:
         expected = [stage.name for stage in entry.stages]
@@ -1381,7 +1405,8 @@ def collect_files(
         resume = MARKER_NO_RESUME
     else:
         resume = UNCONFIRMED
-    put("resume-line.txt", _lines([resume]))
+    if row.chain != pc_rows.CHAIN_PRINTED_CHECKPOINT:  # a row that saves no file prints no resume line to record
+        put("resume-line.txt", _lines([resume]))
 
     snaps = str(paths["snaps"])
     if os.path.isdir(snaps):
