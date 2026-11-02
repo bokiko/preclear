@@ -370,6 +370,19 @@ def verdict_pattern():
     return re.compile(r"\b(?:%s)\b" % "|".join(verdict_words()), re.IGNORECASE)
 
 
+def scanned(name: str, text: str):
+    """The first vocabulary match in a harness-authored file, or None.
+
+    The files that hold quoted model text (the Do-not-redo candidate file and the row7-review files) are scanned
+    without their lines that begin with the quote prefix; every other file, and every other line of those two, is
+    scanned in full (plan 04-07).
+    """
+    ev = evidence()
+    if ev.QUOTED_TEXT_FILE.match(name.split("/")[-1]):
+        text = "\n".join(line for line in text.splitlines() if not line.startswith(ev.QUOTE_MARKER))
+    return verdict_pattern().search(text)
+
+
 def with_result(stages: list, index: int, **changes) -> list:
     copied = json.loads(json.dumps(stages))
     copied[index]["result"].update(changes)
@@ -897,7 +910,7 @@ class VocabularyTests(unittest.TestCase):
             if name == ROW1 + "/README.md":
                 self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"), "the line closes the row README")
                 text = text[: -len(VERDICT_LINE) - 1]
-            self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+            self.assertIsNone(scanned(name, text), "no verdict word in " + name)
 
     def test_the_verdict_line_occurs_once_in_the_whole_folder_of_harness_files(self) -> None:
         filed = default_filed()
@@ -917,8 +930,73 @@ class VocabularyTests(unittest.TestCase):
             text = read_text(os.path.join(filed.run.destination, name))
             if name == ROW1 + "/README.md":
                 text = text[: -len(VERDICT_LINE) - 1]
-            self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+            self.assertIsNone(scanned(name, text), "no verdict word in " + name)
         self.assertNotIn("s2-preclear-trace.md", " ".join(self.authored(filed)), "a trace is outside the scan")
+
+
+class QuotedLineVocabularyTests(unittest.TestCase):
+    """The scan skips exactly the quoted lines of the files that hold model text and still catches a word elsewhere (plan 04-07)."""
+
+    WORD = "fa" + "iled"
+    CANDIDATES = "do-not-redo-candidates.md"
+    ROW7 = "row7-all-destinations-denied"
+
+    def filed_row7(self):
+        from test_review import scripted_chain
+
+        entries = ["- the check %s twice here" % self.WORD, "- second entry `a/b.md`"]
+        run = scripted_chain(entries, [])
+        self.assertEqual(run.run.outcome.code, 0, run.lines())
+        names = []
+        for dirpath, _dirnames, filenames in os.walk(run.run.ctx.destination):
+            for name in filenames:
+                names.append(os.path.relpath(os.path.join(dirpath, name), run.run.ctx.destination).replace(os.sep, "/"))
+        return run, evidence().harness_authored_names(sorted(names))
+
+    def test_a_candidate_file_with_a_verdict_word_in_a_quoted_entry_passes_the_scan(self) -> None:
+        run, names = self.filed_row7()
+        name = "%s/%s" % (self.ROW7, self.CANDIDATES)
+        self.assertIn(name, names, "the candidate file is in the scanned set")
+        text = read_text(os.path.join(run.run.ctx.destination, *name.split("/")))
+        self.assertIsNotNone(verdict_pattern().search(text), "the quoted entry holds the word")
+        self.assertIn("> the check %s twice here" % self.WORD, text.splitlines())
+        for each in names:
+            body = read_text(os.path.join(run.run.ctx.destination, *each.split("/")))
+            if each == self.ROW7 + "/README.md":
+                body = body[: -len(VERDICT_LINE) - 1]
+            self.assertIsNone(scanned(each, body), "no verdict word outside a quoted line in " + each)
+
+    def test_the_same_word_on_an_unquoted_line_fails_and_a_quoted_line_does_not(self) -> None:
+        run, names = self.filed_row7()
+        name = "%s/%s" % (self.ROW7, self.CANDIDATES)
+        text = read_text(os.path.join(run.run.ctx.destination, *name.split("/")))
+        self.assertIsNone(scanned(name, text))
+        self.assertIsNotNone(scanned(name, text + "\nthe %s here\n" % self.WORD))
+        self.assertIsNotNone(scanned(name, text + "\n>the %s here\n" % self.WORD), "only the exact prefix counts")
+        self.assertIsNotNone(scanned(name, text + "\n - > the %s here\n" % self.WORD), "the prefix must begin the line")
+        self.assertIsNone(scanned(name, text + "\n> the %s here\n" % self.WORD))
+        self.assertIsNotNone(scanned(self.ROW7 + "/README.md", "> the %s here\n" % self.WORD), "no other file skips quoted lines")
+        self.assertIsNotNone(scanned(self.ROW7 + "/mechanical-checks.md", "> the %s here\n" % self.WORD))
+        self.assertIsNone(scanned("row7-review.md", "> the %s here\n" % self.WORD))
+        self.assertIsNotNone(scanned("row7-review-part-2.md", "state: %s\n" % self.WORD))
+
+    def test_the_candidate_file_and_the_review_files_are_picked_as_harness_authored_in_the_right_places_only(self) -> None:
+        picked = evidence().harness_authored_names([
+            self.ROW7 + "/" + self.CANDIDATES,
+            self.ROW7 + "-attempt-2/" + self.CANDIDATES,
+            "STOPPED-" + self.ROW7 + "/" + self.CANDIDATES,
+            "zzz-not-a-row/" + self.CANDIDATES,
+            "row7-review.md",
+            "row7-review-part-2.md",
+            "row7-review-part-x.md",
+            "row7-review.md.bak",
+            "other/row7-review.md",
+            self.CANDIDATES,
+        ])
+        self.assertEqual(picked, sorted([
+            self.ROW7 + "/" + self.CANDIDATES, self.ROW7 + "-attempt-2/" + self.CANDIDATES,
+            "row7-review.md", "row7-review-part-2.md",
+        ]))
 
 
 class ChecklistTests(unittest.TestCase):

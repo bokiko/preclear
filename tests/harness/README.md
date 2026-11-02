@@ -682,6 +682,45 @@ and the README, `stop.txt`, `usage.txt`, checks and exit files of each row and l
 verdict, skipping only lines that begin with the quote prefix and the closing line of a README, prints counts only, and
 exits 0 when it finds none and 1 otherwise.
 
+#### The Do-not-redo review
+
+A row whose registry entry names analyses runs them when its chain is complete (every stage with the marker found, or
+the stages that ran with the none marker), from the data the filing already read; a STOPPED label has no printed
+checkpoint to pair and runs none. Each analysis returns a section for `mechanical-checks.md` and flat files for the row
+folder, and an analysis id the code does not know is refused with nothing filed. Row 7 names two.
+
+The `Row 7 facts` section of `mechanical-checks.md` counts, from tool calls and tool results only and never from the
+reply: executed Write and Edit calls under the project's `.preclear` folder, errored writes there with their tool_use
+ids, tool results that hold the text EACCES, tool results that hold `Permission denied`, executed chmod commands, and the
+checkpoint assembly calls (calls whose input holds a line equal to `## Do not redo` or `## Identity and state`: the
+model writing or measuring its own checkpoint).
+
+`do-not-redo-candidates.md` is filed in the row folder in a fixed, line-oriented format: a title line naming the row,
+`chain marker:`, `checkpoint bytes:`, `entries:`, `more entries:`, a `facts:` line with five counts, `assembly calls:`,
+then for each entry the lines `entry N:`, the quoted entry text, `candidates N: COUNT` and either the single word
+UNSUPPORTED or one `candidate ID TOOL` line with a quoted excerpt for each candidate. The entries are the bullets of the
+`## Do not redo` section of the printed checkpoint (wrapped lines joined), or its plain lines when the section holds no
+bullet. A candidate is a tool call of the same /preclear turn that shares a whole token with the entry: a backtick span,
+a path-like word or a hex run of seven or more characters, compared whole and case-sensitively, never as substrings, after
+the project path, the run root, the auto-memory root, `.`, `..`, `.git` and anything shorter than three characters are
+dropped and paths under the run root are made relative. A call's tokens come from its command, file_path, path, pattern,
+old_string and new_string and from its result, never from the content of a Write. Assembly calls are never candidates and
+are counted. UNSUPPORTED means the list of candidates is empty and nothing more; the harness never writes that an entry is
+backed by anything, and whether a candidate really backs its entry is a human judgement made in the Codex review file.
+Model text appears only on lines that begin with the quote prefix `> `: one line, whitespace collapsed, cleaned by the
+sanitizer and capped (64 entries, 400 characters per entry, 160 per excerpt, 20 candidates per entry with the count of the
+rest stated), so a heading, a record line or the word UNSUPPORTED inside model text adds no structure. The vocabulary scan
+skips exactly those quoted lines in this file and in the review files and scans every other line.
+
+`python3 -E -s -B tests/harness/pc_baseline.py row7-review --folder FOLDER` builds the side-by-side table of the row 7
+attempts of a dated folder from the filed candidate files and stop files only, never a run root. It has one section per
+attempt in attempt order (the bare folder is attempt 1); a stopped or skipped attempt is kept with its reason, an attempt
+with no printed checkpoint says so, and an attempt with zero entries has a section and no table body. A candidate file
+that is absent or damaged is listed as such. The table is staged, sanitized, gated and added exactly like the files of
+`close`, as `row7-review.md` or the first free `row7-review-part-N.md`, so an earlier file is never touched. A folder with
+no row 7 attempt, and the two frozen folders, are refused with exit 2. Each row 7 README points to `row7-review.md` at
+the top of the dated folder.
+
 ### Comparing a rerun with the committed row
 
 `python3 -E -s -B tests/harness/pc_compare.py --old tests/evidence/publication-2026-10-20 --new tests/evidence/<the new folder>`
@@ -732,7 +771,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `checkpoint-wrapper` - logs every stub call, refuses driver-only verbs, injects conflicts
 - `checkpoint_stub.py` - the single-file STUB-BACKED checkpoint helper
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
-- `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report and check-words
+- `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report, check-words and the row 7 review table
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
 - `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after
 - `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED and STOPPED labels
