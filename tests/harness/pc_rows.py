@@ -530,6 +530,22 @@ def _registered_rows() -> Dict[str, RowSpec]:
             memory=MEMORY_PINNED,
             chain=CHAIN_RESUME_LINE,
         ),
+        ROW9: RowSpec(
+            ROW9,
+            KIND_ROW,
+            "Row 9: linked worktree beside the main checkout (1P + 1R)",
+            _GIT_ROW_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW9),
+            _plain_sources(_PUBLICATION_9),
+            seed="pc_rowseeds:seed_row9",
+            prompts=_plain_prompts(_PUBLICATION_9),
+            setup_text=_ROW9_SETUP_TEXT,
+            tools_profile=PROFILE_GIT,
+            memory=MEMORY_PINNED,
+            chain=CHAIN_RESUME_LINE,
+        ),
     }
 
 

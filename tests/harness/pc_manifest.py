@@ -30,7 +30,9 @@ which the top-level pin cannot see, so the harness runs no git command in a proj
 is true (an entry named .git below the top level). tree_manifest refuses a root at or under any path in its
 refuse_under argument (the harness-owned Claude config directory holds credentials).
 
-A project with no .git entry at all has a defined state of its own (plan 04-09): gitdir_digest answers NO_GIT_DIGEST (the
+A linked worktree (a .git that is a file pointing into main-checkout beside the project) digests the pointer, its own
+git folder and the common git folder, with every index entry left out (plan 04-09). A project with no .git entry at all
+has a defined state of its own (plan 04-09): gitdir_digest answers NO_GIT_DIGEST (the
 sha256 of a fixed marker text), capture_git_status returns an empty raw result and one fixed status line, and no git
 process is started. A .git that appears later changes the digest, so a pinned capture refuses it like any other change
 and the mutation rule counts it.
@@ -98,6 +100,11 @@ class GitDirChanged(ManifestError):
     """The project's git folder differs from the recorded setup digest; no git command was started."""
 
 
+class GitEntryUnreadable(ManifestError):
+    """The project's .git entry is of a kind the harness does not read: a link, a special file, or a file that is not a
+    pointer into the main checkout. It is never guessed at; a pinned capture treats it as a difference from setup."""
+
+
 class NestedRepository(GitDirChanged):
     """The project holds a nested repository (an entry named .git below the top level); no git command was started."""
 
@@ -129,22 +136,121 @@ def has_git_entry(project_dir):
     return os.path.lexists(os.path.join(project_dir, ".git"))
 
 
-def gitdir_digest(project_dir):
-    """The sha256 hex of the project's git state: its .git folder without the index and index.lock entries.
+MAIN_CHECKOUT = "main-checkout"
+_POINTER_PREFIX = "gitdir: "
+MAX_POINTER_BYTES = 4096
+_INDEX_NAMES = (b"index", b"index.lock")
 
-    It is the value pc_checks.git_state has always stored as gitdir_digest. A project with no .git entry at all
-    answers NO_GIT_DIGEST. A .git that is a symlink, a special file or a file that is not a readable pointer raises
-    ManifestError: the harness never guesses at what it cannot read.
+
+def _read_small_regular(path, what):
+    """Read a small regular file (never a link) and return its bytes; anything else is a ManifestError."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            raise GitEntryUnreadable("%s is not a regular file" % what)
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_POINTER_BYTES + 1)
+    except OSError:
+        raise GitEntryUnreadable("%s could not be read" % what) from None
+    if len(data) > MAX_POINTER_BYTES:
+        raise GitEntryUnreadable("%s is too large" % what)
+    return data
+
+
+def _plain_folder(path, what):
+    """PATH must be a folder that is not a link; the answer is its real path."""
+    try:
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            raise GitEntryUnreadable("%s is not a folder" % what)
+    except OSError:
+        raise GitEntryUnreadable("%s could not be examined" % what) from None
+    return os.path.realpath(path)
+
+
+def worktree_git_folders(project_dir):
+    """Resolve the .git file of a linked worktree to (pointer bytes, the worktree's git folder, the common git folder).
+
+    The pointer is the one line `gitdir: <path>`. It must lead to a folder directly under worktrees/ inside the
+    .git folder of main-checkout beside the project (the run root's main-checkout), the worktree's commondir file
+    must lead back to that .git folder, and neither folder may be a link. A pointer that leads anywhere else, a
+    malformed pointer or an unreadable folder is a ManifestError: the harness never guesses where the repository is.
     """
+    real_project = os.path.realpath(project_dir)
+    main_git = _plain_folder(os.path.join(os.path.dirname(real_project), MAIN_CHECKOUT, ".git"), "the main checkout's git folder")
+    if main_git != os.path.join(os.path.dirname(real_project), MAIN_CHECKOUT, ".git"):
+        raise GitEntryUnreadable("the main checkout's git folder is not where it must be")
+    pointer = _read_small_regular(os.path.join(project_dir, ".git"), "the worktree pointer")
+    try:
+        text = pointer.decode("utf-8")
+    except UnicodeDecodeError:
+        raise GitEntryUnreadable("the worktree pointer is not text") from None
+    lines = text.split("\n")
+    if len(lines) not in (1, 2) or (len(lines) == 2 and lines[1] != "") or not lines[0].startswith(_POINTER_PREFIX):
+        raise GitEntryUnreadable("the worktree pointer is not a single gitdir line")
+    target = lines[0][len(_POINTER_PREFIX):]
+    if target == "" or "\x00" in target:
+        raise GitEntryUnreadable("the worktree pointer is empty")
+    if not os.path.isabs(target):
+        target = os.path.join(real_project, target)
+    worktree_git = _plain_folder(target, "the worktree's git folder")
+    if os.path.dirname(worktree_git) != os.path.join(main_git, "worktrees") or os.path.realpath(target) != os.path.normpath(target):
+        raise GitEntryUnreadable("the worktree pointer does not lead into the main checkout")
+    common_text = _read_small_regular(os.path.join(worktree_git, "commondir"), "the worktree's commondir file")
+    try:
+        common = os.path.realpath(os.path.join(worktree_git, common_text.decode("utf-8").strip()))
+    except UnicodeDecodeError:
+        raise GitEntryUnreadable("the worktree's commondir file is not text") from None
+    if common != main_git:
+        raise GitEntryUnreadable("the worktree's common folder is not the main checkout's git folder")
+    return pointer, worktree_git, main_git
+
+
+def _is_index_entry(path, common):
+    """True for a git index file: index or index.lock at the top of a git folder, and in the common folder also the
+    ones of a linked worktree (worktrees/<name>/index and index.lock). A reference or any other file that merely
+    shares the name deeper in the tree is never left out."""
+    if path in _INDEX_NAMES:
+        return True
+    parts = path.split(b"/")
+    return common and len(parts) == 3 and parts[0] == b"worktrees" and parts[2] in _INDEX_NAMES
+
+
+def _framed(label, data):
+    return label + b"\n" + str(len(data)).encode("ascii") + b"\n" + data + b"\n"
+
+
+def gitdir_digest(project_dir):
+    """The sha256 hex of the project's git state; one value that pins what git would read.
+
+    A project with no .git entry at all answers NO_GIT_DIGEST. A .git folder digests as it always has: the folder's
+    manifest without the index and index.lock entries. A .git that is a regular file in the linked worktree pointer
+    shape digests the pointer bytes, the worktree's own git folder and the common git folder, each without any
+    index or index.lock entry (see _is_index_entry), so a plain git status that refreshes an index is never a change
+    while a moved pointer, a changed configuration or a changed reference is. Anything else (a symlink, a special
+    file, a file that is not a pointer into the main checkout) raises GitEntryUnreadable, a ManifestError: the
+    harness never guesses. A project that is itself a link or not a folder raises ManifestError: a swapped project
+    folder is never followed.
+    """
+    try:
+        project_mode = os.lstat(project_dir).st_mode
+    except OSError:
+        raise ManifestError("the project folder could not be examined") from None
+    if not stat.S_ISDIR(project_mode):
+        raise ManifestError("the project is not a folder (a link in its place is never followed)")
     git_path = os.path.join(project_dir, ".git")
     try:
         mode = os.lstat(git_path).st_mode
     except FileNotFoundError:
         return NO_GIT_DIGEST
     except OSError:
-        raise ManifestError("the .git entry could not be examined") from None
+        raise GitEntryUnreadable("the .git entry could not be examined") from None
+    if stat.S_ISREG(mode):
+        pointer, worktree_git, common = worktree_git_folders(project_dir)
+        own = [e for e in tree_manifest(worktree_git) if not _is_index_entry(e["path"], False)]
+        shared = [e for e in tree_manifest(common) if not _is_index_entry(e["path"], True)]
+        framed = _framed(b"pointer", pointer) + _framed(b"worktree", jsonl_bytes(own)) + _framed(b"common", jsonl_bytes(shared))
+        return hashlib.sha256(framed).hexdigest()
     if not stat.S_ISDIR(mode):
-        raise ManifestError("the .git entry is not a folder")
+        raise GitEntryUnreadable("the .git entry is not a folder or a worktree pointer")
     entries = tree_manifest(git_path)
     kept = [entry for entry in entries if entry["path"] not in GITDIR_DIGEST_LEAVES_OUT]
     return hashlib.sha256(jsonl_bytes(kept)).hexdigest()
@@ -188,8 +294,15 @@ def capture_git_status(project_dir, git, pinned_gitdir=None):
     """
     if nested_git_present(project_dir):
         raise NestedRepository("the project holds a nested repository; git was not run")
-    if pinned_gitdir is not None and gitdir_digest(project_dir) != pinned_gitdir:
-        raise GitDirChanged("the git folder differs from the setup state; git was not run")
+    if pinned_gitdir is not None:
+        try:
+            current = gitdir_digest(project_dir)
+        except GitEntryUnreadable:
+            # An entry the harness cannot read (a moved worktree pointer, a link, a special file) is a difference from
+            # the setup state too: git is not started, and the caller records the fixed not-run line.
+            raise GitDirChanged("the git entry cannot be read against the setup state; git was not run") from None
+        if current != pinned_gitdir:
+            raise GitDirChanged("the git folder differs from the setup state; git was not run")
     if not has_git_entry(project_dir):
         return b"", (NO_GIT_STATUS_LINE + "\n").encode("utf-8")
     raw = _run_git_status(git, project_dir, True)

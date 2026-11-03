@@ -500,7 +500,7 @@ class AuthorizeRetryTests(unittest.TestCase):
         os.makedirs(self.home)
         self.record_attempt()
         marker = "zzprobe-s7"
-        odd = (marker, "row1-s9", "row9-s1", "", "row1-s2 ", "ROW1-S2", "row1-s" + chr(0x0662), "row1-s" + chr(7), "a" * 70)
+        odd = (marker, "row1-s9", "row99-s1", "", "row1-s2 ", "ROW1-S2", "row1-s" + chr(0x0662), "row1-s" + chr(7), "a" * 70)
         for value in odd:
             code, out, err = run_main(["--authorize-retry", value], self.env)
             self.assertEqual(code, pc_exitcodes.USAGE, "a bad stage key was not refused with exit 2")

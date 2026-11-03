@@ -726,10 +726,6 @@ def seed_row7(
     )
 
 
-# The shapes implemented so far by seed_git_row; the others raise ValueError.
-_GIT_ROW_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED, SHAPE_UNBORN, SHAPE_NONE)
-
-
 def seed_git_row(
     shape: str,
     repo_root: str,
@@ -746,9 +742,9 @@ def seed_git_row(
     """The plain setup of a git-shaped row (plan 04-09): seed_plain_row with the git shape named by SHAPE.
 
     The project instruction file is the committed fixture of the row, copied byte for byte; the plan is the plain plan.
-    A shape this module does not build yet is a ValueError, and so is any word outside GIT_SHAPES.
+    Any word outside GIT_SHAPES is a ValueError.
     """
-    if shape not in GIT_SHAPES or shape not in _GIT_ROW_SHAPES:
+    if shape not in GIT_SHAPES:
         raise ValueError("the git shape is not known")
     return seed_plain_row(
         repo_root, run_root, session_id, harness_home_dir, runs_dir, evidence_date, model, row_id, fixture, memory, shape
@@ -832,4 +828,34 @@ def seed_row8a(
         pc_rows.ROW8A,
         ROW8A_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW8A),
+    )
+
+
+def seed_row9(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 9 setup: main-checkout holds the repository, the project is a linked worktree on a feature branch.
+
+    The plain files are committed on main in main-checkout; the project is made by git worktree add -b into the
+    empty project folder, so its .git is a file pointing into main-checkout. Nothing writes into main-checkout after
+    seeding. The returned mapping is the plain one: main-checkout is a sibling of the project, found by name.
+    """
+    return seed_git_row(
+        SHAPE_WORKTREE,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW9,
+        ROW9_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW9),
     )

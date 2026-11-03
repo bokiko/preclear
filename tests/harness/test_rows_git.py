@@ -53,7 +53,7 @@ ROW8A = "row8a-non-git"
 ROW8B = "row8b-detached-head"
 ROW8C = "row8c-unborn-branch"
 ROW9 = "row9-linked-worktree"
-GIT_ROWS = (ROW8A, ROW8B, ROW8C)
+GIT_ROWS = (ROW8A, ROW8B, ROW8C, ROW9)
 CLAUDE_MD_DIGEST_PREFIX = "ed03447e9df43888"
 PLAN_RELATIVE = "thoughts/plans/2026-10-15-widget-export.md"
 DASH = "\u2014"
@@ -61,6 +61,7 @@ SHAPE_WORDS = {
     ROW8A: "no-git @ n/a",
     ROW8B: "detached @ abc1234",
     ROW8C: "unborn @ n/a",
+    ROW9: "feature/widget-export @ abc1234",
 }
 GIT_TRIPWIRE_LOG = "git-tripwire.log"
 FIXED_DATE = datetime.datetime(2026, 10, 28, 12, 0, 0, tzinfo=datetime.timezone.utc)
@@ -399,6 +400,36 @@ class NoGitStateTests(unittest.TestCase):
             with self.assertRaises(pc_manifest.ManifestError):
                 pc_manifest.gitdir_digest(folder)
 
+    def test_a_project_that_is_itself_a_link_or_missing_is_refused_and_an_unreadable_entry_is_the_named_error(self) -> None:
+        import pc_manifest
+
+        folder = self.project("digest-real")
+        link = os.path.join(self.base, "digest-project-link")
+        os.symlink(folder, link)
+        with self.assertRaises(pc_manifest.ManifestError):
+            pc_manifest.gitdir_digest(link)
+        with self.assertRaises(pc_manifest.ManifestError):
+            pc_manifest.gitdir_digest(os.path.join(self.base, "digest-missing"))
+        garbage = self.project("digest-garbage-class")
+        with open(os.path.join(garbage, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("not a pointer\n")
+        with self.assertRaises(pc_manifest.GitEntryUnreadable):
+            pc_manifest.gitdir_digest(garbage)
+        self.assertTrue(issubclass(pc_manifest.GitEntryUnreadable, pc_manifest.ManifestError))
+        self.assertFalse(issubclass(pc_manifest.GitEntryUnreadable, pc_manifest.GitDirChanged))
+
+    def test_a_pinned_capture_in_a_no_git_project_where_a_garbage_git_file_appeared_is_a_change_not_a_crash(self) -> None:
+        import pc_manifest
+
+        folder = self.project("garbage-appeared")
+        pin = pc_manifest.gitdir_digest(folder)
+        with open(os.path.join(folder, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("x\n")
+        before = self.tripped()
+        with self.assertRaises(pc_manifest.GitDirChanged):
+            pc_manifest.capture_git_status(folder, self.git_tripwire, pin)
+        self.assertEqual(self.tripped(), before)
+
     def test_git_state_of_a_no_git_project_is_na_with_the_empty_refs_digest_and_the_marker_and_starts_no_process(self) -> None:
         import pc_checks
         import pc_manifest
@@ -729,6 +760,467 @@ class NoGitChainTests(unittest.TestCase):
         self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW8A])
         state = read_json(os.path.join(run.run_root, "raw", "s1.git.json"))
         self.assertEqual(state["head"], "not-read")
+
+
+class ShapeSeedTests(unittest.TestCase):
+    """The git shape of each seed equals the committed setup facts of its row (rows 8a, 8c and 9; 8b is above)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.seeded = dict((row_id, SeededGit(row_id, "git-shape-" + row_id.split("-", 1)[0])) for row_id in GIT_ROWS)
+
+    def project(self, row_id: str) -> str:
+        return self.seeded[row_id].project
+
+    def test_every_seed_is_byte_tied_to_its_committed_project_file_and_plain_plan(self) -> None:
+        for row_id in GIT_ROWS:
+            data = read_bytes(os.path.join(self.project(row_id), "CLAUDE.md"))
+            self.assertEqual(data, read_bytes(committed(row_id, "fixture-CLAUDE.md")), row_id)
+            digest = hashlib.sha256(data).hexdigest()
+            self.assertEqual(digest, sha_lines(row_id)["project/CLAUDE.md"], row_id)
+            self.assertTrue(digest.startswith(CLAUDE_MD_DIGEST_PREFIX), "the digest rows 6 to 12 share")
+            plan = read_bytes(os.path.join(self.project(row_id), *PLAN_RELATIVE.split("/")))
+            self.assertEqual(plan, read_bytes(os.path.join(DATA, "plain-plan.md")), row_id)
+            self.assertEqual(hashlib.sha256(plan).hexdigest(), PLAN_DIGEST)
+
+    def test_every_seed_is_byte_tied_to_the_committed_row_s2_prompt_and_skill_copy(self) -> None:
+        for row_id in GIT_ROWS:
+            skill = os.path.join(self.seeded[row_id].paths["skill_dir"], "SKILL.md")
+            self.assertEqual(read_bytes(skill), read_bytes(os.path.join(ROOT, "SKILL.md")), row_id)
+            self.assertEqual(
+                read_bytes(committed(row_id, "s2-preclear-prompt.md")),
+                read_bytes(committed(ROW8B, "s2-preclear-prompt.md")),
+                "the four committed prompts are one text",
+            )
+
+    def test_every_seed_commits_with_the_spike_identity_only(self) -> None:
+        for row_id in (ROW8B, ROW9):
+            folder = self.project(row_id)
+            for line in git_out(folder, "log", "--all", "--format=%an <%ae>|%cn <%ce>").splitlines():
+                self.assertEqual(line, "Harness Spike <harness-spike@example.com>|Harness Spike <harness-spike@example.com>")
+
+    def test_8c_a_repository_on_main_with_no_commit_and_everything_untracked(self) -> None:
+        folder = self.project(ROW8C)
+        self.assertEqual(read_text(os.path.join(folder, ".git", "HEAD")).strip(), "ref: refs/heads/main")
+        self.assertNotEqual(git_here(folder, "rev-parse", "--verify", "-q", "HEAD").returncode, 0, "no commit")
+        self.assertEqual(git_out(folder, "rev-list", "--all", "--count").strip(), "0")
+        self.assertEqual(git_out(folder, "ls-files"), "", "nothing is tracked")
+        self.assertEqual(git_out(folder, "symbolic-ref", "HEAD").strip(), "refs/heads/main")
+        lines = git_out(folder, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
+        self.assertTrue(lines and all(line.startswith("?? ") for line in lines), "everything is untracked")
+        self.assertEqual(sorted(lines), sorted(skill_status().splitlines() + ["?? CLAUDE.md", "?? " + PLAN_RELATIVE]))
+        for line in committed_status_lines(ROW8C):
+            self.assertIn(line, lines, "every committed status line is there")
+
+    def test_8a_the_project_has_no_git_entry_and_the_run_root_holds_none_anywhere(self) -> None:
+        seeded = self.seeded[ROW8A]
+        self.assertFalse(os.path.lexists(os.path.join(seeded.project, ".git")))
+        found = []
+        for dirpath, dirnames, filenames in os.walk(seeded.run_root):
+            found.extend(name for name in list(dirnames) + list(filenames) if name.lower() == ".git")
+        self.assertEqual(found, [], "no repository metadata anywhere under the run root")
+        self.assertEqual(
+            sorted(os.listdir(seeded.project)), [".claude", "CLAUDE.md", "thoughts"], "the files and the skill copy only"
+        )
+
+    def test_9_the_main_checkout_holds_the_repository_with_the_files_committed_on_main(self) -> None:
+        seeded = self.seeded[ROW9]
+        main = os.path.join(seeded.run_root, "main-checkout")
+        self.assertTrue(os.path.isdir(os.path.join(main, ".git")), "a real git folder")
+        self.assertEqual(git_out(main, "symbolic-ref", "HEAD").strip(), "refs/heads/main")
+        self.assertEqual(git_out(main, "rev-list", "--count", "main").strip(), "1")
+        self.assertEqual(git_out(main, "ls-files").split(), ["CLAUDE.md", PLAN_RELATIVE])
+        self.assertEqual(
+            read_bytes(os.path.join(main, "CLAUDE.md")), read_bytes(committed(ROW9, "fixture-CLAUDE.md"))
+        )
+        listing = sha_lines(ROW9)
+        for name in ("CLAUDE.md", PLAN_RELATIVE):
+            digest = hashlib.sha256(read_bytes(os.path.join(main, *name.split("/")))).hexdigest()
+            self.assertEqual(digest, listing["main-checkout/" + name], name)
+        self.assertFalse(os.path.lexists(os.path.join(main, ".claude")), "the skill copy sits in the project only")
+
+    def test_9_the_project_is_a_linked_worktree_on_the_feature_branch_whose_git_entry_is_a_file(self) -> None:
+        seeded = self.seeded[ROW9]
+        pointer = os.path.join(seeded.project, ".git")
+        self.assertTrue(os.path.isfile(pointer) and not os.path.islink(pointer))
+        self.assertEqual(read_text(pointer).count("\n"), 1)
+        self.assertTrue(read_text(pointer).startswith("gitdir: "))
+        self.assertEqual(git_out(seeded.project, "symbolic-ref", "HEAD").strip(), "refs/heads/feature/widget-export")
+        main = os.path.join(seeded.run_root, "main-checkout")
+        self.assertEqual(git_out(seeded.project, "rev-parse", "HEAD"), git_out(main, "rev-parse", "main"))
+        worktrees = [line for line in git_out(main, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")]
+        self.assertEqual(len(worktrees), 2, "the main checkout and one linked worktree")
+        self.assertEqual(git_out(seeded.project, "ls-files").split(), ["CLAUDE.md", PLAN_RELATIVE])
+        self.assertEqual(
+            git_out(seeded.project, "status", "--porcelain=v1", "--untracked-files=all"), skill_status(),
+            "the skill copy is the only untracked thing",
+        )
+        for line in committed_status_lines(ROW9):
+            self.assertIn(line, skill_status().splitlines())
+
+    def test_9_the_worktree_was_made_by_worktree_add_and_the_branch_is_not_main(self) -> None:
+        seeded = self.seeded[ROW9]
+        main = os.path.join(seeded.run_root, "main-checkout")
+        branches = git_out(main, "branch", "--format=%(refname:short)").split()
+        self.assertEqual(sorted(branches), ["feature/widget-export", "main"])
+        self.assertTrue(os.path.isdir(os.path.join(main, ".git", "worktrees", "project")))
+
+
+class WorktreeStateTests(unittest.TestCase):
+    """The git state of a linked worktree: pointer, own git folder and common git folder, no index entry (FA-1, T-04-40)."""
+
+    def setUp(self) -> None:
+        self.seeded = SeededGit(ROW9, "git-worktree-state")
+        self.main = os.path.join(self.seeded.run_root, "main-checkout")
+        self.project = self.seeded.project
+        self.worktree_git = os.path.join(self.main, ".git", "worktrees", "project")
+        base = os.path.dirname(self.seeded.run_root)
+        self.bin = os.path.join(base, "tripwire-bin")
+        os.makedirs(self.bin, exist_ok=True)
+        self.tripwire = make_git_tripwire(self.bin)
+
+    def digest(self) -> str:
+        import pc_manifest
+
+        return pc_manifest.gitdir_digest(self.project)
+
+    def test_the_digest_is_a_fixed_64_hex_value_that_is_neither_the_marker_nor_a_folder_digest(self) -> None:
+        import pc_manifest
+
+        value = self.digest()
+        self.assertRegex(value, r"\A[0-9a-f]{64}\Z")
+        self.assertEqual(value, self.digest(), "stable")
+        self.assertNotEqual(value, pc_manifest.NO_GIT_DIGEST)
+        self.assertNotEqual(value, pc_manifest.gitdir_digest(self.main), "the main checkout digests as a folder")
+
+    def test_the_pointer_resolves_to_the_worktree_folder_and_back_to_the_main_checkouts_git_folder(self) -> None:
+        import pc_manifest
+
+        pointer, worktree_git, common = pc_manifest.worktree_git_folders(self.project)
+        self.assertEqual(pointer, read_bytes(os.path.join(self.project, ".git")))
+        self.assertEqual(worktree_git, os.path.realpath(self.worktree_git))
+        self.assertEqual(common, os.path.realpath(os.path.join(self.main, ".git")))
+
+    def test_a_refresh_of_the_worktree_index_never_changes_the_digest(self) -> None:
+        index = os.path.join(self.worktree_git, "index")
+        before_digest = self.digest()
+        before_index = hashlib.sha256(read_bytes(index)).hexdigest()
+        os.utime(os.path.join(self.project, "CLAUDE.md"), (1700000000, 1700000000))
+        git_out(self.project, "update-index", "--refresh")
+        git_out(self.project, "status")
+        self.assertNotEqual(hashlib.sha256(read_bytes(index)).hexdigest(), before_index, "the index really was rewritten")
+        self.assertEqual(self.digest(), before_digest, "index entries are left out")
+        main_index = os.path.join(self.main, ".git", "index")
+        os.utime(os.path.join(self.main, "CLAUDE.md"), (1700000001, 1700000001))
+        git_out(self.main, "update-index", "--refresh")
+        self.assertEqual(self.digest(), before_digest, "so is the main checkout's own index")
+        self.assertTrue(os.path.isfile(main_index))
+
+    def test_an_index_lock_file_anywhere_a_git_folder_may_hold_one_is_left_out(self) -> None:
+        before = self.digest()
+        for folder in (self.worktree_git, os.path.join(self.main, ".git")):
+            with open(os.path.join(folder, "index.lock"), "wb") as handle:
+                handle.write(b"x")
+        self.assertEqual(self.digest(), before)
+
+    def test_a_reference_that_merely_shares_the_name_index_is_not_left_out(self) -> None:
+        before = self.digest()
+        folder = os.path.join(self.main, ".git", "refs", "heads")
+        with open(os.path.join(folder, "index"), "w", encoding="utf-8") as handle:
+            handle.write(git_out(self.main, "rev-parse", "main"))
+        self.assertNotEqual(self.digest(), before, "a branch named index is a change")
+
+    def test_a_changed_common_configuration_a_moved_reference_and_a_new_commit_each_change_the_digest(self) -> None:
+        seen = [self.digest()]
+        with open(os.path.join(self.main, ".git", "config"), "a", encoding="utf-8") as handle:
+            handle.write("[alias]\n\tx = status\n")
+        seen.append(self.digest())
+        git_out(self.project, "branch", "another")
+        seen.append(self.digest())
+        git_out(self.project, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "an empty commit")
+        seen.append(self.digest())
+        self.assertEqual(len(set(seen)), len(seen), "four different digests")
+
+    def test_a_changed_worktree_configuration_and_a_changed_pointer_text_change_the_digest(self) -> None:
+        before = self.digest()
+        with open(os.path.join(self.worktree_git, "config.worktree"), "w", encoding="utf-8") as handle:
+            handle.write("[core]\n\tbare = false\n")
+        after_config = self.digest()
+        self.assertNotEqual(after_config, before)
+        pointer_path = os.path.join(self.project, ".git")
+        text = read_text(pointer_path)
+        relative = os.path.relpath(text[len("gitdir: "):].strip(), self.project)
+        with open(pointer_path, "w", encoding="utf-8") as handle:
+            handle.write("gitdir: " + relative + "\n")
+        self.assertNotEqual(self.digest(), after_config, "the same target spelled differently is a different pointer")
+
+    def test_a_pointer_that_leads_outside_the_main_checkout_a_malformed_one_and_a_link_are_refused(self) -> None:
+        import pc_manifest
+
+        pointer_path = os.path.join(self.project, ".git")
+        original = read_bytes(pointer_path)
+
+        def rewrite(data: bytes) -> None:
+            with open(pointer_path, "wb") as handle:
+                handle.write(data)
+
+        for label, data in (
+            ("outside", ("gitdir: " + os.path.join(self.seeded.run_root, "ckpt") + "\n").encode("utf-8")),
+            ("main git itself", ("gitdir: " + os.path.join(self.main, ".git") + "\n").encode("utf-8")),
+            ("two lines", original + original),
+            ("no prefix", b"somewhere\n"),
+            ("empty target", b"gitdir: \n"),
+            ("not text", b"gitdir: \xff\xfe\n"),
+            ("too large", b"gitdir: " + b"a" * 5000 + b"\n"),
+        ):
+            rewrite(data)
+            with self.assertRaises(pc_manifest.ManifestError, msg=label):
+                pc_manifest.gitdir_digest(self.project)
+        rewrite(original)
+        self.assertRegex(self.digest(), r"\A[0-9a-f]{64}\Z", "restored")
+        elsewhere = os.path.join(self.seeded.run_root, "pointer-copy")
+        with open(elsewhere, "wb") as handle:
+            handle.write(original)
+        os.rename(pointer_path, pointer_path + ".held")
+        os.symlink(elsewhere, pointer_path)
+        with self.assertRaises(pc_manifest.ManifestError, msg="symlinked pointer"):
+            pc_manifest.gitdir_digest(self.project)
+
+    def test_a_commondir_that_leads_elsewhere_and_a_missing_main_checkout_are_refused(self) -> None:
+        import pc_manifest
+
+        with open(os.path.join(self.worktree_git, "commondir"), "w", encoding="utf-8") as handle:
+            handle.write("../../../ckpt\n")
+        with self.assertRaises(pc_manifest.ManifestError):
+            pc_manifest.gitdir_digest(self.project)
+        lone = os.path.join(os.path.dirname(self.seeded.run_root), "lone-worktree")
+        os.makedirs(lone)
+        with open(os.path.join(lone, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("gitdir: " + self.worktree_git + "\n")
+        with self.assertRaises(pc_manifest.ManifestError):
+            pc_manifest.gitdir_digest(lone)
+
+    def test_the_state_of_an_untouched_worktree_is_read_normally_with_the_branch_and_the_head(self) -> None:
+        import pc_checks
+
+        pin = self.digest()
+        state = pc_checks.git_state(self.project, real_git_path(), pin)
+        self.assertEqual(state["gitdir_digest"], pin)
+        self.assertEqual(state["branch"], "refs/heads/feature/widget-export")
+        self.assertEqual(state["head"], git_out(self.main, "rev-parse", "main").strip())
+        self.assertEqual(state["staged"], 0)
+        self.assertNotIn(state["head"], (pc_checks.GIT_NOT_READ, ""))
+
+    def test_a_planted_common_configuration_starts_no_git_process_and_is_counted_as_a_mutation(self) -> None:
+        import pc_checks
+        import pc_manifest
+
+        pin = self.digest()
+        setup = pc_checks.git_state(self.project, real_git_path(), pin)
+        marker = os.path.join(self.seeded.run_root, "planted-marker")
+        with open(os.path.join(self.main, ".git", "config"), "a", encoding="utf-8") as handle:
+            handle.write("[filter \"planted\"]\n\tclean = touch " + marker + " #\n")
+        with open(os.path.join(self.project, ".gitattributes"), "w", encoding="utf-8") as handle:
+            handle.write("* filter=planted\n")
+        os.utime(os.path.join(self.project, "CLAUDE.md"), (1700000002, 1700000002))
+        before = read_git_tripwire(self.bin)
+        with self.assertRaises(pc_manifest.GitDirChanged):
+            pc_manifest.capture_git_status(self.project, self.tripwire, pin)
+        state = pc_checks.git_state(self.project, self.tripwire, pin)
+        self.assertEqual(read_git_tripwire(self.bin), before, "no git process was started")
+        self.assertFalse(os.path.exists(marker), "the planted command never ran")
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], pc_checks.GIT_NOT_READ, key)
+        self.assertNotEqual(state["gitdir_digest"], pin)
+        mutations = pc_checks.git_mutations([setup, state], [])
+        self.assertIn("gitdir_digest", mutations["changed_fields"])
+        self.assertGreater(mutations["total"], 0)
+
+    def test_a_pointer_the_harness_cannot_read_against_the_pin_is_a_change_and_starts_no_git_process(self) -> None:
+        import pc_checks
+        import pc_manifest
+
+        pin = self.digest()
+        with open(os.path.join(self.project, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("gitdir: " + os.path.join(self.seeded.run_root, "ckpt") + "\n")
+        before = read_git_tripwire(self.bin)
+        with self.assertRaises(pc_manifest.GitDirChanged):
+            pc_manifest.capture_git_status(self.project, self.tripwire, pin)
+        with self.assertRaises(pc_checks.CheckError):
+            pc_checks.git_state(self.project, self.tripwire, pin)
+        self.assertEqual(read_git_tripwire(self.bin), before, "no git process was started")
+
+    def test_a_nested_repository_in_a_worktree_project_is_refused_before_any_process(self) -> None:
+        import pc_manifest
+
+        os.makedirs(os.path.join(self.project, "inner", ".git"))
+        before = read_git_tripwire(self.bin)
+        with self.assertRaises(pc_manifest.NestedRepository):
+            pc_manifest.capture_git_status(self.project, self.tripwire, None)
+        self.assertEqual(read_git_tripwire(self.bin), before)
+
+    def test_the_harness_status_of_the_worktree_is_real_and_never_a_mutation(self) -> None:
+        import pc_checks
+        import pc_manifest
+
+        pin = self.digest()
+        _raw, text = pc_manifest.capture_git_status(self.project, real_git_path(), pin)
+        self.assertEqual(text.decode("utf-8"), skill_status())
+        before = pc_checks.git_state(self.project, real_git_path(), pin)
+        pc_manifest.capture_git_status(self.project, real_git_path(), pin)
+        after = pc_checks.git_state(self.project, real_git_path(), pin)
+        self.assertEqual(pc_checks.git_mutations([before, after], [])["total"], 0)
+
+
+class MainCheckoutTests(unittest.TestCase):
+    """The run-root manifest keeps the main checkout's content under watch and leaves its git metadata out."""
+
+    def test_the_exclusion_leaves_out_main_checkout_git_and_everything_under_it_and_nothing_else(self) -> None:
+        excluded = row1()._excluded
+        for path in (b"main-checkout/.git", b"main-checkout/.git/HEAD", b"main-checkout/.git/worktrees/project/index",
+                     b"project/.git", b"raw/x", b"snaps/x"):
+            self.assertTrue(excluded(path), path)
+        for path in (b"main-checkout", b"main-checkout/CLAUDE.md", b"main-checkout/thoughts/plans/p.md",
+                     b"main-checkout/.gitignore", b"main-checkout/.github/x", b"main-checkout/sub/.git",
+                     b"main-checkout/.gitx", b"project/.gitignore", b"project/CLAUDE.md"):
+            self.assertFalse(excluded(path), path)
+
+    def test_a_snapshot_of_a_seeded_row_9_lists_the_main_checkout_files_and_no_git_entry(self) -> None:
+        seeded = SeededGit(ROW9, "git-main-checkout-snapshot")
+        row = row1()
+        row.take_snapshot(row.paths_for(seeded.run_root), "snap-0-setup", real_git_path(), setup=True)
+        listing = read_text(os.path.join(seeded.run_root, "snaps", "snap-0-setup", "sha.txt"))
+        names = [line.split("  ", 1)[1] for line in listing.splitlines()]
+        self.assertIn("main-checkout/CLAUDE.md", names)
+        self.assertIn("main-checkout/" + PLAN_RELATIVE, names)
+        self.assertEqual([n for n in names if n.startswith("main-checkout/.git")], [])
+        self.assertEqual([n for n in names if n.startswith("project/.git")], [])
+        manifest = read_text(os.path.join(seeded.run_root, "snaps", "snap-0-setup", "manifest.jsonl"))
+        self.assertNotIn("main-checkout/.git", manifest)
+        status = read_text(os.path.join(seeded.run_root, "snaps", "snap-0-setup", "status.txt"))
+        self.assertEqual(status, skill_status())
+
+
+class WorktreeChainTests(unittest.TestCase):
+    """Row 9 through the engine: the main checkout is watched, the worktree's own git use is not a breach."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.chain = run_git_row(ROW9, SHAPE_WORDS[ROW9])
+        assert cls.chain.outcome.code == 0, "\n".join(cls.chain.outcome.lines)
+
+    def read(self, name: str) -> str:
+        return read_text(os.path.join(self.chain.row_dir, name))
+
+    def main_lines(self, snapshot: str) -> list:
+        return [line for line in self.read(snapshot + "/sha.txt").splitlines() if "  main-checkout/" in line]
+
+    def test_the_main_checkouts_listed_hashes_are_identical_at_setup_and_after_each_stage(self) -> None:
+        snapshots = ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume")
+        first = self.main_lines(snapshots[0])
+        self.assertEqual(len(first), 2, "the project file and the plan")
+        for name in snapshots[1:]:
+            self.assertEqual(self.main_lines(name), first, name)
+        listing = sha_lines(ROW9)
+        for line in first:
+            digest, _, name = line.partition("  ")
+            self.assertEqual(digest, listing[name], name + " equals the committed digest")
+
+    def test_no_filed_snapshot_lists_a_git_entry_of_either_checkout(self) -> None:
+        for name in ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume"):
+            listing = self.read(name + "/sha.txt")
+            self.assertNotIn("main-checkout/.git", listing)
+            self.assertNotIn("project/.git", listing)
+
+    def test_s3_makes_no_write_and_the_s2_and_s3_snapshots_hash_alike(self) -> None:
+        self.assertIn("Write/Edit calls 0: []", self.read("s3-resume-trace.md"))
+        self.assertEqual(self.read("snap-2-after-preclear/sha.txt"), self.read("snap-3-after-resume/sha.txt"))
+
+    def test_the_git_facts_name_the_feature_branch_and_a_head_that_never_moves(self) -> None:
+        text = self.read("mechanical-checks.md")
+        self.assertIn("states: 4", text)
+        self.assertEqual(
+            len(re.findall(r"^state \S+: head [0-9a-f]{40}, branch refs/heads/feature/widget-export, staged 0$", text, re.M)), 4
+        )
+        self.assertIn("mutations-total: 0", text)
+        self.assertIn("mutation-changed-fields: none", text)
+        self.assertIn("snapshot-paths-outside-approved-roots: 0", text)
+
+    def test_the_setup_status_is_the_skill_copy_untracked_in_the_worktree(self) -> None:
+        self.assertEqual(self.read("snap-0-setup/status.txt"), skill_status())
+
+    def test_the_readme_says_what_the_row_claims_and_what_it_does_not_and_ends_pending(self) -> None:
+        text = self.read("README.md")
+        self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"))
+        self.assertIn("content preservation of the main checkout", text)
+        self.assertIn("not to the absence of every git metadata access", text)
+        self.assertIsNone(evidence().verdict_pattern().search(text[: -len(VERDICT_LINE) - 1]))
+        self.assertIsNone(SHAPED.search(text))
+
+    def stages_with_ops(self, index: int, ops: list) -> list:
+        stages = git_stages(spec_of(ROW9), SHAPE_WORDS[ROW9])
+        return pc_testutil.stages_with(stages, index, ops=list(stages[index]["ops"]) + ops)
+
+    def stopped(self, run: Registered) -> None:
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW9])
+        self.assertNotIn(run.rig.base, "\n".join(run.outcome.lines), "no path in the text")
+
+    def test_a_scripted_new_file_in_the_main_checkout_is_a_write_outside_the_roots_and_ends_with_11(self) -> None:
+        run = Registered(ROW9, stages=self.stages_with_ops(1, [
+            {"op": "write", "path": "$RUN/main-checkout/stray.txt", "text": "a stray file\n"},
+        ]))
+        self.stopped(run)
+        self.assertTrue(any("writes outside approved roots" in line for line in run.outcome.lines))
+        self.assertEqual(len(run.rig.calls()), 2, "the chain ended at the stage that wrote")
+
+    def test_a_scripted_edit_of_a_main_checkout_file_is_a_write_outside_the_roots_and_ends_with_11(self) -> None:
+        run = Registered(ROW9, stages=self.stages_with_ops(0, [
+            {"op": "write", "path": "$RUN/main-checkout/CLAUDE.md", "text": "changed\n"},
+        ]))
+        self.stopped(run)
+        self.assertTrue(any("writes outside approved roots" in line for line in run.outcome.lines))
+
+    def test_a_git_status_in_the_worktree_that_refreshes_an_index_is_not_a_breach(self) -> None:
+        run = Registered(ROW9, stages=self.stages_with_ops(1, [
+            {"op": "touch", "path": "$PROJECT/CLAUDE.md"},
+            {"op": "git", "args": ["update-index", "--refresh"]},
+            {"op": "tool", "name": "Bash", "input": {"command": "git status"}, "content": "On branch feature/widget-export"},
+            {"op": "tool", "name": "Bash", "input": {"command": "git log --oneline -3"}, "content": "abc1234 x"},
+        ]))
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        text = read_text(os.path.join(run.row_dir, "mechanical-checks.md"))
+        self.assertIn("mutations-total: 0", text)
+        self.assertIn("snapshot-paths-outside-approved-roots: 0", text)
+
+    def test_a_scripted_write_into_the_main_checkouts_git_folder_is_counted_through_the_digest_and_runs_no_planted_command(self) -> None:
+        config = (
+            "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
+            "[filter \"planted\"]\n\tclean = touch $OUTSIDE/planted-worktree #\n"
+        )
+        run = Registered(ROW9, stages=self.stages_with_ops(0, [
+            {"op": "write", "path": "$RUN/main-checkout/.git/config", "text": config},
+            {"op": "write", "path": "$PROJECT/.gitattributes", "text": "* filter=planted\n"},
+            {"op": "touch", "path": "$PROJECT/CLAUDE.md"},
+        ]))
+        self.stopped(run)
+        self.assertRegex("\n".join(run.outcome.lines), r"isolation or git breach: git mutations: [1-9][0-9]*")
+        self.assertFalse(os.path.exists(os.path.join(run.rig.outside, "planted-worktree")), "the planted command never ran")
+        state = read_json(os.path.join(run.run_root, "raw", "s1.git.json"))
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], "not-read", key)
+        status = read_text(os.path.join(run.run_root, "snaps", "snap-1-after-work", "status.txt"))
+        self.assertEqual(status.strip(), row1().STATUS_NOT_RUN)
+        self.assertEqual(len(run.rig.calls()), 1, "the second stage was never launched")
+
+    def test_a_scripted_rewrite_of_the_worktree_pointer_ends_the_row_without_starting_git(self) -> None:
+        run = Registered(ROW9, stages=self.stages_with_ops(0, [
+            {"op": "write", "path": "$PROJECT/.git", "text": "gitdir: $RUN/ckpt\n"},
+        ]))
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW9])
+        self.assertTrue(any("could not be checked against the setup record" in line for line in run.outcome.lines))
+        self.assertEqual(len(run.rig.calls()), 1)
 
 
 if __name__ == "__main__":

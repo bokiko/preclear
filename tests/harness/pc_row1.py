@@ -191,7 +191,7 @@ def paths_for(run_root: str) -> Dict[str, Optional[str]]:
 
 
 def _excluded(path: bytes) -> bool:
-    """True for entries a boundary snapshot leaves out: raw, snaps and the project's .git.
+    """True for entries a boundary snapshot leaves out: raw, snaps, the project's .git and main-checkout/.git.
 
     raw and snaps are the run's own record, guarded at every boundary by pc_checks.capture_guard. A
     stage-prefixed top-level folder is no longer left out (the filing makes those only after the last
@@ -200,6 +200,8 @@ def _excluded(path: bytes) -> bool:
     top = path.split(b"/", 1)[0]
     if top in (b"raw", b"snaps"):
         return True
+    if path == b"main-checkout/.git" or path.startswith(b"main-checkout/.git/"):
+        return True  # row 9: the main checkout's git metadata is left out; every other entry of it stays watched
     return path == b"project/.git" or path.startswith(b"project/.git/")
 
 

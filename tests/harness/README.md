@@ -383,6 +383,36 @@ is no such block the run records the marker `NO-PRINTED-CHECKPOINT` with the rea
 shapes for this row, a block with three stages and none with two. A reply whose block holds a NUL cannot be filed at
 all, because the leak gate refuses any file with a NUL byte.
 
+The git-shaped rows (8a, 8b, 8c and 9) are plain rows with the baseline allowlist alone (no extra rule), pinned
+memory and the three-stage resume-line chain of row 1; only the git shape the seed builds differs. Row 8a has no
+repository at all: the project holds no `.git` entry and the run root sits under no repository, which differs from the
+committed run (that one sat inside an enclosing repository two levels up), so the row is stricter in one way and looser
+in another, and its Setup paragraph says so; the comparer lists the difference and does not judge it. Row 8b has two
+commits on `main` (the second adds `NOTES.md`) and a detached HEAD at the first, so the work tree holds no `NOTES.md`.
+Row 8c is a repository on `main` with no commit, everything untracked. Row 9 keeps the repository in `main-checkout/`
+with the plain files committed on `main`, and the project is a linked worktree of it on `feature/widget-export`, made
+by `git worktree add -b`, so the project's `.git` is a file. Every repository, worktree and detached HEAD lives inside a
+run root and carries the spike identity; nothing is ever aimed at this repository's own `.git`.
+
+Two git states exist only for these rows. A project with no `.git` entry has the fixed state head `n/a`, branch `n/a`,
+the digest of empty text as the references digest, a fixed marker digest in place of the git folder digest and nothing
+staged; its status file holds one fixed line and no git process is started for the state or the snapshot. A `.git`
+that appears later changes the digest, so git is not started and the existing mutation rule counts it. A linked
+worktree digests the pointer file, the worktree's own git folder and the common git folder with every index entry left
+out (`index` and `index.lock` at the top of either folder, and the worktree index files under the common folder's
+`worktrees/`), so a plain `git status` that refreshes an index is never a mutation, while a moved pointer, a changed
+configuration or a moved reference changes the digest, git is not started and the change is counted. A pointer that
+leads anywhere but into the main checkout beside the project, a link, or a malformed `.git` file is refused, never
+guessed at.
+
+The run-root manifest leaves out `main-checkout/.git` and everything under it and keeps every other entry of the main
+checkout, so an untouched main checkout hashes the same at every boundary and a model write into it is a write outside
+the approved roots, a breach with exit code 11 and a STOPPED folder. The scope is the committed one: row 9 speaks to
+content preservation of the main checkout, not to the absence of every git metadata access. The harness's own git
+calls stay hardened, read-only and pinned; the model's `git status` inside the worktree is not a breach. How the real
+model reports a detached, unborn, linked or absent repository, and whether the real binary's own git calls disturb the
+pinned digests, is unobserved until a paid run; the scripted claude proves the pipeline and the real run records the facts.
+
 Which boundaries a row takes is recorded, not assumed: `raw/boundaries.json` is created at setup, before the setup
 guard, and lists the planned boundaries in order (setup, each stage, each hook boundary) with their snapshot names.
 The checks read the snapshots, stage records, git states and guards through that list. The boundaries on disk must be
