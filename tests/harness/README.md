@@ -826,6 +826,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_row_generic.py` - tests for a row run from its registry entry: row 4a, the seed byte-tie, per-row filing and the row 1 parity
 - `test_rows_plain.py` - tests for the plain rows 5a and 5b: the seed byte-tie, the 35-rule allowlist, the memory settings and assertion and a scripted chain of each
 - `test_row7.py` - tests for row 7: the live chmod probe and the SKIPPED label, the 555 restriction and its restore, the printed-checkpoint chain and its fence scanner, including the committed replies
+- `test_rows_git.py` - tests for the git-shaped rows 8a, 8b, 8c and 9: the git shape seeds and their byte-tie, the no-git and worktree git states, the main-checkout exclusion and a scripted chain of each
 - `test_review.py` - tests for the Do-not-redo review: the entry parser, the token and candidate rules, the row 7 facts, the candidate file, the review table, hostile text and the caps
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer

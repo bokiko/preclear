@@ -32,12 +32,19 @@ ROW5A = "row5a-no-memory"
 ROW5B = "row5b-disabled-memory"
 ROW6 = "row6-readonly-plan"
 ROW7 = "row7-all-destinations-denied"
+ROW8A = "row8a-non-git"
+ROW8B = "row8b-detached-head"
+ROW8C = "row8c-unborn-branch"
+ROW9 = "row9-linked-worktree"
 
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
 PROFILE_HELPER = "helper"
 # PROFILE_PLAIN is the baseline alone (no wrapper rule of any kind); a row adds its own extra rules in RowSpec.extra_tools.
 PROFILE_PLAIN = "plain"
+# PROFILE_GIT is the baseline alone as well, with no extra rule: the git-shaped rows 8a to 9 need neither chmod nor touch
+# (plan 04-09). It is a separate word so a row's registry entry says which family it belongs to.
+PROFILE_GIT = "git"
 
 # Memory policies (RowSpec.memory): what the run settings say about Claude Code's auto-memory. In both the directory is
 # pinned inside the run root. MEMORY_PINNED is the Phase 3 setting (on); MEMORY_DISABLED turns it off (rows 5a and 5b).
@@ -308,6 +315,43 @@ def _chmod_precondition() -> Optional[str]:
     return pc_rowhooks.chmod_precondition()
 
 
+# Rows 8a, 8b, 8c and 9 (git-shaped rows, plan 04-09): the committed three stages of row 1 with the resume-line chain, the
+# baseline allowlist alone (no wrapper, no extra rule) and memory pinned. Only the git shape the seed builds differs.
+_PUBLICATION_8A = _PUBLICATION_ROOT + "/row8a-non-git"
+_PUBLICATION_8B = _PUBLICATION_ROOT + "/row8b-detached-head"
+_PUBLICATION_8C = _PUBLICATION_ROOT + "/row8c-unborn-branch"
+_PUBLICATION_9 = _PUBLICATION_ROOT + "/row9-linked-worktree"
+_GIT_ROW_STAGES: Tuple[StageSpec, ...] = _ROW1_STAGES
+_ROW8A_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger, and no "
+    "git repository at all: the project folder holds no `.git` entry, and the run root lies under no repository either, "
+    "which differs from the committed run (that one sat inside an enclosing repository two levels up). A work turn comes "
+    "first, then the /preclear turn in the same session, then a fresh session that pastes the resume line the "
+    "/preclear turn printed. The harness reads the git state of this project as not applicable and starts no git "
+    "process for it."
+)
+_ROW8B_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. The "
+    "repository holds two commits on main, the second adding `NOTES.md`; before the work turn the work tree is switched "
+    "to the first commit with a detached HEAD, so `NOTES.md` is absent. A work turn comes first, then the /preclear "
+    "turn in the same session, then a fresh session that pastes the resume line the /preclear turn printed."
+)
+_ROW8C_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. The "
+    "project is a repository on main with no commit yet (an unborn branch), so every file is untracked. A work turn "
+    "comes first, then the /preclear turn in the same session, then a fresh session that pastes the resume line the "
+    "/preclear turn printed."
+)
+_ROW9_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. The "
+    "repository sits in a sibling folder, `main-checkout`, with the plain files committed on main; the project is a "
+    "linked worktree of it on the branch `feature/widget-export`, so the project's `.git` is a file that points into the "
+    "main checkout. The session runs in the worktree. The harness leaves the main checkout's git metadata out of its "
+    "snapshots and keeps every other file of the main checkout under watch, so the row speaks to content preservation of "
+    "the main checkout and not to the absence of every git metadata access. A work turn comes first, then the /preclear "
+    "turn in the same session, then a fresh session that pastes the resume line the /preclear turn printed."
+)
+
 _ROW1_SETUP_TEXT = (
     "Setup: the configuration names ledger A (`CONTINUITY_CLAUDE-widget-export.md`); the harness bound the "
     "session to ledger B (`CONTINUITY_CLAUDE-other-task.md`, a different workstream in the same fixture root). "
@@ -437,6 +481,22 @@ def _registered_rows() -> Dict[str, RowSpec]:
             chain=CHAIN_PRINTED_CHECKPOINT,
             probe=PROBE_CHMOD,
             analyses=ROW7_ANALYSES,
+        ),
+        ROW8B: RowSpec(
+            ROW8B,
+            KIND_ROW,
+            "Row 8b: detached HEAD (1P + 1R)",
+            _GIT_ROW_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW8B),
+            _plain_sources(_PUBLICATION_8B),
+            seed="pc_rowseeds:seed_row8b",
+            prompts=_plain_prompts(_PUBLICATION_8B),
+            setup_text=_ROW8B_SETUP_TEXT,
+            tools_profile=PROFILE_GIT,
+            memory=MEMORY_PINNED,
+            chain=CHAIN_RESUME_LINE,
         ),
     }
 

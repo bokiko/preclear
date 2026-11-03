@@ -15,6 +15,10 @@ seeds that call it:
                       place, the plain plan, a repository on main with one commit, the skill copy, an empty ledgers
                       folder and no wrapper, no stub, no ledger and no binding; the settings follow the memory policy
   * seed_row5a, seed_row5b   the plain rows: the committed fixtures of rows 5a and 5b
+  * seed_git_row     the plain setup with a chosen git shape (plan 04-09): commit (one commit on main), detached (two
+                     commits, then a detached HEAD at the first), unborn (a repository on main with no commit), none (no
+                     git at all) or worktree (the repository in main-checkout, the project a linked worktree on a
+                     feature branch); seed_row8a, seed_row8b, seed_row8c, seed_row9 call it with the committed fixtures
 
 Every file and folder is created exclusively through pc_runroot, so a second call on the same run root raises
 FileExistsError; nothing here deletes, renames, moves or truncates, and this module is scanned for those primitives
@@ -46,6 +50,10 @@ ROW5A_FOLDER = PUBLICATION_ROOT + "/row5a-no-memory"
 ROW5B_FOLDER = PUBLICATION_ROOT + "/row5b-disabled-memory"
 ROW6_FOLDER = PUBLICATION_ROOT + "/row6-readonly-plan"
 ROW7_FOLDER = PUBLICATION_ROOT + "/row7-all-destinations-denied"
+ROW8A_FOLDER = PUBLICATION_ROOT + "/row8a-non-git"
+ROW8B_FOLDER = PUBLICATION_ROOT + "/row8b-detached-head"
+ROW8C_FOLDER = PUBLICATION_ROOT + "/row8c-unborn-branch"
+ROW9_FOLDER = PUBLICATION_ROOT + "/row9-linked-worktree"
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
 PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
@@ -55,6 +63,18 @@ PLAN_NAME = "2026-10-15-widget-export.md"
 TOKEN_PROJECT = "<repo>/<run>/project"
 LEDGER_NAMES: Dict[str, str] = {"A": LEDGER_A_NAME, "B": LEDGER_B_NAME}
 BOUND_NONE = "none"
+
+# The git shapes of a plain project (plan 04-09). The harness identity of every commit is the pc_spike spike identity.
+SHAPE_COMMIT = "commit"
+SHAPE_DETACHED = "detached"
+SHAPE_UNBORN = "unborn"
+SHAPE_NONE = "none"
+SHAPE_WORKTREE = "worktree"
+GIT_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED, SHAPE_UNBORN, SHAPE_NONE, SHAPE_WORKTREE)
+NOTES_NAME = "NOTES.md"
+NOTES_TEXT = "Working notes for the widget exporter.\n\nThe consumer reads the export once a day.\n"
+FEATURE_BRANCH = "feature/widget-export"
+MAIN_CHECKOUT = "main-checkout"
 
 # What a configuration value template may name; each token is replaced by the path the seed made.
 TOKEN_WRAPPER = "$WRAPPER"
@@ -421,6 +441,57 @@ def _memory_policy(row_id: str) -> str:
     return entry.memory
 
 
+def _write_plain_files(base: str, source: Mapping[str, str]) -> None:
+    """Create BASE and write the project instruction file (byte for byte) and the plain plan into it."""
+    pc_runroot.exclusive_dir(base, 0o700)
+    thoughts = os.path.join(base, "thoughts")
+    pc_runroot.exclusive_dir(thoughts, 0o700)
+    plans = os.path.join(thoughts, "plans")
+    pc_runroot.exclusive_dir(plans, 0o700)
+    pc_runroot.write_exclusive(os.path.join(plans, PLAN_NAME), _read(source["plan"]), 0o644)
+    pc_runroot.write_exclusive(os.path.join(base, "CLAUDE.md"), _read(source["claude_md"]), 0o644)
+
+
+def _init_on_main(folder: str) -> None:
+    pc_spike._run_git(folder, ["init", "-q"])
+    pc_spike._run_git(folder, ["symbolic-ref", "HEAD", "refs/heads/main"])
+
+
+def _commit_all(folder: str, message: str) -> None:
+    pc_spike._run_git(folder, ["add", "-A"])
+    pc_spike._run_git(folder, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", message])
+
+
+def _build_plain_project(shape: str, root: str, project: str, source: Mapping[str, str]) -> None:
+    """Make the project of a plain row in the git shape named by SHAPE (the skill copy is added by the caller).
+
+    commit: the files and one commit on main. detached: two commits (the second adds NOTES.md), then the work tree is
+    switched to the first with a detached HEAD, so NOTES.md is absent. unborn: a repository on main with no commit.
+    none: the files and no git at all. worktree: the repository in main-checkout with the files committed on main, and
+    the project a linked worktree on the feature branch made by git worktree add -b into the (empty) project folder.
+    Every path lies inside the run root; the harness git identity is the spike identity.
+    """
+    if shape == SHAPE_WORKTREE:
+        main_checkout = os.path.join(root, MAIN_CHECKOUT)
+        _write_plain_files(main_checkout, source)
+        _init_on_main(main_checkout)
+        _commit_all(main_checkout, "Initial fixture commit")
+        pc_runroot.exclusive_dir(project, 0o700)
+        pc_spike._run_git(main_checkout, ["worktree", "add", "-q", "-b", FEATURE_BRANCH, project])
+        return
+    _write_plain_files(project, source)
+    if shape == SHAPE_NONE:
+        return
+    _init_on_main(project)
+    if shape == SHAPE_UNBORN:
+        return
+    _commit_all(project, "Initial fixture commit")
+    if shape == SHAPE_DETACHED:
+        pc_runroot.write_exclusive(os.path.join(project, NOTES_NAME), NOTES_TEXT.encode("utf-8"), 0o644)
+        _commit_all(project, "Add working notes")
+        pc_spike._run_git(project, ["checkout", "-q", "--detach", "HEAD~1"])
+
+
 def seed_plain_row(
     repo_root: str,
     run_root: str,
@@ -432,8 +503,12 @@ def seed_plain_row(
     row_id: str,
     fixture: str,
     memory: str,
+    shape: str = SHAPE_COMMIT,
 ) -> Dict[str, Optional[str]]:
     """Build the setup of a row with no helper inside the already-created run root and return its paths.
+
+    shape is the git shape of the project (SHAPE_COMMIT, the default and the only one of rows 5a to 7, or one of
+    the others of GIT_SHAPES; see _build_plain_project).
 
     fixture is the repo-relative path of the committed fixture-CLAUDE.md of the row; it is copied byte for byte (a
     plain row has no configuration block to fill). The plan is the plain plan data file. memory is the row's memory
@@ -457,6 +532,8 @@ def seed_plain_row(
         raise ValueError("the row id is not a registry id")
     if memory not in (pc_rows.MEMORY_PINNED, pc_rows.MEMORY_DISABLED):
         raise ValueError("the memory policy is not known")
+    if shape not in GIT_SHAPES:
+        raise ValueError("the git shape is not known")
     repo = os.path.realpath(repo_root)
     root = os.path.realpath(run_root)
     runs = os.path.realpath(runs_dir)
@@ -495,17 +572,7 @@ def seed_plain_row(
     settings = os.path.join(root, "settings.json")
     hooklog = os.path.join(raw, "hooklog.jsonl")
 
-    pc_runroot.exclusive_dir(project, 0o700)
-    thoughts = os.path.join(project, "thoughts")
-    pc_runroot.exclusive_dir(thoughts, 0o700)
-    plans = os.path.join(thoughts, "plans")
-    pc_runroot.exclusive_dir(plans, 0o700)
-    pc_runroot.write_exclusive(os.path.join(plans, PLAN_NAME), _read(source["plan"]), 0o644)
-    pc_runroot.write_exclusive(os.path.join(project, "CLAUDE.md"), _read(source["claude_md"]), 0o644)
-    pc_spike._run_git(project, ["init", "-q"])
-    pc_spike._run_git(project, ["symbolic-ref", "HEAD", "refs/heads/main"])
-    pc_spike._run_git(project, ["add", "-A"])
-    pc_spike._run_git(project, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial fixture commit"])
+    _build_plain_project(shape, root, project, source)
 
     skill_dir = os.path.join(project, ".claude", "skills", "preclear")
     pc_runroot.exclusive_dir(os.path.join(project, ".claude"), 0o700)
@@ -656,4 +723,58 @@ def seed_row7(
         pc_rows.ROW7,
         ROW7_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW7),
+    )
+
+
+# The shapes implemented so far by seed_git_row; the others raise ValueError.
+_GIT_ROW_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED)
+
+
+def seed_git_row(
+    shape: str,
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+    row_id: str,
+    fixture: str,
+    memory: str,
+) -> Dict[str, Optional[str]]:
+    """The plain setup of a git-shaped row (plan 04-09): seed_plain_row with the git shape named by SHAPE.
+
+    The project instruction file is the committed fixture of the row, copied byte for byte; the plan is the plain plan.
+    A shape this module does not build yet is a ValueError, and so is any word outside GIT_SHAPES.
+    """
+    if shape not in GIT_SHAPES or shape not in _GIT_ROW_SHAPES:
+        raise ValueError("the git shape is not known")
+    return seed_plain_row(
+        repo_root, run_root, session_id, harness_home_dir, runs_dir, evidence_date, model, row_id, fixture, memory, shape
+    )
+
+
+def seed_row8b(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 8b setup: two commits on main, then the work tree switched to the first one with a detached HEAD."""
+    return seed_git_row(
+        SHAPE_DETACHED,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW8B,
+        ROW8B_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW8B),
     )
