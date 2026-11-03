@@ -213,6 +213,8 @@ def _listing(names: Sequence[str]) -> bytes:
 
 STATUS_NOT_RUN = "git status was not run: the git folder differs from the setup state"
 STATUS_NOT_RUN_NESTED = "git status was not run: the project holds a nested repository"
+# A project with no .git entry at all (row 8a): capture_git_status answers this line itself, so no git process starts.
+STATUS_NO_GIT = pc_manifest.NO_GIT_STATUS_LINE
 
 
 def take_snapshot(
@@ -235,7 +237,8 @@ def take_snapshot(
     compares the pin file with it before the snapshot folder exists or any git process starts): once the project's
     .git folder differs from it, git is not started (a command planted in the repository's own configuration
     would run), status.raw is empty and status.txt holds the one fixed line STATUS_NOT_RUN. A project that holds
-    a nested repository gets the fixed line STATUS_NOT_RUN_NESTED instead, for the same reason. The pin is
+    a nested repository gets the fixed line STATUS_NOT_RUN_NESTED instead, for the same reason. A project with no
+    .git entry at all gets the fixed line STATUS_NO_GIT and an empty status.raw, and no git process is started. The pin is
     required after setup: only the setup snapshot (setup true) is unpinned; any other snapshot without the
     in-memory pin, without raw/setup.git.json or with a file that differs from the pin is a CheckError (second-pass
     WR-03, third-pass WR-02).

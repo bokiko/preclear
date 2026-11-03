@@ -727,7 +727,7 @@ def seed_row7(
 
 
 # The shapes implemented so far by seed_git_row; the others raise ValueError.
-_GIT_ROW_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED)
+_GIT_ROW_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED, SHAPE_UNBORN, SHAPE_NONE)
 
 
 def seed_git_row(
@@ -777,4 +777,59 @@ def seed_row8b(
         pc_rows.ROW8B,
         ROW8B_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW8B),
+    )
+
+
+def seed_row8c(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 8c setup: a repository on main with no commit, so every file of the project is untracked."""
+    return seed_git_row(
+        SHAPE_UNBORN,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW8C,
+        ROW8C_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW8C),
+    )
+
+
+def seed_row8a(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 8a setup: a plain project with no .git entry at all (and no repository above the run root).
+
+    The committed run sat under a gitignored folder of this repository, so an enclosing repository existed two levels
+    up; this run root lies under the harness runs root, which holds no repository. That is stricter in one way and
+    looser in another than the committed run, and the row's Setup paragraph says so.
+    """
+    return seed_git_row(
+        SHAPE_NONE,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW8A,
+        ROW8A_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW8A),
     )

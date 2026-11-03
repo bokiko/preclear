@@ -26,6 +26,7 @@ import unittest
 import uuid
 from unittest import mock
 
+import pc_exitcodes
 import pc_testutil
 from test_row_generic import Registered, tree_names
 from test_rows_plain import (
@@ -52,9 +53,16 @@ ROW8A = "row8a-non-git"
 ROW8B = "row8b-detached-head"
 ROW8C = "row8c-unborn-branch"
 ROW9 = "row9-linked-worktree"
+GIT_ROWS = (ROW8A, ROW8B, ROW8C)
 CLAUDE_MD_DIGEST_PREFIX = "ed03447e9df43888"
 PLAN_RELATIVE = "thoughts/plans/2026-10-15-widget-export.md"
-DASH = "—"
+DASH = "\u2014"
+SHAPE_WORDS = {
+    ROW8A: "no-git @ n/a",
+    ROW8B: "detached @ abc1234",
+    ROW8C: "unborn @ n/a",
+}
+GIT_TRIPWIRE_LOG = "git-tripwire.log"
 FIXED_DATE = datetime.datetime(2026, 10, 28, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
 
@@ -71,6 +79,42 @@ def skill_status() -> str:
 
 def committed_status_lines(row_id: str) -> list:
     return read_text(committed(row_id, "snap-0-setup", "status.txt")).splitlines()
+
+
+def make_git_tripwire(directory: str) -> str:
+    """Write a git whose every call is a violation (it logs its arguments and exits 97) and return its path."""
+    path = os.path.join(directory, "git")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(
+            '#!/bin/sh\nhere=$(cd "$(dirname "$0")" && pwd)\nprintf \'%s\\n\' "$*" >> "$here/' + GIT_TRIPWIRE_LOG + '"\nexit 97\n'
+        )
+    os.chmod(path, 0o755)
+    return path
+
+
+def read_git_tripwire(directory: str) -> list:
+    path = os.path.join(directory, GIT_TRIPWIRE_LOG)
+    if not os.path.exists(path):
+        return []
+    return read_text(path).splitlines()
+
+
+def calls_aimed_at(directory: str, folder: str) -> list:
+    """The logged tripwire git calls that name FOLDER (the engine's own calls aimed at the rig repository are not these)."""
+    return [line for line in read_git_tripwire(directory) if folder in line]
+
+
+def real_git_path() -> str:
+    import shutil
+
+    found = shutil.which("git", path=os.pathsep.join(pc_testutil.SYSTEM_DIRS))
+    assert found is not None, "git is needed for these tests"
+    return found
+
+
+def git_here_init(folder: str) -> None:
+    done = git_here(folder, "init", "-q")
+    assert done.returncode == 0
 
 
 def git_here(folder: str, *args: str) -> subprocess.CompletedProcess:
@@ -163,7 +207,7 @@ class SeededGit(object):
 class GitShapeSeedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.seeded = {ROW8B: SeededGit(ROW8B, "git-seed-8b")}
+        cls.seeded = dict((row_id, SeededGit(row_id, "git-seed-" + row_id.split("-", 1)[0])) for row_id in GIT_ROWS)
 
     def test_8b_the_seeded_claude_md_equals_the_committed_fixture_and_its_setup_digest(self) -> None:
         seeded = self.seeded[ROW8B]
@@ -242,45 +286,227 @@ class GitShapeSeedTests(unittest.TestCase):
 
 
 class GitRegistryTests(unittest.TestCase):
-    def test_8b_is_registered_with_the_three_committed_stages_the_git_profile_and_the_resume_line_chain(self) -> None:
+    def test_each_git_row_is_registered_with_the_three_committed_stages_the_git_profile_and_the_resume_line_chain(self) -> None:
         pc_rows = rows()
-        spec = spec_of(ROW8B)
-        self.assertTrue(spec.implemented)
-        self.assertEqual(
-            [(s.name, s.max_turns, str(s.cap), s.timeout, s.session) for s in spec.stages],
-            [("s1", 15, "0.30", 900, "new:A"), ("s2", 60, "1.30", 1800, "resume:A"), ("s3", 15, "0.40", 900, "new:B")],
-        )
-        self.assertEqual(spec.tools_profile, pc_rows.PROFILE_GIT)
-        self.assertEqual(spec.extra_tools, ())
-        self.assertEqual(spec.memory, pc_rows.MEMORY_PINNED)
-        self.assertEqual(spec.chain, pc_rows.CHAIN_RESUME_LINE)
-        self.assertEqual(spec.hooks, ())
-        self.assertEqual(spec.probe, pc_rows.PROBE_NONE)
-        self.assertEqual(spec.seed, "pc_rowseeds:seed_row8b")
+        for row_id in GIT_ROWS:
+            spec = spec_of(row_id)
+            self.assertTrue(spec.implemented, row_id)
+            self.assertEqual(
+                [(s.name, s.max_turns, str(s.cap), s.timeout, s.session) for s in spec.stages],
+                [("s1", 15, "0.30", 900, "new:A"), ("s2", 60, "1.30", 1800, "resume:A"), ("s3", 15, "0.40", 900, "new:B")],
+            )
+            self.assertEqual(spec.tools_profile, pc_rows.PROFILE_GIT)
+            self.assertEqual(spec.extra_tools, ())
+            self.assertEqual(spec.memory, pc_rows.MEMORY_PINNED)
+            self.assertEqual(spec.chain, pc_rows.CHAIN_RESUME_LINE)
+            self.assertEqual(spec.hooks, ())
+            self.assertEqual(spec.probe, pc_rows.PROBE_NONE)
+            self.assertEqual(spec.analyses, ())
+            self.assertEqual(spec.seed, "pc_rowseeds:seed_" + row_id.split("-", 1)[0])
+            self.assertTrue(spec.setup_text.startswith("Setup: "))
 
     def test_the_git_profile_word_of_the_registry_and_of_the_flag_module_agree(self) -> None:
         import pc_flags
 
         self.assertEqual(rows().PROFILE_GIT, pc_flags.PROFILE_GIT)
 
-    def test_8b_the_dry_run_prints_the_plan_and_starts_no_process(self) -> None:
-        code, text, tripwire, base = dry_run_row(ROW8B)
-        self.assertEqual(code, 0, text)
-        self.assertIn("%s: 3 stages, 2 sessions" % ROW8B, text)
-        lines = [line for line in text.splitlines() if line.strip().startswith(("s1", "s2", "s3"))]
-        self.assertEqual(len(lines), 3)
-        for line, turns, cap in zip(lines, ("15 turns", "60 turns", "15 turns"), ("cap 0.30", "cap 1.30", "cap 0.40")):
-            self.assertIn(turns, line)
-            self.assertIn(cap, line)
-        self.assertIn("worst case 2.00 USD", text)
-        self.assertIn("allowlist 33 rules", text)
-        self.assertEqual(tripwire, [])
-        self.assertFalse(os.path.exists(os.path.join(base, "hh")), "a dry run creates no harness home")
+    def test_the_dry_run_of_each_git_row_prints_the_plan_and_starts_no_process(self) -> None:
+        for row_id in GIT_ROWS:
+            code, text, tripwire, base = dry_run_row(row_id)
+            self.assertEqual(code, 0, text)
+            self.assertIn("%s: 3 stages, 2 sessions" % row_id, text)
+            lines = [line for line in text.splitlines() if line.strip().startswith(("s1", "s2", "s3"))]
+            self.assertEqual(len(lines), 3)
+            for line, turns, cap in zip(lines, ("15 turns", "60 turns", "15 turns"), ("cap 0.30", "cap 1.30", "cap 0.40")):
+                self.assertIn(turns, line)
+                self.assertIn(cap, line)
+            self.assertIn("worst case 2.00 USD", text)
+            self.assertIn("allowlist 33 rules", text)
+            self.assertEqual(tripwire, [])
+            self.assertFalse(os.path.exists(os.path.join(base, "hh")), "a dry run creates no harness home")
 
-    def test_8b_list_marks_the_row_implemented_with_three_stages_and_two_sessions(self) -> None:
+    def test_list_marks_each_git_row_implemented_with_three_stages_and_two_sessions(self) -> None:
         lines = matrix().list_lines(rows().build_registry())
         cells = dict((line.split()[1], line.split()) for line in lines[1:])
-        self.assertEqual(cells[ROW8B][2:], ["3", "2", "yes"])
+        for row_id in GIT_ROWS:
+            self.assertEqual(cells[row_id][2:], ["3", "2", "yes"], row_id)
+
+    def test_the_setup_texts_hold_no_path_shaped_string_and_8a_names_its_difference_from_the_committed_run(self) -> None:
+        for row_id in GIT_ROWS:
+            self.assertIsNone(SHAPED.search(spec_of(row_id).setup_text), row_id)
+        text = spec_of(ROW8A).setup_text
+        self.assertIn("no `.git` entry", text)
+        self.assertIn("no repository above", text.replace("run root lies under no repository either", "no repository above"))
+        self.assertIn("differs from the committed run", text)
+
+
+class NoGitStateTests(unittest.TestCase):
+    """A project with no .git has a defined, pinned git state and starts no git process (Pitfall 3, T-04-39, T-04-40)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.base = os.path.realpath(tempfile.mkdtemp(prefix="pc-nogit-"))
+        cls.bin = os.path.join(cls.base, "bin")
+        os.makedirs(cls.bin)
+        cls.git_tripwire = make_git_tripwire(cls.bin)
+
+    def project(self, name: str) -> str:
+        folder = os.path.join(self.base, name)
+        os.makedirs(folder)
+        with open(os.path.join(folder, "file.txt"), "w", encoding="utf-8") as handle:
+            handle.write("a plain file\n")
+        return folder
+
+    def tripped(self) -> list:
+        return read_git_tripwire(self.bin)
+
+    def test_the_marker_digest_is_a_fixed_64_hex_value_equal_to_the_hash_of_its_marker_text(self) -> None:
+        import pc_manifest
+
+        self.assertRegex(pc_manifest.NO_GIT_DIGEST, r"\A[0-9a-f]{64}\Z")
+        self.assertEqual(pc_manifest.NO_GIT_DIGEST, hashlib.sha256(pc_manifest._NO_GIT_MARKER).hexdigest())
+        self.assertNotEqual(pc_manifest.NO_GIT_DIGEST, hashlib.sha256(b"").hexdigest())
+
+    def test_gitdir_digest_of_a_project_with_no_git_entry_is_the_marker_digest(self) -> None:
+        import pc_manifest
+
+        self.assertEqual(pc_manifest.gitdir_digest(self.project("digest-none")), pc_manifest.NO_GIT_DIGEST)
+
+    def test_gitdir_digest_of_a_git_folder_is_unchanged_and_never_the_marker(self) -> None:
+        import pc_manifest
+
+        folder = self.project("digest-folder")
+        git_here_init(folder)
+        entries = pc_manifest.tree_manifest(os.path.join(folder, ".git"))
+        kept = [e for e in entries if e["path"] not in (b"index", b"index.lock")]
+        expected = hashlib.sha256(pc_manifest.jsonl_bytes(kept)).hexdigest()
+        self.assertEqual(pc_manifest.gitdir_digest(folder), expected)
+        self.assertNotEqual(expected, pc_manifest.NO_GIT_DIGEST)
+
+    def test_a_symlinked_a_special_and_an_unreadable_git_entry_are_refused_never_guessed_at(self) -> None:
+        import pc_manifest
+
+        linked = self.project("digest-link")
+        target = os.path.join(self.base, "link-target")
+        os.makedirs(target)
+        os.symlink(target, os.path.join(linked, ".git"))
+        special = self.project("digest-fifo")
+        os.mkfifo(os.path.join(special, ".git"))
+        garbage = self.project("digest-garbage")
+        with open(os.path.join(garbage, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("not a pointer\n")
+        for folder in (linked, special, garbage):
+            with self.assertRaises(pc_manifest.ManifestError):
+                pc_manifest.gitdir_digest(folder)
+
+    def test_git_state_of_a_no_git_project_is_na_with_the_empty_refs_digest_and_the_marker_and_starts_no_process(self) -> None:
+        import pc_checks
+        import pc_manifest
+
+        folder = self.project("state-none")
+        before = self.tripped()
+        for pinned in (None, pc_manifest.NO_GIT_DIGEST):
+            state = pc_checks.git_state(folder, self.git_tripwire, pinned)
+            self.assertEqual(
+                state,
+                {
+                    "head": "n/a",
+                    "branch": "n/a",
+                    "refs_digest": hashlib.sha256(b"").hexdigest(),
+                    "gitdir_digest": pc_manifest.NO_GIT_DIGEST,
+                    "staged": 0,
+                },
+            )
+        self.assertEqual(self.tripped(), before, "a tripwire git on the path stayed silent")
+
+    def test_capture_git_status_of_a_no_git_project_returns_the_fixed_line_and_starts_no_process(self) -> None:
+        import pc_manifest
+
+        folder = self.project("status-none")
+        before = self.tripped()
+        for pinned in (None, pc_manifest.NO_GIT_DIGEST):
+            raw, text = pc_manifest.capture_git_status(folder, self.git_tripwire, pinned)
+            self.assertEqual(raw, b"")
+            self.assertEqual(text, (pc_manifest.NO_GIT_STATUS_LINE + "\n").encode("utf-8"))
+        self.assertEqual(self.tripped(), before)
+
+    def test_a_pinned_capture_refuses_a_git_entry_that_appeared_after_the_pin_and_starts_no_process(self) -> None:
+        import pc_checks
+        import pc_manifest
+
+        folder = self.project("appeared")
+        pin = pc_manifest.gitdir_digest(folder)
+        os.makedirs(os.path.join(folder, ".git"))
+        with open(os.path.join(folder, ".git", "config"), "w", encoding="utf-8") as handle:
+            handle.write("[core]\n")
+        before = self.tripped()
+        with self.assertRaises(pc_manifest.GitDirChanged):
+            pc_manifest.capture_git_status(folder, self.git_tripwire, pin)
+        state = pc_checks.git_state(folder, self.git_tripwire, pin)
+        self.assertEqual(self.tripped(), before, "no git process was started")
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], pc_checks.GIT_NOT_READ, key)
+        self.assertNotEqual(state["gitdir_digest"], pin)
+        setup = pc_checks.git_state(self.project("appeared-twin"), self.git_tripwire, None)
+        mutations = pc_checks.git_mutations([setup, state], [])
+        self.assertEqual(mutations["changed_fields"], list(pc_checks.GIT_STATE_FIELDS), "all four fields changed")
+        self.assertGreater(mutations["total"], 0, "the existing mutation rule counts a planted .git")
+
+    def test_a_nested_repository_in_a_no_git_project_is_refused_before_any_process(self) -> None:
+        import pc_manifest
+
+        folder = self.project("nested")
+        os.makedirs(os.path.join(folder, "inner", ".git"))
+        before = self.tripped()
+        with self.assertRaises(pc_manifest.NestedRepository):
+            pc_manifest.capture_git_status(folder, self.git_tripwire, None)
+        self.assertEqual(self.tripped(), before)
+
+    def test_an_unpinned_status_in_a_folder_with_an_empty_git_folder_still_fails_as_before(self) -> None:
+        import pc_manifest
+
+        folder = self.project("empty-git-folder")
+        os.makedirs(os.path.join(folder, ".git"))
+        with self.assertRaises(pc_manifest.ManifestError):
+            pc_manifest.capture_git_status(folder, real_git_path(), None)
+
+
+class GitShapeStateTests(unittest.TestCase):
+    """The state and snapshot of the detached and unborn shapes come from the same code as a plain repository."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.seeded = {row: SeededGit(row, "git-state-" + row.split("-", 1)[0]) for row in (ROW8B, ROW8C)}
+
+    def state(self, row_id: str) -> dict:
+        import pc_checks
+
+        return pc_checks.git_state(self.seeded[row_id].project, real_git_path(), None)
+
+    def test_the_detached_state_has_a_head_and_no_branch(self) -> None:
+        state = self.state(ROW8B)
+        self.assertRegex(state["head"], r"\A[0-9a-f]{40}\Z")
+        self.assertEqual(state["branch"], "")
+        self.assertEqual(state["staged"], 0)
+
+    def test_the_unborn_state_has_no_head_and_the_main_branch_and_an_empty_reference_list(self) -> None:
+        import pc_checks
+
+        state = self.state(ROW8C)
+        self.assertEqual(state["head"], "")
+        self.assertEqual(state["branch"], "refs/heads/main")
+        self.assertEqual(state["refs_digest"], hashlib.sha256(b"").hexdigest())
+        self.assertEqual(state["staged"], 0)
+        self.assertNotEqual(state["gitdir_digest"], pc_checks.pc_manifest.NO_GIT_DIGEST)
+
+    def test_the_status_of_a_plain_status_call_never_moves_the_digest(self) -> None:
+        import pc_checks
+
+        for row_id in (ROW8B, ROW8C):
+            before = self.state(row_id)
+            git_out(self.seeded[row_id].project, "status")
+            self.assertEqual(self.state(row_id), before, row_id)
+            self.assertEqual(pc_checks.git_mutations([before, self.state(row_id)], [])["total"], 0)
 
 
 class GitRowChainTests(unittest.TestCase):
@@ -288,118 +514,221 @@ class GitRowChainTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.runs = {ROW8B: run_git_row(ROW8B, "detached @ abc1234")}
-        for row_id, run in cls.runs.items():
-            assert run.outcome.code == 0, "\n".join(run.outcome.lines)
+        cls.runs = {}
+        for row_id in GIT_ROWS:
+            cls.runs[row_id] = run_git_row(row_id, SHAPE_WORDS[row_id])
+            assert cls.runs[row_id].outcome.code == 0, row_id + "\n" + "\n".join(cls.runs[row_id].outcome.lines)
 
     def read(self, row_id: str, name: str) -> str:
         return read_text(os.path.join(self.runs[row_id].row_dir, name))
 
-    def test_8b_a_scripted_chain_completes_with_three_launches_and_no_wrapper_folder(self) -> None:
-        run = self.runs[ROW8B]
-        self.assertEqual(len(run.rig.calls()), 3, "each stage is launched exactly once")
-        self.assertFalse(os.path.lexists(os.path.join(run.run_root, "wrapper")), "no wrapper folder")
-        self.assertEqual(
-            [(r["kind"], r["stage"]) for r in run.ledger()],
-            [("launch", "row8b-s1"), ("settle", "row8b-s1"), ("launch", "row8b-s2"), ("settle", "row8b-s2"),
-             ("launch", "row8b-s3"), ("settle", "row8b-s3")],
-        )
-        self.assertEqual(os.listdir(run.ctx.destination), [ROW8B])
+    def test_a_scripted_chain_of_each_row_completes_with_three_launches_and_no_wrapper_folder(self) -> None:
+        for row_id in GIT_ROWS:
+            run = self.runs[row_id]
+            key = row_id.split("-", 1)[0]
+            self.assertEqual(len(run.rig.calls()), 3, "each stage is launched exactly once")
+            self.assertFalse(os.path.lexists(os.path.join(run.run_root, "wrapper")), "no wrapper folder")
+            self.assertEqual(
+                [(r["kind"], r["stage"]) for r in run.ledger()],
+                [(kind, "%s-%s" % (key, stage)) for stage in ("s1", "s2", "s3") for kind in ("launch", "settle")],
+            )
+            self.assertEqual(os.listdir(run.ctx.destination), [row_id])
 
-    def test_8b_the_stage_commands_carry_the_33_baseline_rules_alone_and_the_pinned_memory_switch(self) -> None:
+    def test_the_stage_commands_carry_the_33_baseline_rules_alone_and_the_pinned_memory_switch(self) -> None:
         import pc_flags
 
-        run = self.runs[ROW8B]
-        for call in run.rig.calls():
-            argv = call["args"]
-            rules = argv[argv.index("--allowedTools") + 1].split(",")
-            self.assertEqual(rules, list(pc_flags.BASELINE_ALLOWED_TOOLS))
-            self.assertEqual(len(rules), 33)
-        first = run.rig.calls()[0]
-        settings_path = first["args"][first["args"].index("--settings") + 1]
-        self.assertIs(read_json(settings_path)["autoMemoryEnabled"], True)
+        for row_id in GIT_ROWS:
+            run = self.runs[row_id]
+            for call in run.rig.calls():
+                argv = call["args"]
+                rules = argv[argv.index("--allowedTools") + 1].split(",")
+                self.assertEqual(rules, list(pc_flags.BASELINE_ALLOWED_TOOLS))
+                self.assertEqual(len(rules), 33)
+            first = run.rig.calls()[0]
+            settings_path = first["args"][first["args"].index("--settings") + 1]
+            self.assertIs(read_json(settings_path)["autoMemoryEnabled"], True)
+            self.assertEqual(first["prompt"].encode("utf-8"), read_bytes(os.path.join(DATA, "plain-s1-prompt.md")))
+            self.assertEqual(
+                run.rig.calls()[1]["prompt"].encode("utf-8"), read_bytes(committed(row_id, "s2-preclear-prompt.md"))
+            )
 
-    def test_8b_the_third_stage_is_a_fresh_session_fed_the_resume_line_the_second_printed(self) -> None:
-        run = self.runs[ROW8B]
-        calls = run.rig.calls()
-        prompt = calls[2]["prompt"]
-        self.assertTrue(prompt.startswith("Resume "))
-        self.assertTrue(re.search(r"detached @ [0-9a-f]{7} " + DASH, prompt) is not None, prompt)
-        self.assertEqual(self.read(ROW8B, "resume-line.txt").rstrip("\n").replace("<run>", "$RUNROOT"),
-                         prompt.replace(run.run_root, "$RUNROOT"))
-        self.assertNotIn("--resume", calls[2]["args"], "s3 starts a new session")
-        self.assertIn("--resume", calls[1]["args"], "s2 continues the session of s1")
+    def test_the_third_stage_is_a_fresh_session_fed_the_resume_line_the_second_printed(self) -> None:
+        for row_id in GIT_ROWS:
+            run = self.runs[row_id]
+            calls = run.rig.calls()
+            prompt = calls[2]["prompt"]
+            self.assertTrue(prompt.startswith("Resume "))
+            self.assertTrue(prompt.endswith(" step 2 done untested; JSON-default diff pending"))
+            self.assertIn(DASH + " " + SHAPE_WORDS[row_id] + " " + DASH, prompt)
+            self.assertEqual(
+                self.read(row_id, "resume-line.txt").rstrip("\n").replace("<run>", "$RUNROOT"),
+                prompt.replace(run.run_root, "$RUNROOT"),
+            )
+            self.assertNotIn("--resume", calls[2]["args"], "s3 starts a new session")
+            self.assertIn("--resume", calls[1]["args"], "s2 continues the session of s1")
 
-    def test_8b_s3_makes_no_write_or_edit_call_and_the_s2_and_s3_snapshots_hash_alike(self) -> None:
-        self.assertIn("Write/Edit calls 0: []", self.read(ROW8B, "s3-resume-trace.md"))
-        self.assertEqual(
-            self.read(ROW8B, "snap-2-after-preclear/sha.txt"), self.read(ROW8B, "snap-3-after-resume/sha.txt")
-        )
+    def test_8b_the_resume_line_ends_with_detached_at_and_seven_hex_characters_before_the_dash(self) -> None:
+        prompt = self.runs[ROW8B].rig.calls()[2]["prompt"]
+        self.assertIsNotNone(re.search(r"detached @ [0-9a-f]{7} " + DASH, prompt), prompt)
 
-    def test_8b_the_filed_folder_holds_the_committed_file_names_and_the_s3_files(self) -> None:
-        names = tree_names(self.runs[ROW8B].row_dir)
-        for expected in (
-            "README.md", "claude-version.txt", "digests.txt", "fixture-CLAUDE.md", "measurements.md",
-            "mechanical-checks.md", "resume-line.txt", "s1-work.out", "s1.err", "s1.exit",
-            "s2-preclear-full-trace.md", "s2-preclear-prompt.md", "s2-preclear-trace.md", "s2-preclear.err",
-            "s2-preclear.exit", "s3-resume-full-trace.md", "s3-resume-trace.md", "s3-resume.err", "s3-resume.exit",
-            "session-resume.id", "session.id", "settings.json", "snap-0-setup/", "snap-1-after-work/",
-            "snap-2-after-preclear/", "snap-3-after-resume/", "tools.txt", "usage.txt",
-        ):
-            self.assertIn(expected, names, expected)
-        for absent in ("wrapper-calls.log", "wrapper-checkpoint.sh", "status-before.txt", "lint-before.txt"):
-            self.assertNotIn(absent, names, absent)
+    def test_s3_makes_no_write_or_edit_call_and_the_s2_and_s3_snapshots_hash_alike(self) -> None:
+        for row_id in GIT_ROWS:
+            self.assertIn("Write/Edit calls 0: []", self.read(row_id, "s3-resume-trace.md"))
+            self.assertEqual(
+                self.read(row_id, "snap-2-after-preclear/sha.txt"), self.read(row_id, "snap-3-after-resume/sha.txt")
+            )
 
-    def test_8b_the_filed_project_file_equals_the_committed_one(self) -> None:
-        self.assertEqual(self.read(ROW8B, "fixture-CLAUDE.md"), read_text(committed(ROW8B, "fixture-CLAUDE.md")))
+    def test_the_filed_folder_holds_the_committed_file_names_and_the_s3_files_and_no_helper_file(self) -> None:
+        for row_id in GIT_ROWS:
+            names = tree_names(self.runs[row_id].row_dir)
+            for expected in (
+                "README.md", "claude-version.txt", "digests.txt", "fixture-CLAUDE.md", "measurements.md",
+                "mechanical-checks.md", "resume-line.txt", "s1-work.out", "s1.err", "s1.exit",
+                "s2-preclear-full-trace.md", "s2-preclear-prompt.md", "s2-preclear-trace.md", "s2-preclear.err",
+                "s2-preclear.exit", "s3-resume-full-trace.md", "s3-resume-trace.md", "s3-resume.err",
+                "s3-resume.exit", "session-resume.id", "session.id", "settings.json", "snap-0-setup/",
+                "snap-1-after-work/", "snap-2-after-preclear/", "snap-3-after-resume/", "tools.txt", "usage.txt",
+            ):
+                self.assertIn(expected, names, row_id + " " + expected)
+            for absent in ("wrapper-calls.log", "wrapper-checkpoint.sh", "status-before.txt", "lint-before.txt"):
+                self.assertNotIn(absent, names, absent)
 
-    def test_8b_the_setup_snapshot_status_is_the_committed_untracked_skill_list_and_lists_no_notes_file(self) -> None:
+    def test_the_filed_project_file_equals_the_committed_one_and_tools_are_the_33_rules(self) -> None:
+        import pc_flags
+
+        for row_id in GIT_ROWS:
+            self.assertEqual(self.read(row_id, "fixture-CLAUDE.md"), read_text(committed(row_id, "fixture-CLAUDE.md")))
+            self.assertEqual(self.read(row_id, "tools.txt"), ",".join(pc_flags.BASELINE_ALLOWED_TOOLS) + "\n")
+
+    def test_the_setup_snapshot_lists_the_project_files_and_never_a_git_entry_of_the_project(self) -> None:
+        for row_id in GIT_ROWS:
+            listing = self.read(row_id, "snap-0-setup/sha.txt")
+            self.assertIn("project/CLAUDE.md", listing)
+            self.assertIn("project/" + PLAN_RELATIVE, listing)
+            self.assertNotIn("NOTES.md", listing)
+            self.assertNotIn("project/.git", listing, "the git folder is left out of the manifest")
+            self.assertNotIn("wrapper", listing)
+            self.assertNotIn("CONTINUITY", listing)
+
+    def test_8b_the_setup_status_is_the_committed_untracked_skill_list(self) -> None:
         self.assertEqual(self.read(ROW8B, "snap-0-setup/status.txt"), skill_status())
-        listing = self.read(ROW8B, "snap-0-setup/sha.txt")
-        self.assertNotIn("NOTES.md", listing)
-        self.assertNotIn("project/.git", listing, "the git folder is left out of the manifest")
-        self.assertIn("project/CLAUDE.md", listing)
 
-    def test_8b_the_git_facts_are_a_head_a_missing_branch_and_zero_mutations(self) -> None:
-        text = self.read(ROW8B, "mechanical-checks.md")
+    def test_8c_every_file_is_untracked_in_the_setup_status_and_the_committed_lines_are_all_there(self) -> None:
+        lines = sorted(self.read(ROW8C, "snap-0-setup/status.txt").splitlines())
+        self.assertEqual(lines, sorted(skill_status().splitlines() + ["?? CLAUDE.md", "?? " + PLAN_RELATIVE]))
+        for line in committed_status_lines(ROW8C):
+            self.assertIn(line, lines)
+
+    def test_8a_the_setup_snapshot_status_is_the_fixed_no_git_line_and_the_raw_status_is_empty(self) -> None:
+        import pc_manifest
+
+        run = self.runs[ROW8A]
+        for name in ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume"):
+            self.assertEqual(self.read(ROW8A, name + "/status.txt"), pc_manifest.NO_GIT_STATUS_LINE + "\n", name)
+            self.assertEqual(os.path.getsize(os.path.join(run.run_root, "snaps", name, "status.raw")), 0, name)
+        self.assertEqual(row1().STATUS_NO_GIT, pc_manifest.NO_GIT_STATUS_LINE)
+
+    def test_8a_the_git_facts_are_na_at_every_boundary_with_zero_mutations(self) -> None:
+        text = self.read(ROW8A, "mechanical-checks.md")
         self.assertIn("states: 4", text)
+        for name in ("setup", "s1", "s2", "s3"):
+            self.assertIn("state %s: head n/a, branch n/a, staged 0" % name, text)
         self.assertIn("mutations-total: 0", text)
         self.assertIn("mutation-changed-fields: none", text)
-        heads = set(re.findall(r"^state \S+: head ([0-9a-f]{40}),", text, re.M))
+
+    def test_8b_and_8c_the_git_facts_are_a_fixed_head_and_zero_mutations(self) -> None:
+        for row_id in (ROW8B, ROW8C):
+            text = self.read(row_id, "mechanical-checks.md")
+            self.assertIn("states: 4", text)
+            self.assertIn("mutations-total: 0", text)
+            self.assertIn("mutation-changed-fields: none", text)
+        heads = set(re.findall(r"^state \S+: head (\S+),", self.read(ROW8B, "mechanical-checks.md"), re.M))
         self.assertEqual(len(heads), 1, "the detached HEAD never moves")
+        self.assertRegex(next(iter(heads)), r"\A[0-9a-f]{40}\Z")
+        unborn = set(re.findall(r"^state \S+: head (\S+),", self.read(ROW8C, "mechanical-checks.md"), re.M))
+        self.assertEqual(unborn, {"UNCONFIRMED"}, "an unborn branch has no head, said in the harness's own word")
 
-    def test_8b_the_readme_ends_with_the_pending_line_holds_no_verdict_word_and_no_path(self) -> None:
+    def test_each_readme_ends_with_the_pending_line_holds_no_verdict_word_and_no_path(self) -> None:
         pattern = evidence().verdict_pattern()
-        text = self.read(ROW8B, "README.md")
-        self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"))
-        self.assertEqual(text.count(VERDICT_LINE), 1)
-        body = text[: -len(VERDICT_LINE) - 1]
-        self.assertIsNone(pattern.search(body), "no verdict word in the README")
-        self.assertIn(spec_of(ROW8B).setup_text, body, "the Setup paragraph is the registry text")
-        self.assertIsNone(SHAPED.search(body))
-        self.assertNotIn(self.runs[ROW8B].rig.base, body)
+        for row_id in GIT_ROWS:
+            text = self.read(row_id, "README.md")
+            self.assertTrue(text.endswith("\n" + VERDICT_LINE + "\n"))
+            self.assertEqual(text.count(VERDICT_LINE), 1)
+            body = text[: -len(VERDICT_LINE) - 1]
+            self.assertIsNone(pattern.search(body), "no verdict word in the README")
+            self.assertIn(spec_of(row_id).setup_text, body, "the Setup paragraph is the registry text")
+            self.assertIsNone(SHAPED.search(body))
+            self.assertNotIn(self.runs[row_id].rig.base, body)
 
-    def test_8b_no_harness_authored_file_holds_a_verdict_word(self) -> None:
+    def test_no_harness_authored_file_of_a_git_row_holds_a_verdict_word(self) -> None:
         pattern = evidence().verdict_pattern()
-        run = self.runs[ROW8B]
-        names = []
-        for dirpath, _dirnames, filenames in os.walk(run.ctx.destination):
-            for name in filenames:
-                names.append(os.path.relpath(os.path.join(dirpath, name), run.ctx.destination).replace(os.sep, "/"))
-        authored = evidence().harness_authored_names(sorted(names))
-        self.assertGreater(len(authored), 8)
-        for name in authored:
-            text = read_text(os.path.join(run.ctx.destination, name))
-            if name == ROW8B + "/README.md":
-                text = text[: -len(VERDICT_LINE) - 1]
-            self.assertIsNone(pattern.search(text), "no verdict word in " + name)
+        for row_id in GIT_ROWS:
+            run = self.runs[row_id]
+            names = []
+            for dirpath, _dirnames, filenames in os.walk(run.ctx.destination):
+                for name in filenames:
+                    names.append(os.path.relpath(os.path.join(dirpath, name), run.ctx.destination).replace(os.sep, "/"))
+            authored = evidence().harness_authored_names(sorted(names))
+            self.assertGreater(len(authored), 8)
+            for name in authored:
+                text = read_text(os.path.join(run.ctx.destination, name))
+                if name == row_id + "/README.md":
+                    text = text[: -len(VERDICT_LINE) - 1]
+                self.assertIsNone(pattern.search(text), "no verdict word in " + name)
 
-    def test_8b_a_reply_without_a_resume_line_ends_the_chain_after_the_second_stage(self) -> None:
+    def test_a_reply_without_a_resume_line_ends_the_chain_after_the_second_stage(self) -> None:
         spec = spec_of(ROW8B)
         stages = pc_testutil.default_row_stages(spec)
         stages[1]["result"] = dict(stages[1]["result"], text="Checkpoint written, no resume line.")
         run = run_git_row(ROW8B, stages=stages)
         self.assertEqual(len(run.rig.calls()), 2, "the chain ends there; no resume line is invented")
+
+
+class NoGitChainTests(unittest.TestCase):
+    """Row 8a through the engine with a tripwire git first on the path: no git process starts for the project."""
+
+    def run_with_tripwire(self, stages) -> tuple:
+        rig = pc_testutil.RowRig(stages=stages)
+        tripwire = make_git_tripwire(rig.bin)
+        run = Registered(ROW8A, rig=rig)
+        return run, tripwire, rig
+
+    def test_a_clean_8a_chain_never_starts_git_and_files_the_row(self) -> None:
+        run, _tripwire, rig = self.run_with_tripwire(git_stages(spec_of(ROW8A), SHAPE_WORDS[ROW8A]))
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        self.assertEqual(calls_aimed_at(rig.bin, run.run_root), [], "no git process was started for the run root")
+        self.assertFalse(os.path.lexists(os.path.join(run.run_root, "project", ".git")))
+        self.assertEqual(os.listdir(run.ctx.destination), [ROW8A])
+
+    def test_a_scripted_s2_that_plants_a_git_folder_is_counted_stops_with_11_and_starts_no_git(self) -> None:
+        stages = git_stages(spec_of(ROW8A), SHAPE_WORDS[ROW8A])
+        stages = pc_testutil.stages_with(stages, 1, ops=list(stages[1]["ops"]) + [
+            {"op": "write", "path": "$PROJECT/.git/config", "text": "[core]\n\tfsmonitor = false\n"},
+        ])
+        run, _tripwire, rig = self.run_with_tripwire(stages)
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        self.assertEqual(calls_aimed_at(rig.bin, run.run_root), [], "git was not started for the planted folder")
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW8A])
+        text = "\n".join(run.outcome.lines)
+        self.assertRegex(text, r"isolation or git breach: git mutations: [1-9][0-9]*")
+        self.assertNotIn(rig.base, text)
+        state = read_json(os.path.join(run.run_root, "raw", "s2.git.json"))
+        for key in ("head", "branch", "refs_digest"):
+            self.assertEqual(state[key], "not-read", key)
+        snapshot = read_text(os.path.join(run.run_root, "snaps", "snap-2-after-preclear", "status.txt"))
+        self.assertEqual(snapshot.strip(), row1().STATUS_NOT_RUN, "the fixed not-run line, not the no-git line")
+
+    def test_a_scripted_s1_that_plants_a_nested_git_folder_never_starts_git_either(self) -> None:
+        stages = git_stages(spec_of(ROW8A), SHAPE_WORDS[ROW8A])
+        stages = pc_testutil.stages_with(stages, 0, ops=list(stages[0]["ops"]) + [
+            {"op": "write", "path": "$PROJECT/inner/.git/config", "text": "[core]\n"},
+        ])
+        run, _tripwire, rig = self.run_with_tripwire(stages)
+        self.assertEqual(run.outcome.code, pc_exitcodes.PREFLIGHT_FAIL, "\n".join(run.outcome.lines))
+        self.assertEqual(calls_aimed_at(rig.bin, run.run_root), [], "git was not started for the nested folder")
+        self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW8A])
+        state = read_json(os.path.join(run.run_root, "raw", "s1.git.json"))
+        self.assertEqual(state["head"], "not-read")
 
 
 if __name__ == "__main__":

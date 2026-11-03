@@ -30,6 +30,11 @@ which the top-level pin cannot see, so the harness runs no git command in a proj
 is true (an entry named .git below the top level). tree_manifest refuses a root at or under any path in its
 refuse_under argument (the harness-owned Claude config directory holds credentials).
 
+A project with no .git entry at all has a defined state of its own (plan 04-09): gitdir_digest answers NO_GIT_DIGEST (the
+sha256 of a fixed marker text), capture_git_status returns an empty raw result and one fixed status line, and no git
+process is started. A .git that appears later changes the digest, so a pinned capture refuses it like any other change
+and the mutation rule counts it.
+
 CLI: python3 -E -s -B pc_manifest.py ROOT [--jsonl]
   writes the chosen form to stdout and exits 0; exits 2 on a bad root or bad usage.
 """
@@ -73,6 +78,12 @@ _GIT_STATUS_BEFORE_Z = list(GIT_HARDENING) + ["--no-optional-locks", "status", "
 GITDIR_DIGEST_LEAVES_OUT = (b"index", b"index.lock")
 _GIT_STATUS_AFTER_Z = ["--untracked-files=all", "--ignore-submodules=none"]
 GIT_TIMEOUT_SECONDS = 120
+# What stands for the git folder digest of a project with no .git entry: the sha256 hex of this marker text. It is a
+# fixed value, so the setup pin of a no-git project is comparable at every boundary, and no real git folder can digest to it.
+_NO_GIT_MARKER = b"preclear harness: the project has no .git entry\n"
+NO_GIT_DIGEST = hashlib.sha256(_NO_GIT_MARKER).hexdigest()
+# The one line the snapshot of a no-git project holds in status.txt (status.raw is empty).
+NO_GIT_STATUS_LINE = "git status was not run: the project has no git folder"
 
 
 def _git_environment():
@@ -113,13 +124,28 @@ def nested_git_present(project_dir):
         return True
 
 
-def gitdir_digest(project_dir):
-    """The sha256 hex of the project's .git folder, without the index and index.lock entries.
+def has_git_entry(project_dir):
+    """True when the project has any top-level .git entry (a folder, a file, a link or a special file)."""
+    return os.path.lexists(os.path.join(project_dir, ".git"))
 
-    It is the value pc_checks.git_state has always stored as gitdir_digest. A missing or non-folder .git
-    raises ManifestError through tree_manifest.
+
+def gitdir_digest(project_dir):
+    """The sha256 hex of the project's git state: its .git folder without the index and index.lock entries.
+
+    It is the value pc_checks.git_state has always stored as gitdir_digest. A project with no .git entry at all
+    answers NO_GIT_DIGEST. A .git that is a symlink, a special file or a file that is not a readable pointer raises
+    ManifestError: the harness never guesses at what it cannot read.
     """
-    entries = tree_manifest(os.path.join(project_dir, ".git"))
+    git_path = os.path.join(project_dir, ".git")
+    try:
+        mode = os.lstat(git_path).st_mode
+    except FileNotFoundError:
+        return NO_GIT_DIGEST
+    except OSError:
+        raise ManifestError("the .git entry could not be examined") from None
+    if not stat.S_ISDIR(mode):
+        raise ManifestError("the .git entry is not a folder")
+    entries = tree_manifest(git_path)
     kept = [entry for entry in entries if entry["path"] not in GITDIR_DIGEST_LEAVES_OUT]
     return hashlib.sha256(jsonl_bytes(kept)).hexdigest()
 
@@ -156,12 +182,16 @@ def capture_git_status(project_dir, git, pinned_gitdir=None):
     without -z (git's quoted porcelain v1 form). Only --no-optional-locks status is ever
     run: nothing is written, staged, committed or reset. The raw form is for the run root
     only; only the text form is a candidate for evidence, because the leak gate refuses
-    NUL bytes. A non-zero exit raises ManifestError.
+    NUL bytes. A non-zero exit raises ManifestError. A project with no .git entry returns an empty raw result and
+    the one fixed line NO_GIT_STATUS_LINE as its text, and starts no process (a pinned call still refuses a .git
+    that appeared since setup).
     """
     if nested_git_present(project_dir):
         raise NestedRepository("the project holds a nested repository; git was not run")
     if pinned_gitdir is not None and gitdir_digest(project_dir) != pinned_gitdir:
         raise GitDirChanged("the git folder differs from the setup state; git was not run")
+    if not has_git_entry(project_dir):
+        return b"", (NO_GIT_STATUS_LINE + "\n").encode("utf-8")
     raw = _run_git_status(git, project_dir, True)
     text = _run_git_status(git, project_dir, False)
     return raw, text

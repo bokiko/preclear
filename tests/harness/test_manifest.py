@@ -510,9 +510,18 @@ class GitStatusCaptureTests(HarnessTestCase):
         self.ok(before == after, "the index digest is identical before and after two captures")
 
     def test_a_failing_status_raises(self):
+        # A folder whose .git is empty is not a repository: git status fails. (A folder with no .git entry at all
+        # used to be this case; since plan 04-09 it has its own defined answer, see the next test.)
         not_a_repo = tempfile.mkdtemp(prefix="preclear-git-")
+        os.makedirs(os.path.join(not_a_repo, ".git"))
         with self.assertRaises(pc_manifest.ManifestError):
             pc_manifest.capture_git_status(not_a_repo, git_path())
+
+    def test_a_project_with_no_git_entry_returns_the_fixed_line_and_starts_no_process(self):
+        no_git = tempfile.mkdtemp(prefix="preclear-git-")
+        raw, text = pc_manifest.capture_git_status(no_git, "git-that-must-not-run")
+        self.ok(raw == b"", "the raw form is empty")
+        self.ok(text == (pc_manifest.NO_GIT_STATUS_LINE + "\n").encode("utf-8"), "the one fixed line")
 
     def test_the_environment_overrides_are_the_four_hygiene_variables(self):
         self.ok(pc_manifest.GIT_ENV_OVERRIDES == {

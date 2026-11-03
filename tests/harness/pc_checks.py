@@ -1851,6 +1851,15 @@ def _git_output(git: str, project: str, args: Sequence[str]) -> Tuple[int, bytes
 
 
 GIT_NOT_READ = "not-read"
+GIT_NOT_APPLICABLE = "n/a"
+# The git state of a project with no .git entry: head and branch n/a, the digest of empty text as refs_digest (an
+# empty reference list), and nothing staged. gitdir_digest is the marker digest, added by git_state.
+NO_GIT_STATE: Dict[str, Any] = {
+    "head": GIT_NOT_APPLICABLE,
+    "branch": GIT_NOT_APPLICABLE,
+    "refs_digest": hashlib.sha256(b"").hexdigest(),
+    "staged": 0,
+}
 
 
 def git_state(project: str, git: str, pinned_gitdir: Optional[str] = None) -> Dict[str, Any]:
@@ -1869,6 +1878,10 @@ def git_state(project: str, git: str, pinned_gitdir: Optional[str] = None) -> Di
     A project that holds a nested repository (pc_manifest.nested_git_present) is treated the same way, pinned or
     not: git would enter a registered gitlink and run commands named in that repository's own configuration, so
     no git command is started and the not-read state is returned (second-pass WR-03).
+
+    A project with no .git entry at all has the fixed state NO_GIT_STATE (head and branch n/a, the marker digest)
+    and no process is started; when the setup pin was taken for such a project, a .git that appeared since changes
+    the digest and takes the not-read branch above.
     """
     try:
         gitdir_digest = pc_manifest.gitdir_digest(project)
@@ -1877,6 +1890,10 @@ def git_state(project: str, git: str, pinned_gitdir: Optional[str] = None) -> Di
     if pc_manifest.nested_git_present(project) or (pinned_gitdir is not None and gitdir_digest != pinned_gitdir):
         return {"head": GIT_NOT_READ, "branch": GIT_NOT_READ, "refs_digest": GIT_NOT_READ,
                 "gitdir_digest": gitdir_digest, "staged": 0}
+    if gitdir_digest == pc_manifest.NO_GIT_DIGEST:
+        # A project with no .git entry: no git process is started. The state is fixed, so a .git that appears later
+        # changes it (the digest, and head and branch to not-read) and the mutation rule counts it (plan 04-09).
+        return dict(NO_GIT_STATE, gitdir_digest=gitdir_digest)
     code, out = _git_output(git, project, ["rev-parse", "HEAD"])
     head = out.decode("utf-8", "replace").strip() if code == 0 else ""
     code, out = _git_output(git, project, ["symbolic-ref", "-q", "HEAD"])
