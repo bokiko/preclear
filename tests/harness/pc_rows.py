@@ -72,6 +72,8 @@ ROW7_ANALYSES: Tuple[str, ...] = (ANALYSIS_ROW7_FACTS, ANALYSIS_DO_NOT_REDO)
 # Row 10 counts, from the stream and the filed sidecar copy, how the status was read (plan 04-10; HARN-10).
 ANALYSIS_STATUS_FORM = "status-form"
 ROW10_ANALYSES: Tuple[str, ...] = (ANALYSIS_STATUS_FORM,)
+# Rows that run with the git wrapper first on the PATH file its log joined to the stream's tool_use ids (plan 04-10; used by row 11).
+ANALYSIS_GIT_CALLS = "git-calls"
 
 LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
 
@@ -578,6 +580,7 @@ def _registered_rows() -> Dict[str, RowSpec]:
             tools_profile=PROFILE_GIT,
             memory=MEMORY_PINNED,
             chain=CHAIN_RESUME_LINE,
+            analyses=ROW10_ANALYSES,
         ),
     }
 

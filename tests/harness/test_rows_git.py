@@ -1366,8 +1366,9 @@ class Row10Tests(unittest.TestCase):
         self.assertEqual(spec.memory, pc_rows.MEMORY_PINNED)
         self.assertEqual(spec.chain, pc_rows.CHAIN_RESUME_LINE)
         self.assertEqual((spec.hooks, spec.probe), ((), pc_rows.PROBE_NONE))
+        self.assertEqual(spec.analyses, ("status-form",))
         self.assertEqual(spec.seed, "pc_rowseeds:seed_row10")
-        self.assertEqual(pc_rows.worst_case(spec), pc_rows.Decimal("2.00") if hasattr(pc_rows, "Decimal") else spec.stages[0].cap + spec.stages[1].cap + spec.stages[2].cap)
+        self.assertEqual(str(pc_rows.worst_case(spec)), "2.00")
         self.assertEqual(dict(spec.prompts)["s2"], rowseeds().ROW10_FOLDER + "/s2-preclear-prompt.md")
         self.assertIn((rowseeds().ROW10_FOLDER + "/fixture-CLAUDE.md", "file"), spec.sources)
         self.assertTrue(spec.setup_text.startswith("Setup: "))
@@ -1474,6 +1475,129 @@ class Row10Tests(unittest.TestCase):
         self.assertTrue(readme.endswith(VERDICT_LINE + "\n"))
         self.assertIn(spec_of(ROW10).setup_text, readme)
         self.assertIsNone(re.search(r"\b(?:" + "|".join(("pa" + "ss", "fa" + "il", "acc" + "ept", "ver" + "dict")) + r")\b", readme.replace(VERDICT_LINE, ""), re.I))
+
+
+STATUS_QUOTED = "git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none"
+STATUS_NUL = "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none"
+SIDECAR_PATH = ".preclear/widget-export/status.txt"
+SECTION_HEAD = "## Row 10 status form\n"
+
+
+def row10_stages(extra_s2_ops: list) -> list:
+    stages = git_stages(spec_of(ROW10), "main @ abc1234")
+    return pc_testutil.stages_with(stages, 1, ops=list(stages[1]["ops"]) + extra_s2_ops)
+
+
+def bash_op(command: str, denied: bool = False) -> dict:
+    op = {"op": "tool", "name": "Bash", "input": {"command": command}, "content": "?? NOTES.md"}
+    if denied:
+        op = {"op": "tool", "name": "Bash", "input": {"command": command}, "denied": True}
+    return op
+
+
+def section_lines(text: str) -> list:
+    return [line for line in text.split(SECTION_HEAD, 1)[1].split("\n## ", 1)[0].splitlines() if line]
+
+
+class Row10StatusFormChainTests(unittest.TestCase):
+    """The status form is counted from the stream and the filed sidecar copy of a scripted row 10 chain (HARN-10)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        listing = '?? "odd\\nname.txt"\n?? NOTES.md\n'
+        cls.fallback = Registered(ROW10, stages=row10_stages([
+            bash_op(STATUS_QUOTED),
+            bash_op(STATUS_NUL + " > " + SIDECAR_PATH, denied=True),
+            bash_op(STATUS_QUOTED),
+            bash_op(STATUS_NUL + " | tr '\\0' '\\n' | wc -l"),
+            bash_op(STATUS_QUOTED + " | wc -l"),
+            {"op": "write", "path": "$PROJECT/" + SIDECAR_PATH, "text": listing},
+            {"op": "tool", "name": "Write", "input": {"file_path": "$PROJECT/" + SIDECAR_PATH}, "content": "written"},
+        ]))
+        assert cls.fallback.outcome.code == 0, "\n".join(cls.fallback.outcome.lines)
+        cls.plain = Registered(ROW10, stages=git_stages(spec_of(ROW10), "main @ abc1234"))
+        assert cls.plain.outcome.code == 0, "\n".join(cls.plain.outcome.lines)
+
+    def section(self, run: Registered) -> list:
+        return section_lines(read_text(os.path.join(run.row_dir, "mechanical-checks.md")))
+
+    def test_the_fallback_run_files_a_section_with_the_counts_the_stream_holds(self) -> None:
+        lines = self.section(self.fallback)
+        self.assertIn("quoted-porcelain-parts-executed: 3", lines)
+        self.assertIn("nul-git-parts-executed-with-redirection: 0", lines)
+        self.assertIn("nul-git-parts-executed-without-redirection: 1", lines)
+        self.assertEqual(len([l for l in lines if l.startswith("nul-git-calls-denied-with-redirection: 1 (toolu_")]), 1)
+        self.assertIn("sidecar-status-txt: present", lines)
+        self.assertIn("sidecar-status-txt-nul-bytes: 0", lines)
+        self.assertIn("bash-parts-unparsed: 0", lines)
+
+    def test_the_denied_id_is_the_one_the_scripted_stream_gave_the_denied_call(self) -> None:
+        calls = self.fallback.rig.calls()
+        self.assertEqual(len(calls), 3)
+        full = read_text(os.path.join(self.fallback.row_dir, "s2-preclear-full-trace.md"))
+        denied_line = [l for l in self.section(self.fallback) if l.startswith("nul-git-calls-denied-with-redirection")][0]
+        tool_id = denied_line.split("(")[1].rstrip(")")
+        self.assertIn(tool_id, full)
+
+    def test_the_section_is_the_last_of_mechanical_checks_and_the_sidecar_copy_is_filed_with_the_row(self) -> None:
+        text = read_text(os.path.join(self.fallback.row_dir, "mechanical-checks.md"))
+        headings = [line[3:] for line in text.splitlines() if line.startswith("## ")]
+        self.assertEqual(headings[-1], "Row 10 status form")
+        self.assertEqual(len(headings), 11)
+        copy = read_text(os.path.join(self.fallback.row_dir, "snap-2-after-preclear", "preclear", "widget-export", "status.txt"))
+        self.assertIn('odd\\nname.txt', copy, "the quoted form keeps the newline name on one line")
+
+    def test_a_chain_with_none_of_it_files_zero_counts_and_an_absent_sidecar(self) -> None:
+        lines = self.section(self.plain)
+        self.assertIn("quoted-porcelain-parts-executed: 0", lines)
+        self.assertIn("nul-git-parts-executed-with-redirection: 0", lines)
+        self.assertIn("nul-git-calls-denied-with-redirection: 0", lines)
+        self.assertIn("nul-git-parts-executed-without-redirection: 0", lines)
+        self.assertIn("sidecar-status-txt: absent", lines)
+        self.assertIn("sidecar-status-txt-bytes: absent", lines)
+        self.assertIn("sidecar-status-txt-nul-bytes: absent", lines)
+
+    def test_the_readme_checklist_line_reads_the_expected_outcome_with_the_counts_beside_it(self) -> None:
+        readme = read_text(os.path.join(self.fallback.row_dir, "README.md"))
+        line = [l for l in readme.splitlines() if "expected outcome" in l][0]
+        self.assertTrue(line.startswith("- [ ] expected outcome, quoted-porcelain fallback and NUL redirect refused: "))
+        self.assertIn("quoted form executed 3", line)
+        self.assertIn("NUL form denied with a redirection 1", line)
+        self.assertIn("NUL form executed without a redirection 1", line)
+        self.assertIn("sidecar status.txt present, ", line)
+        self.assertTrue(readme.endswith(VERDICT_LINE + "\n"))
+        plain = read_text(os.path.join(self.plain.row_dir, "README.md"))
+        self.assertIn("sidecar status.txt absent", [l for l in plain.splitlines() if "expected outcome" in l][0])
+
+    def test_no_other_row_readme_has_the_line_and_the_filed_text_has_no_verdict_word_or_path(self) -> None:
+        import pc_evidence
+
+        for run in (self.fallback, self.plain):
+            for name in ("README.md", "mechanical-checks.md"):
+                text = read_text(os.path.join(run.row_dir, name)).replace(VERDICT_LINE, "")
+                self.assertIsNone(pc_evidence.verdict_pattern().search(text), name)
+                self.assertIsNone(SHAPED.search(text), name)
+        other = Registered(ROW9, stages=git_stages(spec_of(ROW9), SHAPE_WORDS[ROW9]))
+        self.assertNotIn("expected outcome", read_text(os.path.join(other.row_dir, "README.md")))
+        self.assertNotIn("Row 10 status form", read_text(os.path.join(other.row_dir, "mechanical-checks.md")))
+
+    def test_a_sidecar_with_a_nul_byte_is_counted_by_the_analysis_and_the_leak_gate_refuses_to_file_it(self) -> None:
+        import pc_evidence
+
+        run = Registered(ROW10, stages=row10_stages([
+            bash_op(STATUS_NUL + " > " + SIDECAR_PATH, denied=True),
+            {"op": "write", "path": "$PROJECT/" + SIDECAR_PATH, "text": "?? a\0?? b\0"},
+        ]))
+        self.assertEqual(run.outcome.code, pc_exitcodes.LEAK_REFUSED, "a filed NUL byte is refused, so the row is not filed")
+        self.assertTrue(any("refused-binary" in line for line in run.outcome.lines))
+        self.assertFalse(os.path.exists(run.ctx.destination), "nothing was promoted")
+        data = pc_evidence.load_stage_data(run.run_root)
+        import pc_review
+
+        stage = [item for item in data.stages if item.name == "s2"][0]
+        counts = pc_review.status_form_counts(stage.events, os.path.join(run.run_root, "snaps", "snap-2-after-preclear"))
+        self.assertEqual(counts["sidecar"]["nul_bytes"], 2)
+        self.assertEqual(len(counts["nul_redirect_denied_ids"]), 1)
 
 
 if __name__ == "__main__":

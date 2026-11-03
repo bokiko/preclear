@@ -493,9 +493,12 @@ class ScriptedChainTests(unittest.TestCase):
 
         r = review()
         self.assertEqual(spec_of(ROW7).analyses, ("row7-facts", "do-not-redo"))
-        self.assertEqual(sorted(r.ANALYSES), ["do-not-redo", "row7-facts"])
+        # plan 04-10 added status-form (row 10) and git-calls (named by row 11 in plan 04-12)
+        self.assertEqual(sorted(r.ANALYSES), ["do-not-redo", "git-calls", "row7-facts", "status-form"])
         for entry in pc_rows.build_registry():
-            if entry.row_id != ROW7:
+            if entry.row_id == "row10-large-status":
+                self.assertEqual(entry.analyses, ("status-form",))
+            elif entry.row_id != ROW7:
                 self.assertEqual(entry.analyses, (), entry.row_id)
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
         self.assertEqual(built.analyses, ())
@@ -877,6 +880,368 @@ class HostileTextTests(unittest.TestCase):
         parsed = r.parse_candidates(text)
         self.assertEqual((parsed["entries"], parsed["more_entries"]), (64, 136))
         self.assertLess(len(text), 64 * (r.MAX_ENTRY_CHARS + 120) + 600)
+
+
+QUOTED = "git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none"
+NUL_FORM = "git --no-optional-locks status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none"
+SIDECAR = ".preclear/widget-export/status.txt"
+
+
+def bash(tool_id, command, result="", flagged=False):
+    return call(tool_id, "Bash", {"command": command}, result, flagged)
+
+
+def snapshot_with(files=None):
+    """A scratch snapshot folder whose preclear copy holds the given {relative path: bytes}; returns the folder."""
+    import tempfile
+
+    folder = tempfile.mkdtemp(prefix="pc-snap-")
+    for relative, data in (files or {}).items():
+        full = os.path.join(folder, *relative.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as handle:
+            handle.write(data)
+    return folder
+
+
+def verdict_words():
+    import pc_evidence
+
+    return pc_evidence.verdict_pattern()
+
+
+class StatusFormTests(unittest.TestCase):
+    """The row 10 status form: counts from tool_use events, the denial union and the filed sidecar copy (HARN-10)."""
+
+    def counts(self, calls, denied=(), snapshot=None):
+        return review().status_form_counts(stream(calls, denied), snapshot)
+
+    def test_three_executed_quoted_forms_are_counted_and_nothing_else(self) -> None:
+        found = self.counts([bash("t1", QUOTED), bash("t2", QUOTED), bash("t3", QUOTED)])
+        self.assertEqual(found["quoted_executed"], 3)
+        self.assertEqual((found["nul_redirect_executed"], found["nul_plain_executed"], found["nul_redirect_denied_ids"]), (0, 0, []))
+        self.assertEqual(found["sidecar"], {"present": False, "files": 0, "bytes": 0, "nul_bytes": 0})
+
+    def test_a_denied_nul_redirect_is_listed_with_its_id_and_is_not_an_executed_count(self) -> None:
+        found = self.counts([bash("t1", QUOTED), bash("t2", NUL_FORM + " > " + SIDECAR)], denied=["t2"])
+        self.assertEqual(found["nul_redirect_denied_ids"], ["t2"])
+        self.assertEqual((found["nul_redirect_executed"], found["nul_plain_executed"], found["quoted_executed"]), (0, 0, 1))
+
+    def test_the_expected_outcome_reads_one_or_more_quoted_and_one_denied(self) -> None:
+        found = self.counts(
+            [bash("t1", NUL_FORM + " > " + SIDECAR), bash("t2", QUOTED), bash("t3", QUOTED)], denied=["t1"]
+        )
+        self.assertGreaterEqual(found["quoted_executed"], 1)
+        self.assertEqual(len(found["nul_redirect_denied_ids"]), 1)
+        lines = review().render_status_form(found)
+        self.assertIn("nul-git-calls-denied-with-redirection: 1 (t1)", lines)
+        self.assertIn("quoted-porcelain-parts-executed: 2", lines)
+
+    def test_a_nul_command_piped_through_tr_without_a_redirect_is_an_executed_fact_not_a_redirect(self) -> None:
+        found = self.counts([bash("t1", NUL_FORM + " | tr '\\0' '\\n'")])
+        self.assertEqual(found["nul_plain_executed"], 1)
+        self.assertEqual(found["nul_redirect_executed"], 0)
+        self.assertEqual(found["quoted_executed"], 0, "the NUL form is not the quoted form")
+
+    def test_an_executed_nul_redirect_is_counted_when_it_was_not_denied(self) -> None:
+        found = self.counts([bash("t1", NUL_FORM + " > " + SIDECAR)])
+        self.assertEqual((found["nul_redirect_executed"], found["nul_redirect_denied_ids"], found["nul_plain_executed"]), (1, [], 0))
+
+    def test_a_compound_command_is_split_and_counted_per_part(self) -> None:
+        command = "ls; %s > %s; %s | wc -c && %s" % (NUL_FORM, SIDECAR, NUL_FORM, QUOTED)
+        found = self.counts([bash("t1", command)])
+        self.assertEqual(found["nul_redirect_executed"], 1)
+        self.assertEqual(found["nul_plain_executed"], 1)
+        self.assertEqual(found["quoted_executed"], 1)
+
+    def test_a_denied_call_is_judged_on_its_whole_command_and_a_denied_quoted_form_is_not_executed(self) -> None:
+        found = self.counts(
+            [bash("t1", QUOTED), bash("t2", "cd x && " + NUL_FORM + " && echo done > out.txt")], denied=["t1", "t2"]
+        )
+        self.assertEqual(found["quoted_executed"], 0)
+        self.assertEqual(found["nul_redirect_denied_ids"], ["t2"])
+
+    def test_a_denied_nul_call_with_no_redirection_is_not_listed(self) -> None:
+        found = self.counts([bash("t1", NUL_FORM)], denied=["t1"])
+        self.assertEqual(found["nul_redirect_denied_ids"], [])
+
+    def test_the_quoted_form_is_recognised_by_its_flags_so_a_harmless_extra_does_not_hide_it(self) -> None:
+        for command in (QUOTED + " 2>&1", QUOTED + " 2>/dev/null", "git -C . --no-optional-locks status --ignore-submodules=none "
+                        "--untracked-files=all --porcelain=v1", "cd project && " + QUOTED):
+            self.assertEqual(self.counts([bash("t1", command)])["quoted_executed"], 1, command)
+        for command in ("git status", "git --no-optional-locks status --porcelain=v1", "git log --porcelain=v1 "
+                        "--untracked-files=all --ignore-submodules=none", "echo " + QUOTED):
+            self.assertEqual(self.counts([bash("t1", command)])["quoted_executed"], 0, command)
+
+    def test_the_nul_flag_is_found_as_a_short_cluster_and_as_the_long_form_and_only_in_git_parts(self) -> None:
+        r = review()
+        self.assertTrue(r.has_nul_flag(["status", "-sz"]))
+        self.assertTrue(r.has_nul_flag(["status", "--null"]))
+        self.assertFalse(r.has_nul_flag(["status", "--", "-z"]), "after the separator an argument is a path")
+        self.assertFalse(r.has_nul_flag(["status", "--untracked-files=all", "-uall"]))
+        found = self.counts([bash("t1", "sort -z names.txt"), bash("t2", "git status --null | wc -c")])
+        self.assertEqual(found["nul_plain_executed"], 1, "only the git part counts")
+
+    def test_a_part_that_does_not_tokenise_is_counted_as_unparsed_never_dropped(self) -> None:
+        found = self.counts([bash("t1", 'git status "unterminated')])
+        self.assertEqual(found["unparsed_parts"], 1)
+        self.assertEqual(found["quoted_executed"], 0)
+
+    def test_other_tools_and_non_command_inputs_are_not_read(self) -> None:
+        found = self.counts([call("t1", "Write", {"command": NUL_FORM + " > x"}), call("t2", "Bash", {"command": 5}),
+                             call("t3", "Read", {"file_path": SIDECAR})])
+        self.assertEqual((found["quoted_executed"], found["nul_redirect_executed"], found["nul_plain_executed"]), (0, 0, 0))
+
+    def test_a_stream_with_none_of_it_gives_all_zero_counts_and_an_absent_sidecar(self) -> None:
+        found = self.counts([bash("t1", "ls"), bash("t2", "pwd -P")], snapshot=snapshot_with())
+        self.assertEqual((found["quoted_executed"], found["nul_redirect_executed"], found["nul_plain_executed"],
+                          found["nul_redirect_denied_ids"], found["unparsed_parts"]), (0, 0, 0, [], 0))
+        lines = review().render_status_form(found)
+        self.assertEqual(lines[-3:], ["sidecar-status-txt: absent", "sidecar-status-txt-bytes: absent",
+                                      "sidecar-status-txt-nul-bytes: absent"])
+
+    def test_a_sidecar_copy_with_a_nul_byte_is_counted_and_a_clean_one_gives_zero(self) -> None:
+        dirty = snapshot_with({"preclear/widget-export/status.txt": b"?? a\0?? b\0"})
+        found = self.counts([bash("t1", QUOTED)], snapshot=dirty)
+        self.assertEqual(found["sidecar"], {"present": True, "files": 1, "bytes": 10, "nul_bytes": 2})
+        clean = snapshot_with({"preclear/widget-export/status.txt": b'?? "odd\\nname.txt"\n'})
+        found = self.counts([bash("t1", QUOTED)], snapshot=clean)
+        self.assertEqual((found["sidecar"]["present"], found["sidecar"]["nul_bytes"]), (True, 0))
+        lines = review().render_status_form(found)
+        self.assertIn("sidecar-status-txt: present", lines)
+        self.assertIn("sidecar-status-txt-nul-bytes: 0", lines)
+        self.assertIn("sidecar-status-txt-bytes: %d" % found["sidecar"]["bytes"], lines)
+
+    def test_only_status_txt_files_under_the_preclear_copy_are_read(self) -> None:
+        folder = snapshot_with({"status.txt": b"harness own\0", "preclear/notes/other.txt": b"x\0",
+                                "auto-memory/status.txt": b"y\0", "preclear/a/b/status.txt": b"abc"})
+        sidecar = review().sidecar_facts(folder)
+        self.assertEqual(sidecar, {"present": True, "files": 1, "bytes": 3, "nul_bytes": 0})
+        self.assertEqual(review().sidecar_facts(None)["present"], False)
+        self.assertEqual(review().sidecar_facts(os.path.join(folder, "missing"))["present"], False)
+
+    def test_a_linked_sidecar_is_skipped_and_never_followed(self) -> None:
+        folder = snapshot_with({"outside.bin": b"\0\0\0", "preclear/x/keep.txt": b"k"})
+        os.symlink(os.path.join(folder, "outside.bin"), os.path.join(folder, "preclear", "x", "status.txt"))
+        self.assertFalse(review().sidecar_facts(folder)["present"])
+
+    def test_a_stream_whose_denial_signals_cannot_be_read_is_a_review_error(self) -> None:
+        with self.assertRaises(review().ReviewError):
+            review().status_form_counts([{"type": "system", "subtype": "init"}], None)
+
+    def test_a_hostile_denied_id_is_printed_as_a_question_mark(self) -> None:
+        found = {"quoted_executed": 0, "nul_redirect_executed": 0, "nul_redirect_denied_ids": ["bad id\n## Heading"],
+                 "nul_plain_executed": 0, "unparsed_parts": 0, "sidecar": {"present": False, "files": 0, "bytes": 0, "nul_bytes": 0}}
+        lines = review().render_status_form(found)
+        self.assertIn("nul-git-calls-denied-with-redirection: 1 (?)", lines)
+        self.assertTrue(all("\n" not in line for line in lines))
+
+    def test_the_section_holds_counts_ids_and_present_or_absent_and_no_verdict_word(self) -> None:
+        found = self.counts([bash("t1", QUOTED), bash("t2", NUL_FORM + " > " + SIDECAR)], denied=["t2"],
+                            snapshot=snapshot_with({"preclear/w/status.txt": b"?? a\n"}))
+        lines = review().render_status_form(found)
+        self.assertEqual(len(lines), 8)
+        for line in lines:
+            self.assertRegex(line, r"^[a-z-]+: [A-Za-z0-9 ,()_-]+$")
+            self.assertIsNone(verdict_words().search(line), line)
+        for word in ("right", "wrong", "correct", "expected", "violation", "breach", "defect"):
+            self.assertNotIn(word, " ".join(lines).lower())
+
+    def test_the_registry_names_the_status_form_for_row_10_only_and_the_analysis_is_registered(self) -> None:
+        import pc_rows
+
+        self.assertEqual(spec_of("row10-large-status").analyses, ("status-form",))
+        self.assertIn("status-form", review().ANALYSES)
+        self.assertEqual(review().STATUS_FORM_SECTION, "Row 10 status form")
+        for entry in pc_rows.build_registry():
+            if entry.row_id not in (ROW7, "row10-large-status"):
+                self.assertEqual(entry.analyses, (), entry.row_id)
+
+
+LOG_HEAD = "T=2026-11-03T10:00:0%dZ PID=%d EXIT=0 ORD=%s ARGV=%s"
+INTERNAL_ARGV = " -c core.fsmonitor= -c core.hooksPath=/dev/null status --porcelain=v2"
+
+
+def log_text(*entries) -> str:
+    """A wrapper log from (argv text, ord) pairs, one line each."""
+    return "".join((LOG_HEAD % (index % 10, 100 + index, ordinal, argv)) + "\n" for index, (argv, ordinal) in enumerate(entries))
+
+
+class GitCallJoinTests(unittest.TestCase):
+    """The pure join of the wrapper's log to the executed git parts of the stream (HARN-11)."""
+
+    def join(self, calls, log, denied=()):
+        r = review()
+        return r.join_ids(stream(calls, denied), r.parse_git_calls_log(log))
+
+    def test_an_internal_call_and_two_model_calls_get_their_labels_and_ids(self) -> None:
+        log = log_text((INTERNAL_ARGV, "-"), (" --no-optional-locks status --porcelain=v1", "1"), (" rev-parse HEAD", "-"))
+        joined = self.join([bash("t1", "git --no-optional-locks status --porcelain=v1"), bash("t2", "git rev-parse HEAD")], log)
+        self.assertEqual([(item.label, item.ids) for item in joined],
+                         [("internal", ()), ("tool-use", ("t1",)), ("tool-use", ("t2",))])
+        self.assertEqual([item.call.ordinal for item in joined], ["-", "1", "-"])
+        counts = review().git_call_counts(joined)
+        self.assertEqual(counts, {"calls": 3, "internal": 1, "matched": 2, "ambiguous": 0, "unmatched": 0, "unconfirmed": 0})
+
+    def test_two_parts_with_the_same_argv_give_the_ambiguous_label_and_every_candidate_id(self) -> None:
+        log = log_text((" status", "-"))
+        joined = self.join([bash("t1", "git status"), bash("t2", "git status")], log)
+        self.assertEqual((joined[0].label, joined[0].ids), ("ambiguous", ("t1", "t2")))
+
+    def test_two_parts_of_one_command_with_the_same_argv_are_ambiguous_with_the_one_id(self) -> None:
+        joined = self.join([bash("t1", "git status && git status")], log_text((" status", "-")))
+        self.assertEqual((joined[0].label, joined[0].ids), ("ambiguous", ("t1",)))
+
+    def test_a_call_no_part_explains_is_unmatched_and_a_denied_part_is_not_a_candidate(self) -> None:
+        joined = self.join([bash("t1", "git status")], log_text((" log -1", "-"), (" status", "-")), denied=["t1"])
+        self.assertEqual([item.label for item in joined], ["unmatched", "unmatched"])
+
+    def test_a_dash_c_call_is_internal_even_when_a_part_has_the_same_argv(self) -> None:
+        joined = self.join([bash("t1", "git -c core.x=1 status")], log_text((" -c core.x=1 status", "-")))
+        self.assertEqual(joined[0].label, "internal")
+
+    def test_a_line_cut_in_half_by_another_is_unconfirmed_and_counted_never_skipped(self) -> None:
+        good = log_text((" status", "-"), (" rev-parse HEAD", "-"))
+        cut = "T=2026-11-03T10:00:00Z PID=7 EXIT=0 OR"
+        woven = "T=2026-11-03T10:00:00Z PID=7 EXIT=0 ORD=- ARGV= --no-optional-loT=2026-11-03T10:00:01Z PID=8 EXIT=0 ORD=- ARGV= log"
+        text = good + cut + "\n" + woven + "\n" + "garbage line\n"
+        joined = self.join([bash("t1", "git status")], text)
+        self.assertEqual([item.label for item in joined], ["tool-use", "unmatched", "UNCONFIRMED", "UNCONFIRMED", "UNCONFIRMED"])
+        self.assertEqual(review().git_call_counts(joined)["unconfirmed"], 3)
+        self.assertEqual([item.call.number for item in joined], [1, 2, 3, 4, 5])
+        self.assertEqual(sum(1 for call in review().parse_git_calls_log(text) if not call.readable), 3)
+
+    def test_a_blank_line_between_calls_and_an_undecodable_argument_text_are_unconfirmed(self) -> None:
+        text = log_text((" status", "-")) + "\n" + LOG_HEAD % (3, 9, "-", " 'unbalanced") + "\n"
+        calls = review().parse_git_calls_log(text)
+        self.assertEqual([call.readable for call in calls], [True, False, False])
+
+    def test_an_empty_or_absent_log_gives_zero_counts(self) -> None:
+        for text in ("", None, 5):
+            joined = self.join([bash("t1", "git status")], text)
+            self.assertEqual(joined, [])
+            self.assertEqual(review().git_call_counts(joined), {"calls": 0, "internal": 0, "matched": 0, "ambiguous": 0,
+                                                                  "unmatched": 0, "unconfirmed": 0})
+
+    def test_the_printf_q_forms_decode_to_the_arguments(self) -> None:
+        r = review()
+        self.assertEqual(r.unquote_printf_q(" status --porcelain=v1"), ("status", "--porcelain=v1"))
+        self.assertEqual(r.unquote_printf_q(" a\\ b ''"), ("a b", ""))
+        self.assertEqual(r.unquote_printf_q(" $'odd\\nname.txt' $'t\\tq' \"d q\" 'single quote'"),
+                         ("odd\nname.txt", "t\tq", "d q", "single quote"))
+        self.assertEqual(r.unquote_printf_q(""), ())
+        for bad in ("'open", "\"open", "trail\\", "$'open"):
+            self.assertIsNone(r.unquote_printf_q(bad), bad)
+
+    def test_a_model_part_with_a_hostile_name_joins_when_the_arguments_are_equal(self) -> None:
+        joined = self.join([bash("t1", "git ls-files -- 'odd name.txt'")], log_text((" ls-files -- odd\\ name.txt", "-")))
+        self.assertEqual((joined[0].label, joined[0].ids), ("tool-use", ("t1",)))
+
+    def test_the_correlated_file_has_one_line_per_call_with_the_label_or_id_and_the_ord_value_and_a_counts_section(self) -> None:
+        log = log_text((INTERNAL_ARGV, "-"), (" status", "2"), (" status", "-"), (" log", "-")) + "cut line\n"
+        joined = self.join([bash("t1", "git status"), bash("t2", "git status")], log)
+        text = review().render_git_calls(joined)
+        lines = text.splitlines()
+        self.assertIn("call 1: internal ORD=- EXIT=0", lines)
+        self.assertIn("call 2: ambiguous t1 t2 ORD=2 EXIT=0", lines)
+        self.assertIn("call 4: unmatched ORD=- EXIT=0", lines)
+        self.assertIn("line 5: UNCONFIRMED", lines)
+        self.assertEqual(lines[lines.index("counts:") + 1], "calls-logged: 5")
+        self.assertIsNone(verdict_words().search(text))
+        self.assertTrue(text.endswith("\n"))
+
+    def test_the_digest_state_is_not_recorded_yes_no_or_unconfirmed(self) -> None:
+        import hashlib
+        import json
+        import tempfile
+
+        base = tempfile.mkdtemp(prefix="pc-gitwrap-")
+        raw, wrapper = os.path.join(base, "raw"), os.path.join(base, "gitwrap")
+        os.makedirs(raw)
+        os.makedirs(wrapper)
+        state = review().wrapper_digest_state
+        self.assertEqual(state(raw, wrapper), "not recorded")
+        shim = b"#!/bin/bash\nexec git \"$@\"\n"
+        with open(os.path.join(wrapper, "git"), "wb") as handle:
+            handle.write(shim)
+        with open(os.path.join(wrapper, "fire-on"), "wb") as handle:
+            handle.write(b"1\n")
+        record = {"git": hashlib.sha256(shim).hexdigest(), "fire-on": hashlib.sha256(b"1\n").hexdigest()}
+        with open(os.path.join(raw, "gitwrap-digests.json"), "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+        self.assertEqual(state(raw, wrapper), "yes")
+        with open(os.path.join(wrapper, "fire-on"), "ab") as handle:
+            handle.write(b"2\n")
+        self.assertEqual(state(raw, wrapper), "no")
+        other = tempfile.mkdtemp(prefix="pc-gitwrap-bad-")
+        for bad in ("not json", "[]", "{}", json.dumps({"../x": "0" * 64}), json.dumps({"git": "zz"})):
+            os.makedirs(os.path.join(other, bad.encode("utf-8").hex()[:20]), exist_ok=True)
+            folder = os.path.join(other, bad.encode("utf-8").hex()[:20])
+            with open(os.path.join(folder, "gitwrap-digests.json"), "w", encoding="utf-8") as handle:
+                handle.write(bad)
+            self.assertEqual(state(folder, wrapper), "UNCONFIRMED", bad)
+        record["fire-on"] = hashlib.sha256(b"1\n2\n").hexdigest()
+        with open(os.path.join(wrapper, "extra"), "wb") as handle:
+            handle.write(b"x")
+        record["extra"] = hashlib.sha256(b"x").hexdigest()
+        with open(os.path.join(raw, "gitwrap-digests.json"), "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+        self.assertEqual(state(raw, wrapper), "yes")
+        os.symlink(os.path.join(wrapper, "extra"), os.path.join(wrapper, "linked"))
+        record["linked"] = record["extra"]
+        with open(os.path.join(raw, "gitwrap-digests.json"), "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+        self.assertEqual(state(raw, wrapper), "no", "a recorded file that is a link is a difference")
+
+    def test_the_analysis_with_no_wrapper_files_reports_zero_calls_and_not_recorded(self) -> None:
+        import pc_evidence
+
+        run = scripted_chain(ENTRIES, [READ_PLAN])
+        data = pc_evidence.load_stage_data(run.run_root)
+        spec = spec_of(ROW7)._replace(analyses=("git-calls",))
+        title, lines, files = review().ANALYSES["git-calls"](spec, data, {}, lambda text: text)
+        self.assertEqual(title, "Git wrapper calls")
+        self.assertIn("calls-logged: 0", lines)
+        self.assertIn("wrapper-log: absent", lines)
+        self.assertIn("injection-log: absent", lines)
+        self.assertIn("wrapper-files-equal-setup-digests: not recorded", lines)
+        self.assertIn("git-calls-correlated.txt", files)
+        self.assertNotIn("git-calls.log", files)
+        self.assertNotIn("injection.log", files)
+
+    def test_the_analysis_reads_the_wrapper_log_the_injection_log_and_the_digest_record_from_the_run_root(self) -> None:
+        import hashlib
+        import json
+
+        import pc_evidence
+
+        stages = row7_stages(reply=reply_with(block_with(ENTRIES)), extra_s2_ops=[
+            {"op": "tool", "name": "Bash", "input": {"command": "git status"}, "content": ""}])
+        run = Row7Run(stages=stages)
+        wrapper = os.path.join(run.run_root, "ckpt", "gitwrap")
+        os.makedirs(wrapper)
+        shim = b"#!/bin/bash\n"
+        with open(os.path.join(wrapper, "git"), "wb") as handle:
+            handle.write(shim)
+        log = log_text((INTERNAL_ARGV, "-"), (" status", "1"))
+        with open(os.path.join(wrapper, "git-calls.log"), "w", encoding="utf-8") as handle:
+            handle.write(log)
+        with open(os.path.join(wrapper, "injection.log"), "w", encoding="utf-8") as handle:
+            handle.write("INJECTED ORD=1\n")
+        with open(os.path.join(run.run_root, "raw", "gitwrap-digests.json"), "w", encoding="utf-8") as handle:
+            json.dump({"git": hashlib.sha256(shim).hexdigest()}, handle)
+        data = pc_evidence.load_stage_data(run.run_root)
+        spec = spec_of(ROW7)._replace(analyses=("git-calls",))
+        _title, lines, files = review().ANALYSES["git-calls"](spec, data, {}, lambda text: text)
+        self.assertIn("calls-logged: 2", lines)
+        self.assertIn("calls-internal: 1", lines)
+        self.assertIn("calls-matched-to-one-tool-use: 1", lines)
+        self.assertIn("wrapper-log: present", lines)
+        self.assertIn("injection-log: present", lines)
+        self.assertIn("wrapper-files-equal-setup-digests: yes", lines)
+        self.assertEqual(files["git-calls.log"], log.encode("utf-8"))
+        self.assertEqual(files["injection.log"], b"INJECTED ORD=1\n")
+        self.assertRegex(files["git-calls-correlated.txt"].decode("utf-8"), r"call 2: toolu_[0-9]+ ORD=1 EXIT=0")
 
 
 if __name__ == "__main__":

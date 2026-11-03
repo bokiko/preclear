@@ -978,7 +978,7 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_r
         for stage in data.stages
     )
     traces = ", ".join("%s-full-trace.md" % stage_label(row, stage.name) for stage in data.stages)
-    return [
+    lines = [
         "- [ ] helper calls (all stages): attempted %d, executed %d, denied %d, compound refusals %d "
         "(source: %s%s)"
         % (
@@ -1001,6 +1001,44 @@ def checklist_lines(data: RunData, facts: Mapping[str, Any], spec: Optional[pc_r
         "- [ ] session ids per stage: %s (source: session.id, session-resume.id, usage.txt)" % (ids or UNCONFIRMED),
         "- [ ] cost and turns per stage: %s (source: usage.txt)" % (costs or UNCONFIRMED),
     ]
+    if pc_rows.ANALYSIS_STATUS_FORM in row.analyses:
+        lines.append(_status_form_checklist_line(data, row))
+    return lines
+
+
+def _status_form_checklist_line(data: RunData, row: pc_rows.RowSpec) -> str:
+    """The row 10 checklist line: the expected outcome in the plan's words with the status-form counts beside it.
+
+    The counts are read from the /preclear stream and the filed sidecar copy (pc_review.status_form_counts), never
+    from the reply; the line states what was expected and prints facts, and the reviewer ticks it.
+    """
+    import pc_review  # imported late: pc_review imports this module
+
+    head = "- [ ] expected outcome, quoted-porcelain fallback and NUL redirect refused: "
+    tail = " (source: mechanical-checks.md Row 10 status form, the /preclear full trace, snap-2-after-preclear/preclear)"
+    stage = next((item for item in data.stages if _stage_kind(row, item.name) == "preclear"), None)
+    if stage is None or stage.events is None:
+        return head + UNCONFIRMED + tail
+    snapshot = os.path.join(str(data.paths["snaps"]), _row1().SNAPSHOT_NAMES.get(stage.name, "snap-2-after-preclear"))
+    try:
+        counts = pc_review.status_form_counts(stage.events, snapshot)
+    except pc_review.ReviewError:
+        return head + UNCONFIRMED + tail
+    sidecar = counts["sidecar"]
+    side = (
+        "present, %d bytes, %d NUL bytes" % (sidecar["bytes"], sidecar["nul_bytes"]) if sidecar["present"] else "absent"
+    )
+    return head + (
+        "quoted form executed %d, NUL form executed with a redirection %d, NUL form denied with a redirection %d, "
+        "NUL form executed without a redirection %d, sidecar status.txt %s"
+        % (
+            counts["quoted_executed"],
+            counts["nul_redirect_executed"],
+            len(counts["nul_redirect_denied_ids"]),
+            counts["nul_plain_executed"],
+            side,
+        )
+    ) + tail
 
 
 def _printed_checkpoint_line(chain: Optional[Mapping[str, Any]]) -> str:
