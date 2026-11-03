@@ -583,6 +583,30 @@ run root gives the same facts.
   the number of executed Bash command parts whose program is that program, read with the same rules as the write
   checks (comments, heredoc bodies and quoted text are data, a command substitution is a command of its own, a path
   to the program counts, a denied call never ran and is not counted). They are counts for the reviewer, not a verdict.
+- The `Row 10 status form` section (row 10 only, the analysis id `status-form`). The expected outcome of row 10 is
+  the documented quoted-porcelain fallback with the NUL redirect refused, and the row README checklist line reads
+  "expected outcome, quoted-porcelain fallback and NUL redirect refused" with the counts beside it. The counts are
+  read from the structured tool_use events, the structured denial union and the filed sidecar copy, never from the
+  reply: five counts, namely the executed parts that are the quoted porcelain form (a git status holding
+  `--porcelain=v1`, `--untracked-files=all` and `--ignore-submodules=none` and no `-z`, recognised by its flags, so
+  a harmless extra does not hide it), the executed git parts that hold `-z` (or `--null`) together with an output
+  redirection, the denied calls whose command holds such a part and a redirection (their tool_use ids are printed),
+  the executed git parts that hold `-z` with no redirection, and the NUL bytes in the sidecar `status.txt`; with them
+  the parts that did not tokenise and whether the sidecar copy is present or absent and its size. Each command is split
+  into parts with the allowlist splitter and read with the tokeniser and redirection reader of the write checks, so a
+  redirection inside one part of a compound command is counted for that part. An executed `-z` command with no
+  redirection is a fact and not a defect: the prefix rule for `git --no-optional-locks status` matches it, and the
+  spike ran one. The section holds counts, ids and the words present and absent and never says whether the fallback was
+  right. That no exception exists is proved by a test, not by this text: a static scan over every rule list the harness
+  can build (each profile with each extra set of the registry) and over the committed `tools.txt` of the committed rows
+  10 and 11 finds no rule that holds `-z`, a redirection character, `tee`, `--output`, a NUL or `status.txt`, and the
+  same scan is shown to fail on a hand-built list that holds one. The sidecar is read from the filed copy of the
+  project's `.preclear` folder in the second snapshot; a NUL byte in a filed file is refused by the leak gate, so a
+  sidecar that holds one is counted and the row is not filed. A second analysis, `git-calls`, joins the one-line-per-call
+  log of the git wrapper to the executed git parts of the stream (a call that starts with `-c` is Claude Code's own and
+  is labelled internal, a call equal to one executed part carries its tool_use id, a call equal to several carries every
+  candidate id and the label ambiguous, a line that cannot be read is counted as UNCONFIRMED) and prints whether the
+  wrapper files still equal the digests recorded at setup; it is used by the row that runs with the wrapper.
 - The run record guard. A guard file is written into the raw folder at setup and after every stage and every hook
   boundary, holding
   the digest of every raw file except the append-only hook log, the tree digest of every snapshot folder, and
@@ -717,7 +741,8 @@ exits 0 when it finds none and 1 otherwise.
 A row whose registry entry names analyses runs them when its chain is complete (every stage with the marker found, or
 the stages that ran with the none marker), from the data the filing already read; a STOPPED label has no printed
 checkpoint to pair and runs none. Each analysis returns a section for `mechanical-checks.md` and flat files for the row
-folder, and an analysis id the code does not know is refused with nothing filed. Row 7 names two.
+folder, and an analysis id the code does not know is refused with nothing filed. Row 7 names two and row 10 names one
+(`status-form`, described under what the mechanical checks measure).
 
 The `Row 7 facts` section of `mechanical-checks.md` counts, from tool calls and tool results only and never from the
 reply: executed Write and Edit calls under the project's `.preclear` folder, errored writes there with their tool_use
@@ -817,8 +842,8 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_row1.py` - row 1 and the engine every row runs through: the seed, the snapshots, the stage chain (resume line or printed checkpoint), the probe call and the init and instruction-audit assertions
 - `pc_rowhooks.py` - the between-stage hooks and their finalizers, the live chmod probe, the boundary plan of a row and the mode-only `perms.txt`
-- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups
-- `pc_review.py` - the Do-not-redo review: the entries of a printed checkpoint, the mechanical candidates for each, the row 7 facts, the candidate file and the side-by-side review table
+- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups, the git shapes and the row 8a to 10 setups
+- `pc_review.py` - the Do-not-redo review: the entries of a printed checkpoint, the mechanical candidates for each, the row 7 facts, the candidate file and the side-by-side review table; the row 10 status-form counts and the join of git wrapper log lines to tool_use ids
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
@@ -856,7 +881,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_row_generic.py` - tests for a row run from its registry entry: row 4a, the seed byte-tie, per-row filing and the row 1 parity
 - `test_rows_plain.py` - tests for the plain rows 5a and 5b: the seed byte-tie, the 35-rule allowlist, the memory settings and assertion and a scripted chain of each
 - `test_row7.py` - tests for row 7: the live chmod probe and the SKIPPED label, the 555 restriction and its restore, the printed-checkpoint chain and its fence scanner, including the committed replies
-- `test_rows_git.py` - tests for the git-shaped rows 8a, 8b, 8c and 9: the git shape seeds and their byte-tie, the no-git and worktree git states, the main-checkout exclusion and a scripted chain of each
+- `test_rows_git.py` - tests for the git-shaped rows 8a, 8b, 8c, 9 and 10: the git shape seeds and their byte-tie, the no-git and worktree git states, the main-checkout exclusion, the row 10 hostile tree and status form, the static allowlist scan and a scripted chain of each
 - `test_review.py` - tests for the Do-not-redo review: the entry parser, the token and candidate rules, the row 7 facts, the candidate file, the review table, hostile text and the caps
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer

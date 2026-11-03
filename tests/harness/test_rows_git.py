@@ -1600,5 +1600,119 @@ class Row10StatusFormChainTests(unittest.TestCase):
         self.assertEqual(len(counts["nul_redirect_denied_ids"]), 1)
 
 
+BANNED_IN_A_RULE = ("-z", ">", "<", "tee", "--output", "\0", "status.txt")
+STAND_IN_WRAPPER = "/standin/wrapper/checkpoint"
+COMMITTED_TOOLS_FILES = ("row10-large-status-rerun", "row11-concurrent-change-rerun")
+
+
+def banned_found(rules) -> list:
+    """The (rule, banned fragment) pairs of a rule list: a rule that holds -z, a redirection character, tee, --output, a NUL or status.txt."""
+    found = []
+    for rule in rules:
+        for fragment in BANNED_IN_A_RULE:
+            if fragment in rule:
+                found.append((rule, fragment))
+    return found
+
+
+def every_buildable_rule_list() -> list:
+    """(label, rules) for each registry entry's own list and for every profile with every extra set of the registry."""
+    import pc_flags
+
+    registry = rows().build_registry()
+    profiles = (pc_flags.PROFILE_HELPER, pc_flags.PROFILE_PLAIN, pc_flags.PROFILE_GIT)
+    extras = sorted(set(tuple(entry.extra_tools) for entry in registry))
+    built = []
+    for entry in registry:
+        built.append((entry.row_id, pc_flags.build_row_tools(entry.tools_profile, STAND_IN_WRAPPER, entry.extra_tools)))
+    for profile in profiles:
+        for extra in extras:
+            built.append((profile + " with " + ",".join(extra), pc_flags.build_row_tools(profile, STAND_IN_WRAPPER, extra)))
+    return built
+
+
+class AllowlistStaticTests(unittest.TestCase):
+    """No allowlist the harness can build, and no committed tools file of rows 10 and 11, holds a redirection or NUL-form rule (HARN-10, T-04-43)."""
+
+    def test_the_registry_holds_the_profiles_and_extra_sets_the_scan_must_cover(self) -> None:
+        built = every_buildable_rule_list()
+        labels = [label for label, _rules in built]
+        self.assertIn(ROW10, labels)
+        self.assertIn("helper with ", labels)
+        self.assertIn("plain with Bash(chmod:*),Bash(touch:*)", labels)
+        self.assertIn("git with ", labels)
+        self.assertGreaterEqual(len(built), len(rows().build_registry()) + 3 * 2)
+
+    def test_no_rule_of_any_buildable_allowlist_holds_a_nul_form_a_redirection_tee_output_or_the_sidecar(self) -> None:
+        for label, rules in every_buildable_rule_list():
+            self.assertEqual(banned_found(rules), [], label)
+
+    def test_the_stand_in_wrapper_path_is_free_of_every_banned_fragment_so_the_helper_scan_is_not_vacuous(self) -> None:
+        import pc_flags
+
+        helper = pc_flags.build_row_tools(pc_flags.PROFILE_HELPER, STAND_IN_WRAPPER)
+        self.assertGreater(len(helper), len(pc_flags.BASELINE_ALLOWED_TOOLS), "wrapper rules are in the list")
+        self.assertEqual(banned_found([STAND_IN_WRAPPER]), [])
+
+    def test_row_10_and_row_11_use_the_baseline_alone_in_the_registry(self) -> None:
+        import pc_flags
+
+        for row_id in (ROW10, "row11-concurrent-change"):
+            entries = [e for e in rows().build_registry() if e.row_id == row_id and e.implemented]
+            if not entries:
+                continue  # row 11 is listed but not implemented until plan 04-12
+            entry = entries[0]
+            self.assertEqual(entry.extra_tools, (), row_id)
+            self.assertEqual(
+                pc_flags.build_row_tools(entry.tools_profile, STAND_IN_WRAPPER, entry.extra_tools),
+                tuple(pc_flags.BASELINE_ALLOWED_TOOLS),
+                row_id,
+            )
+
+    def test_the_committed_tools_files_of_rows_10_and_11_hold_no_such_rule(self) -> None:
+        for folder in COMMITTED_TOOLS_FILES:
+            rules = read_text(committed(folder, "tools.txt")).strip().split(",")
+            self.assertGreater(len(rules), 30, folder)
+            self.assertEqual(banned_found(rules), [], folder)
+
+    def test_the_committed_row_10_file_holds_the_status_prefix_rule_that_matches_a_nul_command_without_a_redirect(self) -> None:
+        import pc_allowlist
+
+        rules = read_text(committed(COMMITTED_TOOLS_FILES[0], "tools.txt")).strip().split(",")
+        self.assertIn("Bash(git --no-optional-locks status:*)", rules)
+        self.assertTrue(pc_allowlist.is_allowed(STATUS_NUL, rules).allowed, "the prefix rule allows a -z command without a redirect")
+        self.assertTrue(pc_allowlist.is_allowed(STATUS_QUOTED, rules).allowed)
+
+    def test_the_refusal_of_the_redirect_is_the_binarys_own_layer_as_the_committed_trace_shows_not_a_rule(self) -> None:
+        import pc_allowlist
+
+        rules = list(__import__("pc_flags").BASELINE_ALLOWED_TOOLS)
+        # the harness matcher models the prefix rules only: it reads the redirected command as the allowed prefix,
+        # so no allowlist rule is what refuses the redirect; the committed trace holds the binary's own refusal text
+        self.assertTrue(pc_allowlist.is_allowed(STATUS_NUL + " > " + SIDECAR_PATH, rules).allowed)
+        trace = read_text(committed(COMMITTED_TOOLS_FILES[0], "s2-preclear-full-trace.md"))
+        self.assertIn("Output redirection to", trace)
+        self.assertIn("needs approval", trace)
+        self.assertIn("-z --untracked-files=all --ignore-submodules=none > .preclear/widget-export/status.txt", trace)
+
+    def test_the_scan_can_fail_on_a_hand_built_list_with_a_redirection_or_a_nul_rule(self) -> None:
+        import pc_flags
+
+        base = list(pc_flags.BASELINE_ALLOWED_TOOLS)
+        hand_built = (
+            "Bash(git --no-optional-locks status --porcelain=v1 -z:*)",
+            "Bash(git --no-optional-locks status > .preclear/widget-export/status.txt:*)",
+            "Bash(cat < notes.md)",
+            "Bash(tee:*)",
+            "Bash(git diff --output=out.txt:*)",
+            "Bash(cat status.txt)",
+            "Bash(printf a\0b:*)",
+        )
+        for rule in hand_built:
+            self.assertNotEqual(banned_found(base + [rule]), [], rule)
+            self.assertEqual(banned_found(base), [], "the baseline alone is clean")
+        self.assertEqual(len(banned_found(base + list(hand_built))), len(hand_built) + 1, "a rule can hold two fragments")
+
+
 if __name__ == "__main__":
     unittest.main()
