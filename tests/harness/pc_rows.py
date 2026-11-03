@@ -36,14 +36,15 @@ ROW8A = "row8a-non-git"
 ROW8B = "row8b-detached-head"
 ROW8C = "row8c-unborn-branch"
 ROW9 = "row9-linked-worktree"
+ROW10 = "row10-large-status"
 
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
 PROFILE_HELPER = "helper"
 # PROFILE_PLAIN is the baseline alone (no wrapper rule of any kind); a row adds its own extra rules in RowSpec.extra_tools.
 PROFILE_PLAIN = "plain"
-# PROFILE_GIT is the baseline alone as well, with no extra rule: the git-shaped rows 8a to 9 need neither chmod nor touch
-# (plan 04-09). It is a separate word so a row's registry entry says which family it belongs to.
+# PROFILE_GIT is the baseline alone as well, with no extra rule: the git-shaped rows 8a to 10 need neither chmod nor touch
+# (plans 04-09 and 04-10). It is a separate word so a row's registry entry says which family it belongs to.
 PROFILE_GIT = "git"
 
 # Memory policies (RowSpec.memory): what the run settings say about Claude Code's auto-memory. In both the directory is
@@ -68,6 +69,9 @@ PROBE_CHMOD = "chmod-denial"
 ANALYSIS_ROW7_FACTS = "row7-facts"
 ANALYSIS_DO_NOT_REDO = "do-not-redo"
 ROW7_ANALYSES: Tuple[str, ...] = (ANALYSIS_ROW7_FACTS, ANALYSIS_DO_NOT_REDO)
+# Row 10 counts, from the stream and the filed sidecar copy, how the status was read (plan 04-10; HARN-10).
+ANALYSIS_STATUS_FORM = "status-form"
+ROW10_ANALYSES: Tuple[str, ...] = (ANALYSIS_STATUS_FORM,)
 
 LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
 
@@ -321,6 +325,9 @@ _PUBLICATION_8A = _PUBLICATION_ROOT + "/row8a-non-git"
 _PUBLICATION_8B = _PUBLICATION_ROOT + "/row8b-detached-head"
 _PUBLICATION_8C = _PUBLICATION_ROOT + "/row8c-unborn-branch"
 _PUBLICATION_9 = _PUBLICATION_ROOT + "/row9-linked-worktree"
+# Row 10 (large status, plan 04-10) reads the committed rerun folder: its s2 prompt and fixture are the ones of the corrected
+# allowlist; the first pass is not the reference.
+_PUBLICATION_10 = _PUBLICATION_ROOT + "/row10-large-status-rerun"
 _GIT_ROW_STAGES: Tuple[StageSpec, ...] = _ROW1_STAGES
 _ROW8A_SETUP_TEXT = (
     "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger, and no "
@@ -350,6 +357,16 @@ _ROW9_SETUP_TEXT = (
     "snapshots and keeps every other file of the main checkout under watch, so the row speaks to content preservation of "
     "the main checkout and not to the absence of every git metadata access. A work turn comes first, then the /preclear "
     "turn in the same session, then a fresh session that pastes the resume line the /preclear turn printed."
+)
+_ROW10_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. The "
+    "repository holds one commit on main and then 124 untracked files that make a large status listing hard to read: "
+    "90 sample files in a folder whose name holds a space, two folders with Japanese and Arabic names holding 15 files each, "
+    "files whose names hold a newline, two double quotes and a tab, or two leading spaces, and a notes file with "
+    "Japanese and Arabic text. The allowlist is the 33-rule baseline alone: it holds no rule for the NUL form of the "
+    "status command, for a redirection or for a status file. A work turn comes first, then the /preclear turn in the "
+    "same session, then a fresh session that pastes the resume line the /preclear turn printed. The harness reads "
+    "the status form from the stream afterwards and counts it; it does not say which form was right."
 )
 
 _ROW1_SETUP_TEXT = (
@@ -542,6 +559,22 @@ def _registered_rows() -> Dict[str, RowSpec]:
             seed="pc_rowseeds:seed_row9",
             prompts=_plain_prompts(_PUBLICATION_9),
             setup_text=_ROW9_SETUP_TEXT,
+            tools_profile=PROFILE_GIT,
+            memory=MEMORY_PINNED,
+            chain=CHAIN_RESUME_LINE,
+        ),
+        ROW10: RowSpec(
+            ROW10,
+            KIND_ROW,
+            "Row 10: large status, hostile file names, non-Latin text (1P + 1R)",
+            _GIT_ROW_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW10),
+            _plain_sources(_PUBLICATION_10),
+            seed="pc_rowseeds:seed_row10",
+            prompts=_plain_prompts(_PUBLICATION_10),
+            setup_text=_ROW10_SETUP_TEXT,
             tools_profile=PROFILE_GIT,
             memory=MEMORY_PINNED,
             chain=CHAIN_RESUME_LINE,

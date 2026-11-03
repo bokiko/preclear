@@ -280,9 +280,9 @@ class GitShapeSeedTests(unittest.TestCase):
                 seeded.ctx.evidence_date, seeded.ctx.model,
             )
 
-    def test_the_shape_words_are_the_five_the_plan_names(self) -> None:
+    def test_the_shape_words_are_the_five_of_plan_04_09_and_large_of_plan_04_10(self) -> None:
         self.assertEqual(
-            rowseeds().GIT_SHAPES, ("commit", "detached", "unborn", "none", "worktree")
+            rowseeds().GIT_SHAPES, ("commit", "detached", "unborn", "none", "worktree", "large")
         )
 
 
@@ -1221,6 +1221,259 @@ class WorktreeChainTests(unittest.TestCase):
         self.assertEqual(os.listdir(run.ctx.destination), ["STOPPED-" + ROW9])
         self.assertTrue(any("could not be checked against the setup record" in line for line in run.outcome.lines))
         self.assertEqual(len(run.rig.calls()), 1)
+
+
+ROW10 = "row10-large-status"
+ROW10_COMMITTED = "row10-large-status-rerun"
+JA_FOLDER_POINTS = [0x30C7, 0x30FC, 0x30BF]
+JA_FILE_POINTS = [0x30C6, 0x30B9, 0x30C8]
+AR_FOLDER_POINTS = [0x0645, 0x0644, 0x0641, 0x0627, 0x062A]
+AR_FILE_POINTS = [0x0645, 0x0644, 0x0641]
+HARNESS_SOURCES_OF_ROW10 = ("pc_rows.py", "pc_rowseeds.py", "pc_review.py", "test_rows_git.py", "test_review.py")
+
+
+def text_of(points: list) -> str:
+    return "".join(chr(point) for point in points)
+
+
+def untracked_hostile(folder: str) -> list:
+    """The untracked entries of a seeded project that are not the skill copy, from the NUL form (no quoting)."""
+    raw = git_out(folder, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    entries = [item for item in raw.split("\0") if item]
+    names = []
+    for entry in entries:
+        assert entry.startswith("?? "), entry
+        name = entry[3:]
+        if not name.startswith(".claude/skills/preclear/"):
+            names.append(name)
+    return names
+
+
+class Row10Tests(unittest.TestCase):
+    """Row 10 (plan 04-10; HARN-10): the hostile tree, the baseline allowlist and a scripted three-stage chain."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.seeded = SeededGit(ROW10, "git-seed-row10")
+        cls.chain = run_git_row(ROW10, "main @ abc1234")
+        assert cls.chain.outcome.code == 0, "\n".join(cls.chain.outcome.lines)
+
+    def read(self, name: str) -> str:
+        return read_text(os.path.join(self.chain.row_dir, name))
+
+    # -- the seed ---------------------------------------------------------------------------------------------
+
+    def test_the_seeded_claude_md_equals_the_committed_rerun_fixture_and_the_plan_equals_the_plain_plan(self) -> None:
+        data = read_bytes(os.path.join(self.seeded.project, "CLAUDE.md"))
+        self.assertEqual(data, read_bytes(committed(ROW10_COMMITTED, "fixture-CLAUDE.md")), "byte for byte")
+        self.assertEqual(hashlib.sha256(data).hexdigest(), sha_lines(ROW10_COMMITTED)["project/CLAUDE.md"])
+        self.assertTrue(hashlib.sha256(data).hexdigest().startswith(CLAUDE_MD_DIGEST_PREFIX))
+        plan = read_bytes(os.path.join(self.seeded.project, *PLAN_RELATIVE.split("/")))
+        self.assertEqual(plan, read_bytes(os.path.join(DATA, "plain-plan.md")))
+        self.assertEqual(hashlib.sha256(plan).hexdigest(), PLAN_DIGEST)
+
+    def test_one_commit_on_main_holds_only_the_instruction_file_and_the_plan(self) -> None:
+        self.assertEqual(self.seeded.git("rev-list", "--count", "HEAD").strip(), "1")
+        self.assertEqual(self.seeded.git("symbolic-ref", "-q", "HEAD").strip(), "refs/heads/main")
+        self.assertEqual(self.seeded.git("ls-files").split(), ["CLAUDE.md", PLAN_RELATIVE])
+
+    def test_exactly_124_hostile_entries_are_untracked_and_they_are_the_named_set(self) -> None:
+        found = untracked_hostile(self.seeded.project)
+        self.assertEqual(len(found), 124)
+        self.assertEqual(sorted(found), sorted(rowseeds().hostile_names()))
+        self.assertEqual(rowseeds().HOSTILE_COUNT, 124)
+        status = self.seeded.git("status", "--porcelain=v1", "--untracked-files=all")
+        self.assertNotIn("\n M ", "\n" + status, "nothing is modified and nothing is staged")
+        self.assertEqual(self.seeded.git("diff", "--cached", "--name-only"), "")
+
+    def test_the_sample_folder_holds_90_files_and_each_non_latin_folder_15_with_the_stated_code_points(self) -> None:
+        found = untracked_hostile(self.seeded.project)
+        samples = [name for name in found if name.startswith("data/raw files/sample ")]
+        self.assertEqual(sorted(samples), sorted("data/raw files/sample %d.csv" % number for number in range(1, 91)))
+        ja = text_of(JA_FOLDER_POINTS) + "/" + text_of(JA_FILE_POINTS) + " "
+        ar = text_of(AR_FOLDER_POINTS) + "/" + text_of(AR_FILE_POINTS) + " "
+        self.assertEqual(sorted(name for name in found if name.startswith(ja)), sorted(ja + "%d.txt" % n for n in range(1, 16)))
+        self.assertEqual(sorted(name for name in found if name.startswith(ar)), sorted(ar + "%d.txt" % n for n in range(1, 16)))
+
+    def test_the_three_special_names_have_the_stated_shapes(self) -> None:
+        found = untracked_hostile(self.seeded.project)
+        with_newline = [name for name in found if "\n" in name]
+        self.assertEqual(with_newline, ["odd\nname.txt"])
+        quoted = [name for name in found if '"' in name]
+        self.assertEqual(quoted, ['quote"and"tab\tname.md'])
+        self.assertEqual(quoted[0].count('"'), 2)
+        self.assertEqual(quoted[0].count("\t"), 1)
+        spaced = [name for name in found if name.startswith(" ")]
+        self.assertEqual(spaced, ["  leading-space.txt"])
+
+    def test_notes_md_holds_text_of_both_scripts_and_every_hostile_file_is_small_text(self) -> None:
+        notes = read_bytes(os.path.join(self.seeded.project, "NOTES.md")).decode("utf-8")
+        self.assertTrue(any(0x3040 <= ord(ch) <= 0x30FF for ch in notes), "Japanese text")
+        self.assertTrue(any(0x0600 <= ord(ch) <= 0x06FF for ch in notes), "Arabic text")
+        for name in rowseeds().hostile_names():
+            data = read_bytes(os.path.join(self.seeded.project, *name.split("/")))
+            self.assertTrue(0 < len(data) < 200, name)
+            self.assertNotIn(b"\0", data)
+
+    def test_no_harness_source_of_the_row_holds_a_non_ascii_character(self) -> None:
+        for name in HARNESS_SOURCES_OF_ROW10:
+            path = os.path.join(HARNESS_DIR, name)
+            if not os.path.exists(path):
+                continue
+            wide = [line for line in read_bytes(path).decode("utf-8").split("\n") if not line.isascii()]
+            if name == "pc_review.py":
+                # plan 04-07 left one character class with literal spacing characters; this plan adds none
+                self.assertEqual(len(wide), 1, name)
+                self.assertTrue(wide[0].startswith("_CONTROL = re.compile("), name)
+            else:
+                self.assertEqual(wide, [], name)
+
+    def test_the_hostile_tree_exists_only_inside_the_run_root(self) -> None:
+        for name in ("odd\nname.txt", "  leading-space.txt", "NOTES.md"):
+            self.assertFalse(os.path.lexists(os.path.join(ROOT, name)), name)
+        self.assertFalse(os.path.lexists(os.path.join(ROOT, "data", "raw files")))
+
+    def test_the_manifest_listing_holds_the_newline_name_escaped_on_one_line(self) -> None:
+        import pc_manifest
+
+        entries = pc_manifest.tree_manifest(self.seeded.project)
+        listing = pc_manifest.sha_txt_bytes(entries).decode("utf-8")
+        lines = listing.split("\n")
+        self.assertEqual(lines[-1], "")
+        escaped = [line for line in lines if line.endswith("odd\\nname.txt")]
+        self.assertEqual(len(escaped), 1)
+        self.assertTrue(escaped[0].startswith("\\"), "the escape marker leads the line")
+        for line in lines[:-1]:
+            self.assertRegex(line, r"\A\\?[0-9a-f]{64}  .+\Z")
+        self.assertEqual(len(lines) - 1, len([e for e in entries if e["kind"] == "f"]))
+        companion = pc_manifest.jsonl_bytes(entries)
+        self.assertTrue(companion.isascii(), "the lossless companion is ASCII JSON")
+        self.assertEqual(len(companion.splitlines()), len(entries))
+
+    # -- the registry entry -----------------------------------------------------------------------------------
+
+    def test_row_10_is_registered_with_three_stages_the_baseline_allowlist_and_the_resume_line_chain(self) -> None:
+        pc_rows = rows()
+        spec = spec_of(ROW10)
+        self.assertTrue(spec.implemented)
+        self.assertEqual(
+            [(s.name, s.kind, s.max_turns, str(s.cap), s.timeout, s.session) for s in spec.stages],
+            [("s1", "work", 15, "0.30", 900, "new:A"), ("s2", "preclear", 60, "1.30", 1800, "resume:A"),
+             ("s3", "resume", 15, "0.40", 900, "new:B")],
+        )
+        self.assertEqual(spec.tools_profile, pc_rows.PROFILE_GIT)
+        self.assertEqual(spec.extra_tools, ())
+        self.assertEqual(spec.memory, pc_rows.MEMORY_PINNED)
+        self.assertEqual(spec.chain, pc_rows.CHAIN_RESUME_LINE)
+        self.assertEqual((spec.hooks, spec.probe), ((), pc_rows.PROBE_NONE))
+        self.assertEqual(spec.seed, "pc_rowseeds:seed_row10")
+        self.assertEqual(pc_rows.worst_case(spec), pc_rows.Decimal("2.00") if hasattr(pc_rows, "Decimal") else spec.stages[0].cap + spec.stages[1].cap + spec.stages[2].cap)
+        self.assertEqual(dict(spec.prompts)["s2"], rowseeds().ROW10_FOLDER + "/s2-preclear-prompt.md")
+        self.assertIn((rowseeds().ROW10_FOLDER + "/fixture-CLAUDE.md", "file"), spec.sources)
+        self.assertTrue(spec.setup_text.startswith("Setup: "))
+        self.assertIsNone(SHAPED.search(spec.setup_text))
+        self.assertTrue(spec.setup_text.isascii())
+
+    def test_the_dry_run_prints_the_plan_and_starts_no_process_and_list_marks_the_row_implemented(self) -> None:
+        code, text, tripwire, base = dry_run_row(ROW10)
+        self.assertEqual(code, 0, text)
+        self.assertIn("%s: 3 stages, 2 sessions" % ROW10, text)
+        lines = [line for line in text.splitlines() if line.strip().startswith(("s1", "s2", "s3"))]
+        self.assertEqual(len(lines), 3)
+        for line, turns, cap in zip(lines, ("15 turns", "60 turns", "15 turns"), ("cap 0.30", "cap 1.30", "cap 0.40")):
+            self.assertIn(turns, line)
+            self.assertIn(cap, line)
+        self.assertIn("worst case 2.00 USD", text)
+        self.assertIn("allowlist 33 rules", text)
+        self.assertEqual(tripwire, [])
+        self.assertFalse(os.path.exists(os.path.join(base, "hh")))
+        cells = dict((line.split()[1], line.split()) for line in matrix().list_lines(rows().build_registry())[1:])
+        self.assertEqual(cells[ROW10][2:], ["3", "2", "yes"])
+
+    # -- the scripted chain -------------------------------------------------------------------------------------
+
+    def test_the_chain_runs_three_launches_on_the_33_baseline_rules_alone_with_memory_pinned(self) -> None:
+        import pc_flags
+
+        calls = self.chain.rig.calls()
+        self.assertEqual(len(calls), 3)
+        for call in calls:
+            argv = call["args"]
+            rules = argv[argv.index("--allowedTools") + 1].split(",")
+            self.assertEqual(rules, list(pc_flags.BASELINE_ALLOWED_TOOLS))
+            self.assertEqual(len(rules), 33)
+        self.assertEqual(self.read("tools.txt"), ",".join(pc_flags.BASELINE_ALLOWED_TOOLS) + "\n")
+        self.assertEqual(calls[1]["prompt"].encode("utf-8"), read_bytes(committed(ROW10_COMMITTED, "s2-preclear-prompt.md")))
+        self.assertEqual(calls[0]["prompt"].encode("utf-8"), read_bytes(os.path.join(DATA, "plain-s1-prompt.md")))
+        self.assertIs(read_json(calls[0]["args"][calls[0]["args"].index("--settings") + 1])["autoMemoryEnabled"], True)
+
+    def test_the_baseline_holds_the_status_rules_and_pwd_and_no_rule_for_the_nul_form_a_redirection_or_the_sidecar(self) -> None:
+        import pc_flags
+
+        rules = list(pc_flags.BASELINE_ALLOWED_TOOLS)
+        for wanted in ("Bash(git --no-optional-locks status:*)", "Bash(git --no-optional-locks rev-parse:*)", "Bash(pwd -P)"):
+            self.assertIn(wanted, rules)
+        for rule in rules:
+            for banned in ("-z", ">", "<", "tee", "--output", "\0", "status.txt"):
+                self.assertNotIn(banned, rule, rule)
+
+    def test_the_third_stage_is_a_fresh_session_fed_the_resume_line_the_second_printed(self) -> None:
+        calls = self.chain.rig.calls()
+        self.assertTrue(calls[2]["prompt"].startswith("Resume "))
+        self.assertNotIn("--resume", calls[2]["args"])
+        self.assertIn("--resume", calls[1]["args"])
+        self.assertEqual(
+            self.read("resume-line.txt").rstrip("\n").replace("<run>", "$RUNROOT"),
+            calls[2]["prompt"].replace(self.chain.run_root, "$RUNROOT"),
+        )
+
+    def test_s3_makes_no_write_or_edit_call_and_the_s2_and_s3_snapshots_hash_alike(self) -> None:
+        self.assertIn("Write/Edit calls 0: []", self.read("s3-resume-trace.md"))
+        self.assertEqual(self.read("snap-2-after-preclear/sha.txt"), self.read("snap-3-after-resume/sha.txt"))
+
+    def test_the_chain_files_the_row_through_the_real_sanitizer_gate_and_promote_with_the_names_escaped(self) -> None:
+        self.assertEqual(os.listdir(self.chain.ctx.destination), [ROW10])
+        listing = self.read("snap-0-setup/sha.txt")
+        lines = listing.split("\n")
+        self.assertEqual(lines[-1], "")
+        escaped = [line for line in lines if line.endswith("project/odd\\nname.txt")]
+        self.assertEqual(len(escaped), 1, "the newline name is one escaped line")
+        self.assertTrue(escaped[0].startswith("\\"))
+        for line in lines[:-1]:
+            self.assertRegex(line, r"\A\\?[0-9a-f]{64}  .+\Z", "a hostile name never breaks a listing line")
+        self.assertIn("project/" + "data/raw files/sample 1.csv", listing)
+        self.assertIn("project/" + text_of(JA_FOLDER_POINTS) + "/" + text_of(JA_FILE_POINTS) + " 1.txt", listing)
+        self.assertIn("project/" + text_of(AR_FOLDER_POINTS) + "/" + text_of(AR_FILE_POINTS) + " 1.txt", listing)
+        self.assertIn('project/quote"and"tab\tname.md', listing)
+        self.assertIn("project/  leading-space.txt", listing)
+
+    def test_no_filed_file_holds_a_nul_byte_and_no_raw_status_capture_is_filed(self) -> None:
+        for relative in tree_names(self.chain.row_dir):
+            if relative.endswith("/"):
+                continue
+            self.assertNotIn(b"\0", read_bytes(os.path.join(self.chain.row_dir, *relative.split("/"))), relative)
+            self.assertNotEqual(os.path.basename(relative), "status.raw", relative)
+
+    def test_the_filed_status_of_each_snapshot_is_the_plain_listing_of_the_124_entries_and_the_skill_copy(self) -> None:
+        text = self.read("snap-0-setup/status.txt")
+        self.assertGreaterEqual(len(text.splitlines()), 124 + len(skill_status().splitlines()))
+        self.assertIn("?? NOTES.md", text)
+        self.assertEqual(self.read("snap-2-after-preclear/status.txt"), self.read("snap-3-after-resume/status.txt"))
+
+    def test_the_filed_folder_holds_the_standard_files_and_no_helper_file(self) -> None:
+        names = tree_names(self.chain.row_dir)
+        for expected in ("README.md", "mechanical-checks.md", "resume-line.txt", "s2-preclear-full-trace.md",
+                         "s3-resume-trace.md", "tools.txt", "fixture-CLAUDE.md", "snap-0-setup/"):
+            self.assertIn(expected, names)
+        for absent in ("wrapper-calls.log", "wrapper-checkpoint.sh", "status-before.txt", "lint-before.txt"):
+            self.assertNotIn(absent, names)
+        self.assertEqual(self.read("fixture-CLAUDE.md"), read_text(committed(ROW10_COMMITTED, "fixture-CLAUDE.md")))
+
+    def test_the_readme_ends_with_the_pending_line_and_holds_the_setup_paragraph_and_no_verdict_word(self) -> None:
+        readme = self.read("README.md")
+        self.assertTrue(readme.endswith(VERDICT_LINE + "\n"))
+        self.assertIn(spec_of(ROW10).setup_text, readme)
+        self.assertIsNone(re.search(r"\b(?:" + "|".join(("pa" + "ss", "fa" + "il", "acc" + "ept", "ver" + "dict")) + r")\b", readme.replace(VERDICT_LINE, ""), re.I))
 
 
 if __name__ == "__main__":

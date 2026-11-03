@@ -17,7 +17,8 @@ seeds that call it:
   * seed_row5a, seed_row5b   the plain rows: the committed fixtures of rows 5a and 5b
   * seed_git_row     the plain setup with a chosen git shape (plan 04-09): commit (one commit on main), detached (two
                      commits, then a detached HEAD at the first), unborn (a repository on main with no commit), none (no
-                     git at all) or worktree (the repository in main-checkout, the project a linked worktree on a
+                     git at all), large (one commit, then the 124 untracked files of the row 10 hostile tree; plan 04-10)
+                     or worktree (the repository in main-checkout, the project a linked worktree on a
                      feature branch); seed_row8a, seed_row8b, seed_row8c, seed_row9 call it with the committed fixtures
 
 Every file and folder is created exclusively through pc_runroot, so a second call on the same run root raises
@@ -54,6 +55,7 @@ ROW8A_FOLDER = PUBLICATION_ROOT + "/row8a-non-git"
 ROW8B_FOLDER = PUBLICATION_ROOT + "/row8b-detached-head"
 ROW8C_FOLDER = PUBLICATION_ROOT + "/row8c-unborn-branch"
 ROW9_FOLDER = PUBLICATION_ROOT + "/row9-linked-worktree"
+ROW10_FOLDER = PUBLICATION_ROOT + "/row10-large-status-rerun"
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
 PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
@@ -70,7 +72,8 @@ SHAPE_DETACHED = "detached"
 SHAPE_UNBORN = "unborn"
 SHAPE_NONE = "none"
 SHAPE_WORKTREE = "worktree"
-GIT_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED, SHAPE_UNBORN, SHAPE_NONE, SHAPE_WORKTREE)
+SHAPE_LARGE = "large"
+GIT_SHAPES = (SHAPE_COMMIT, SHAPE_DETACHED, SHAPE_UNBORN, SHAPE_NONE, SHAPE_WORKTREE, SHAPE_LARGE)
 NOTES_NAME = "NOTES.md"
 NOTES_TEXT = "Working notes for the widget exporter.\n\nThe consumer reads the export once a day.\n"
 FEATURE_BRANCH = "feature/widget-export"
@@ -441,6 +444,59 @@ def _memory_policy(row_id: str) -> str:
     return entry.memory
 
 
+# The row 10 hostile tree (plan 04-10). Every non-Latin name is built from code points written as escapes, so this file
+# holds no non-ASCII character. The Japanese folder is U+30C7 U+30FC U+30BF and its files U+30C6 U+30B9 U+30C8 plus a
+# space and a number; the Arabic folder is U+0645 U+0644 U+0641 U+0627 U+062A and its files U+0645 U+0644 U+0641 plus a
+# space and a number.
+JA_FOLDER = "\u30c7\u30fc\u30bf"
+JA_FILE = "\u30c6\u30b9\u30c8"
+AR_FOLDER = "\u0645\u0644\u0641\u0627\u062a"
+AR_FILE = "\u0645\u0644\u0641"
+SAMPLE_FOLDER = "data/raw files"
+SAMPLE_COUNT = 90
+NON_LATIN_COUNT = 15
+NEWLINE_NAME = "odd\nname.txt"
+QUOTE_TAB_NAME = "quote\"and\"tab\tname.md"
+LEADING_SPACE_NAME = "  leading-space.txt"
+HOSTILE_COUNT = 124
+HOSTILE_NOTES_TEXT = "Notes: " + JA_FOLDER + " " + AR_FOLDER + "\n" + JA_FILE + " " + AR_FILE + "\n"
+
+
+def hostile_names() -> list:
+    """The relative names of the row 10 hostile tree, in a fixed order: 124 entries, all of them files.
+
+    90 sample files in a folder whose name holds a space, 15 files in each of the Japanese and Arabic folders, one
+    name holding a newline, one holding two double quotes and a tab, one starting with two spaces and NOTES.md.
+    """
+    names = ["%s/sample %d.csv" % (SAMPLE_FOLDER, number) for number in range(1, SAMPLE_COUNT + 1)]
+    for folder, stem in ((JA_FOLDER, JA_FILE), (AR_FOLDER, AR_FILE)):
+        names.extend("%s/%s %d.txt" % (folder, stem, number) for number in range(1, NON_LATIN_COUNT + 1))
+    names.extend([NEWLINE_NAME, QUOTE_TAB_NAME, LEADING_SPACE_NAME, NOTES_NAME])
+    return names
+
+
+def hostile_text(name: str) -> bytes:
+    """The small deterministic content of one hostile file (the byte-tie of the row covers names and the entry count)."""
+    if name == NOTES_NAME:
+        return HOSTILE_NOTES_TEXT.encode("utf-8")
+    return ("content of " + str(hostile_names().index(name) + 1) + "\n").encode("utf-8")
+
+
+def _build_hostile_tree(project: str) -> None:
+    """Create the hostile files inside the project exclusively, folders first, and leave every one of them untracked."""
+    made = set()
+    for name in hostile_names():
+        parts = name.split("/")
+        folder = project
+        for part in parts[:-1]:
+            folder = os.path.join(folder, part)
+            if folder not in made:
+                pc_runroot.exclusive_dir(folder, 0o755)
+                made.add(folder)
+        pc_runroot.write_exclusive(os.path.join(folder, parts[-1]), hostile_text(name), 0o644)
+
+
+
 def _write_plain_files(base: str, source: Mapping[str, str]) -> None:
     """Create BASE and write the project instruction file (byte for byte) and the plain plan into it."""
     pc_runroot.exclusive_dir(base, 0o700)
@@ -467,7 +523,8 @@ def _build_plain_project(shape: str, root: str, project: str, source: Mapping[st
 
     commit: the files and one commit on main. detached: two commits (the second adds NOTES.md), then the work tree is
     switched to the first with a detached HEAD, so NOTES.md is absent. unborn: a repository on main with no commit.
-    none: the files and no git at all. worktree: the repository in main-checkout with the files committed on main, and
+    none: the files and no git at all. large: one commit on main, then the 124 untracked files of the row 10 hostile tree
+    (hostile_names). worktree: the repository in main-checkout with the files committed on main, and
     the project a linked worktree on the feature branch made by git worktree add -b into the (empty) project folder.
     Every path lies inside the run root; the harness git identity is the spike identity.
     """
@@ -490,6 +547,8 @@ def _build_plain_project(shape: str, root: str, project: str, source: Mapping[st
         pc_runroot.write_exclusive(os.path.join(project, NOTES_NAME), NOTES_TEXT.encode("utf-8"), 0o644)
         _commit_all(project, "Add working notes")
         pc_spike._run_git(project, ["checkout", "-q", "--detach", "HEAD~1"])
+    if shape == SHAPE_LARGE:
+        _build_hostile_tree(project)
 
 
 def seed_plain_row(
@@ -858,4 +917,34 @@ def seed_row9(
         pc_rows.ROW9,
         ROW9_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW9),
+    )
+
+
+def seed_row10(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 10 setup: one commit on main, then 124 untracked files with hostile names (spaces, quotes, a tab, a
+    newline, a leading space, Japanese and Arabic names) inside the project, built from code points by hostile_names.
+
+    The project instruction file is the committed rerun fixture, byte for byte; the plan is the plain plan. Nothing
+    outside the run root is touched and the hostile tree exists only there.
+    """
+    return seed_git_row(
+        SHAPE_LARGE,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW10,
+        ROW10_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW10),
     )
