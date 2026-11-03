@@ -1,0 +1,26 @@
+usage by row, part 1
+every row folder present at the moment this part was written is listed; costs are in US dollars, kept as text
+rows: 4
+
+row5a-no-memory (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.041680299999999997, cumulative 0.041680299999999997
+  stage s2: subtype success, turns 12, cost 0.1316136, cumulative 0.17329389999999995
+  row total: 0.17329389999999995
+
+row5b-disabled-memory (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0391752, cumulative 0.0391752
+  stage s2: subtype success, turns 16, cost 0.1435903, cumulative 0.18276550000000003
+  row total: 0.18276550000000003
+
+row6-readonly-plan (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0455512, cumulative 0.0455512
+  stage s2: subtype success, turns 15, cost 0.1524757, cumulative 0.19802689999999995
+  row total: 0.19802689999999995
+
+row7-all-destinations-denied (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0463017, cumulative 0.0463017
+  stage s2: subtype success, turns 12, cost 0.13730130000000002, cumulative 0.18360300000000002
+  stage s3: subtype success, turns 4, cost 0.0520392, cumulative 0.0520392
+  row total: 0.23564220000000002
+
+total: 0.78972849999999995 USD from 4 cost value(s); 0 UNCONFIRMED

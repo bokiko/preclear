@@ -1,0 +1,3 @@
+Step 2 is done. I added `src/widget-export.js`, a CSV-only exporter (no JSON, per the plan's decision) with small pure functions: `escapeField`, `toRow` and `toCsv`. It uses the `id,name` columns from step 1, a header row, and CRLF line endings.
+The repo had no existing source, so I chose plain ES-module JavaScript.
+I didn't run tests, commit, or start step 3, and I left the step 2 checkbox unticked for checkpointing.
