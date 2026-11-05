@@ -190,6 +190,10 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #          error merged in time order, as the real Bash tool returns them), args, denied, reject, content
 #   write  path, text: really write a file
 #   git    args: run git in the cwd with a hygiene environment
+#   run_git args: run `git` resolved through the child's own PATH (so a git wrapper first on that PATH really runs), in the
+#          cwd with the hygiene variables added, and announce it as a Bash tool call whose command is git and the quoted
+#          arguments and whose result is the combined output (plan 04-12). With "silent" true nothing is announced: the call
+#          is made the way Claude Code makes its own internal git calls, which have no tool_use in the stream
 #   touch  path: set the modification time of an existing file to now (os.utime)
 #   remove path: remove one file (os.remove). It may only aim at a file of the test's own run root.
 #   rename path, to: rename one entry (os.rename). It may only aim at an entry of the test's own run root.
@@ -233,7 +237,8 @@ with open(counter, "w") as handle:
     handle.write(str(index + 1))
 keep = ("CLAUDE_CONFIG_DIR", "CKPT_HOME", "DISABLE_AUTOUPDATER")
 record = {"args": args, "prompt": prompt, "cwd": os.getcwd(), "index": index,
-          "env": dict((k, os.environ[k]) for k in os.environ if k in keep), "names": sorted(os.environ)}
+          "env": dict((k, os.environ[k]) for k in os.environ if k in keep), "names": sorted(os.environ),
+          "path": os.environ.get("PATH", "")}
 with open(os.path.join(here, "calls.log"), "a") as handle:
     handle.write(json.dumps(record) + "\n")
 stages = cfg.get("stages", [])
@@ -417,6 +422,29 @@ def do_git(op):
                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def do_run_git(op):
+    ensure_init()
+    silent = bool(op.get("silent"))
+    git_args = subst(op.get("args", []))
+    if not silent:
+        state["tools"] += 1
+        tool_id = "toolu_%04d" % state["tools"]
+        command = " ".join(["git"] + [shlex.quote(item) for item in git_args])
+        emit({"type": "assistant", "session_id": sid,
+              "message": {"role": "assistant", "content": [
+                  {"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": command}}]}})
+    env = dict(os.environ)
+    env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"})
+    done = subprocess.run(["git"] + git_args, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if silent:
+        return
+    emit({"type": "user", "session_id": sid, "tool_result_meta": "accept",
+          "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                                    "content": done.stdout.decode("utf-8", "replace"),
+                                                    "is_error": False}]}})
+
+
 for op in stage.get("ops", []):
     kind = op.get("op")
     if kind == "hook":
@@ -436,6 +464,8 @@ for op in stage.get("ops", []):
         do_try_write(op)
     elif kind == "git":
         do_git(op)
+    elif kind == "run_git":
+        do_run_git(op)
     elif kind == "touch":
         do_touch(op)
     elif kind == "remove":

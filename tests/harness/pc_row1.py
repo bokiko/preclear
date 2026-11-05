@@ -633,6 +633,39 @@ def _classify(call: Any, events: Any, summary: Any) -> str:
     return ""
 
 
+MESSAGE_PATH_PREPEND = "a folder the row puts first on the search path of a stage is not a folder of the run root"
+
+
+def _apply_path_prepend(
+    env: Mapping[str, str], row: pc_rows.RowSpec, stage_name: str, paths: Mapping[str, Optional[str]]
+) -> Dict[str, str]:
+    """Return the child's environment with the folders the row names for this stage first on its PATH (plan 04-12).
+
+    Each entry of the row's path_prepend is a stage name and a run-root-relative folder (no leading slash, no dot-dot
+    part). The folder is resolved with realpath and must be a folder that stays inside the run root; anything else is a
+    SpikeError with fixed text. A stage without an entry gets the environment as it is, so the other stages keep the PATH
+    build_env produced. The harness's own git calls never use this PATH: they use the absolute path taken from the
+    driver's environment (_git_executable).
+    """
+    relatives = [relative for name, relative in getattr(row, "path_prepend", ()) if name == stage_name]
+    if not relatives:
+        return dict(env)
+    root = os.path.realpath(str(paths["run_root"]))
+    leading: List[str] = []
+    for relative in relatives:
+        parts = relative.split("/")
+        if not relative or relative.startswith("/") or "" in parts or ".." in parts:
+            raise pc_spike.SpikeError(MESSAGE_PATH_PREPEND)
+        full = os.path.realpath(os.path.join(root, *parts))
+        if not full.startswith(root + os.sep) or not os.path.isdir(full):
+            raise pc_spike.SpikeError(MESSAGE_PATH_PREPEND)
+        leading.append(full)
+    changed = dict(env)
+    existing = changed.get("PATH", "")
+    changed["PATH"] = os.pathsep.join(leading + ([existing] if existing else []))
+    return changed
+
+
 def run_stage(
     ctx: pc_rows.RunContext,
     paths: Mapping[str, Optional[str]],
@@ -666,7 +699,7 @@ def run_stage(
     argv = pc_flags.build_argv(
         str(ctx.claude), session_id, str(paths["settings"]), tools, spec.max_turns, spec.cap, resume=resume, model=ctx.model
     )
-    env = pc_flags.build_env(ctx.env, ctx.config_dir, str(paths["ckpt"]))
+    env = _apply_path_prepend(pc_flags.build_env(ctx.env, ctx.config_dir, str(paths["ckpt"])), row, spec.name, paths)
     scope = (ctx.campaign, ctx.attempt, ctx.matrix)
     ledger_row = pc_rows.scoped_row(row.row_id, *scope)
     key = pc_rows.scoped_stage_key(row.row_id, spec.name, *scope)

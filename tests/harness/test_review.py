@@ -498,6 +498,8 @@ class ScriptedChainTests(unittest.TestCase):
         for entry in pc_rows.build_registry():
             if entry.row_id == "row10-large-status":
                 self.assertEqual(entry.analyses, ("status-form",))
+            elif entry.row_id == "row11-concurrent-change":
+                self.assertEqual(entry.analyses, ("git-calls",))
             elif entry.row_id != ROW7:
                 self.assertEqual(entry.analyses, (), entry.row_id)
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
@@ -1054,7 +1056,7 @@ class StatusFormTests(unittest.TestCase):
         self.assertIn("status-form", review().ANALYSES)
         self.assertEqual(review().STATUS_FORM_SECTION, "Row 10 status form")
         for entry in pc_rows.build_registry():
-            if entry.row_id not in (ROW7, "row10-large-status"):
+            if entry.row_id not in (ROW7, "row10-large-status", "row11-concurrent-change"):
                 self.assertEqual(entry.analyses, (), entry.row_id)
 
 

@@ -21,6 +21,9 @@ seeds that call it:
                      or worktree (the repository in main-checkout, the project a linked worktree on a
                      feature branch); seed_row8a, seed_row8b, seed_row8c, seed_row9 call it with the committed fixtures
 
+  * seed_row11       the plain setup with a base commit that holds another task's notes file, plus the git wrapper
+                     installed in ckpt/gitwrap with its configuration files and raw/gitwrap-digests.json (plan 04-12)
+
 Every file and folder is created exclusively through pc_runroot, so a second call on the same run root raises
 FileExistsError; nothing here deletes, renames, moves or truncates, and this module is scanned for those primitives
 like every other harness module. Messages are fixed text with repo-relative source names only, never a run path.
@@ -29,6 +32,7 @@ Standard library only, Python 3.9 floor.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -36,7 +40,7 @@ import shlex
 import subprocess
 import sys
 import uuid
-from typing import Dict, Mapping, Optional, Sequence
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import pc_flags
 import pc_manifest
@@ -56,6 +60,7 @@ ROW8B_FOLDER = PUBLICATION_ROOT + "/row8b-detached-head"
 ROW8C_FOLDER = PUBLICATION_ROOT + "/row8c-unborn-branch"
 ROW9_FOLDER = PUBLICATION_ROOT + "/row9-linked-worktree"
 ROW10_FOLDER = PUBLICATION_ROOT + "/row10-large-status-rerun"
+ROW11_FOLDER = PUBLICATION_ROOT + "/row11-concurrent-change-rerun"
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
 PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
@@ -508,6 +513,14 @@ def _write_plain_files(base: str, source: Mapping[str, str]) -> None:
     pc_runroot.write_exclusive(os.path.join(base, "CLAUDE.md"), _read(source["claude_md"]), 0o644)
 
 
+def _write_extra_files(base: str, extra_files: Sequence[Tuple[str, str]]) -> None:
+    """Create each (relative name, text) pair directly under BASE, exclusively; a name must be one plain file name."""
+    for name, text in extra_files:
+        if not isinstance(name, str) or not name or "/" in name or name in (".", "..") or name.startswith("."):
+            raise ValueError("an extra file must have one plain name")
+        pc_runroot.write_exclusive(os.path.join(base, name), text.encode("utf-8"), 0o644)
+
+
 def _init_on_main(folder: str) -> None:
     pc_spike._run_git(folder, ["init", "-q"])
     pc_spike._run_git(folder, ["symbolic-ref", "HEAD", "refs/heads/main"])
@@ -518,7 +531,9 @@ def _commit_all(folder: str, message: str) -> None:
     pc_spike._run_git(folder, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", message])
 
 
-def _build_plain_project(shape: str, root: str, project: str, source: Mapping[str, str]) -> None:
+def _build_plain_project(
+    shape: str, root: str, project: str, source: Mapping[str, str], extra_files: Sequence[Tuple[str, str]] = ()
+) -> None:
     """Make the project of a plain row in the git shape named by SHAPE (the skill copy is added by the caller).
 
     commit: the files and one commit on main. detached: two commits (the second adds NOTES.md), then the work tree is
@@ -526,17 +541,21 @@ def _build_plain_project(shape: str, root: str, project: str, source: Mapping[st
     none: the files and no git at all. large: one commit on main, then the 124 untracked files of the row 10 hostile tree
     (hostile_names). worktree: the repository in main-checkout with the files committed on main, and
     the project a linked worktree on the feature branch made by git worktree add -b into the (empty) project folder.
-    Every path lies inside the run root; the harness git identity is the spike identity.
+    Every path lies inside the run root; the harness git identity is the spike identity. extra_files (relative name and
+    text pairs) are written into the project, or into main-checkout for the worktree shape, before the first commit, so
+    they are part of the base commit when the shape has one.
     """
     if shape == SHAPE_WORKTREE:
         main_checkout = os.path.join(root, MAIN_CHECKOUT)
         _write_plain_files(main_checkout, source)
+        _write_extra_files(main_checkout, extra_files)
         _init_on_main(main_checkout)
         _commit_all(main_checkout, "Initial fixture commit")
         pc_runroot.exclusive_dir(project, 0o700)
         pc_spike._run_git(main_checkout, ["worktree", "add", "-q", "-b", FEATURE_BRANCH, project])
         return
     _write_plain_files(project, source)
+    _write_extra_files(project, extra_files)
     if shape == SHAPE_NONE:
         return
     _init_on_main(project)
@@ -563,6 +582,7 @@ def seed_plain_row(
     fixture: str,
     memory: str,
     shape: str = SHAPE_COMMIT,
+    extra_files: Sequence[Tuple[str, str]] = (),
 ) -> Dict[str, Optional[str]]:
     """Build the setup of a row with no helper inside the already-created run root and return its paths.
 
@@ -631,7 +651,7 @@ def seed_plain_row(
     settings = os.path.join(root, "settings.json")
     hooklog = os.path.join(raw, "hooklog.jsonl")
 
-    _build_plain_project(shape, root, project, source)
+    _build_plain_project(shape, root, project, source, extra_files)
 
     skill_dir = os.path.join(project, ".claude", "skills", "preclear")
     pc_runroot.exclusive_dir(os.path.join(project, ".claude"), 0o700)
@@ -797,16 +817,28 @@ def seed_git_row(
     row_id: str,
     fixture: str,
     memory: str,
+    extra_files: Sequence[Tuple[str, str]] = (),
 ) -> Dict[str, Optional[str]]:
     """The plain setup of a git-shaped row (plan 04-09): seed_plain_row with the git shape named by SHAPE.
 
     The project instruction file is the committed fixture of the row, copied byte for byte; the plan is the plain plan.
-    Any word outside GIT_SHAPES is a ValueError.
+    Any word outside GIT_SHAPES is a ValueError. extra_files are committed with the project (plan 04-12).
     """
     if shape not in GIT_SHAPES:
         raise ValueError("the git shape is not known")
     return seed_plain_row(
-        repo_root, run_root, session_id, harness_home_dir, runs_dir, evidence_date, model, row_id, fixture, memory, shape
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        row_id,
+        fixture,
+        memory,
+        shape,
+        extra_files,
     )
 
 
@@ -948,3 +980,92 @@ def seed_row10(
         ROW10_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW10),
     )
+
+
+OTHER_NOTES_NAME = "other_task_notes.md"
+OTHER_NOTES_TEXT = (
+    "Notes of another task: the staging environment.\n\n"
+    "- The staging host is called staging-01.\n"
+    "- The nightly job that refreshes it runs at 02:00.\n"
+)
+GITWRAP_FOLDER = "gitwrap"
+GITWRAP_DIGESTS = "gitwrap-digests.json"
+GIT_WRAPPER_SOURCE = "tests/harness/git-wrapper"
+# The two exact argument lists of the prescribed status command, as the printf %q rendering the wrapper compares: the NUL
+# form (with -z) and the quoted-porcelain form. A listed line starts with --no-optional-locks status and nothing else.
+STATUS_STEM = ("--no-optional-locks", "status", "--porcelain=v1")
+STATUS_TAIL = ("--untracked-files=all", "--ignore-submodules=none")
+MATCH_ARGV_LINES = (
+    " ".join(STATUS_STEM + ("-z",) + STATUS_TAIL),
+    " ".join(STATUS_STEM + STATUS_TAIL),
+)
+FIRE_ON = 1
+
+
+def install_git_wrapper(repo_root: str, run_root: str, real_git: str, raw: str, fire_on: int = FIRE_ON) -> str:
+    """Create ckpt/gitwrap in the run root and the digest record in raw; return the wrapper folder.
+
+    The folder holds git (a byte copy of tests/harness/git-wrapper at mode 755), real-git (the absolute path of the real
+    git, which therefore lives only in the run root), match-argv (MATCH_ARGV_LINES), fire-on and inject-file. The sha256
+    of each of these five files is written to raw/gitwrap-digests.json, so the filing can say whether a model write
+    changed one of them (ckpt is an approved root, so such a write would not be a boundary breach). Everything is created
+    exclusively; nothing is changed afterwards.
+    """
+    if not os.path.isabs(real_git):
+        raise ValueError("the real git path must be absolute")
+    source = os.path.join(os.path.realpath(repo_root), *GIT_WRAPPER_SOURCE.split("/"))
+    if not os.path.isfile(source):
+        raise pc_spike.SpikeError("a source the run root needs is missing: %s" % GIT_WRAPPER_SOURCE)
+    folder = os.path.join(os.path.realpath(run_root), "ckpt", GITWRAP_FOLDER)
+    pc_runroot.exclusive_dir(folder, 0o700)
+    files = (
+        ("git", _read(source), 0o755),
+        ("real-git", (real_git + "\n").encode("utf-8"), 0o644),
+        ("match-argv", ("\n".join(MATCH_ARGV_LINES) + "\n").encode("utf-8"), 0o644),
+        ("fire-on", ("%d\n" % fire_on).encode("utf-8"), 0o644),
+        ("inject-file", (OTHER_NOTES_NAME + "\n").encode("utf-8"), 0o644),
+    )
+    digests: Dict[str, str] = {}
+    for name, data, mode in files:
+        pc_runroot.write_exclusive(os.path.join(folder, name), data, mode)
+        digests[name] = hashlib.sha256(data).hexdigest()
+    pc_runroot.write_exclusive(
+        os.path.join(raw, GITWRAP_DIGESTS), (json.dumps(digests, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
+    )
+    return folder
+
+
+def seed_row11(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 11 setup: one commit on main that holds another task's notes file, and the git wrapper in ckpt/gitwrap.
+
+    The project instruction file is the committed rerun fixture, byte for byte; the plan is the plain plan. The wrapper
+    is installed after the plain setup (install_git_wrapper) and the registry puts its folder first on the PATH of the
+    /preclear stage only. The harness's own git calls use the absolute git path of the driver's environment and never
+    pass through it.
+    """
+    import pc_row1  # imported late: pc_row1 imports this module
+
+    paths = seed_git_row(
+        SHAPE_COMMIT,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW11,
+        ROW11_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW11),
+        ((OTHER_NOTES_NAME, OTHER_NOTES_TEXT),),
+    )
+    install_git_wrapper(repo_root, run_root, pc_row1._git_executable(os.environ), str(paths["raw"]))
+    return paths

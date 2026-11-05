@@ -37,6 +37,7 @@ ROW8B = "row8b-detached-head"
 ROW8C = "row8c-unborn-branch"
 ROW9 = "row9-linked-worktree"
 ROW10 = "row10-large-status"
+ROW11 = "row11-concurrent-change"
 
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
@@ -156,6 +157,7 @@ class RowSpec(NamedTuple):
     chain: str = CHAIN_RESUME_LINE  # CHAIN_RESUME_LINE or CHAIN_PRINTED_CHECKPOINT: what feeds the resume stage (plan 04-06)
     probe: str = PROBE_NONE  # a live probe id the runner makes before any spend, or PROBE_NONE (plan 04-06)
     analyses: Tuple[str, ...] = ()  # ids of pc_review.ANALYSES that filing runs for a completed chain (plan 04-07)
+    path_prepend: Tuple[Tuple[str, str], ...] = ()  # (stage name, run-root-relative folder): that folder leads the PATH of that stage only (plan 04-12)
 
 
 class RunContext(NamedTuple):
@@ -330,6 +332,9 @@ _PUBLICATION_9 = _PUBLICATION_ROOT + "/row9-linked-worktree"
 # Row 10 (large status, plan 04-10) reads the committed rerun folder: its s2 prompt and fixture are the ones of the corrected
 # allowlist; the first pass is not the reference.
 _PUBLICATION_10 = _PUBLICATION_ROOT + "/row10-large-status-rerun"
+# Row 11 (concurrent change, plan 04-12) reads the committed rerun folder: its s2 prompt and fixture are the ones of the
+# rerun in which the git wrapper fired only on the model's own status call.
+_PUBLICATION_11 = _PUBLICATION_ROOT + "/row11-concurrent-change-rerun"
 _GIT_ROW_STAGES: Tuple[StageSpec, ...] = _ROW1_STAGES
 _ROW8A_SETUP_TEXT = (
     "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger, and no "
@@ -369,6 +374,18 @@ _ROW10_SETUP_TEXT = (
     "status command, for a redirection or for a status file. A work turn comes first, then the /preclear turn in the "
     "same session, then a fresh session that pastes the resume line the /preclear turn printed. The harness reads "
     "the status form from the stream afterwards and counts it; it does not say which form was right."
+)
+
+_ROW11_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. The "
+    "repository holds one commit on main whose files include `other_task_notes.md`, the notes of another task. A work "
+    "turn comes first. During the /preclear turn only, a git wrapper stands first on the search path of the session: it "
+    "passes every call to the real git unchanged and logs one line per call. After the model's first status call "
+    "with the exact prescribed arguments (the two forms listed in the wrapper's `match-argv`) has returned, the wrapper "
+    "appends one line to `other_task_notes.md`, so the model's next status differs from the one it captured. Claude "
+    "Code's own git calls carry `-c` options and never match, and the harness's own git calls never pass through the "
+    "wrapper. A model that never issues a listed form leaves the injection log empty, and that is filed as a fact. A "
+    "fresh session that pastes the resume line the /preclear turn printed follows."
 )
 
 _ROW1_SETUP_TEXT = (
@@ -581,6 +598,24 @@ def _registered_rows() -> Dict[str, RowSpec]:
             memory=MEMORY_PINNED,
             chain=CHAIN_RESUME_LINE,
             analyses=ROW10_ANALYSES,
+        ),
+        ROW11: RowSpec(
+            ROW11,
+            KIND_ROW,
+            "Row 11: concurrent plain-file change during capture (1P + 1R)",
+            _GIT_ROW_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW11),
+            _plain_sources(_PUBLICATION_11) + (("tests/harness/git-wrapper", "file"),),
+            seed="pc_rowseeds:seed_row11",
+            prompts=_plain_prompts(_PUBLICATION_11),
+            setup_text=_ROW11_SETUP_TEXT,
+            tools_profile=PROFILE_GIT,
+            memory=MEMORY_PINNED,
+            chain=CHAIN_RESUME_LINE,
+            analyses=(ANALYSIS_GIT_CALLS,),
+            path_prepend=(("s2", "ckpt/gitwrap"),),
         ),
     }
 

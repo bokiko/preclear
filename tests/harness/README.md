@@ -824,6 +824,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `README.md` - this guide
 - `selftest` - the one command to run first; bash 3.2 shim that scrubs claude from PATH and runs the suite
 - `checkpoint-wrapper` - logs every stub call, refuses driver-only verbs, injects conflicts
+- `git-wrapper` - the row 11 git wrapper: delegates every call to the real git, logs one line per call, injects one concurrent change on the n-th exact status call
 - `checkpoint_stub.py` - the single-file STUB-BACKED checkpoint helper
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
 - `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report, check-words and the row 7 review table
@@ -882,6 +883,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_rows_plain.py` - tests for the plain rows 5a and 5b: the seed byte-tie, the 35-rule allowlist, the memory settings and assertion and a scripted chain of each
 - `test_row7.py` - tests for row 7: the live chmod probe and the SKIPPED label, the 555 restriction and its restore, the printed-checkpoint chain and its fence scanner, including the committed replies
 - `test_rows_git.py` - tests for the git-shaped rows 8a, 8b, 8c, 9 and 10: the git shape seeds and their byte-tie, the no-git and worktree git states, the main-checkout exclusion, the row 10 hostile tree and status form, the static allowlist scan and a scripted chain of each
+- `test_git_wrapper.py` - tests for the row 11 git wrapper (transparency, exact argument lists, ordinal and race, no-op session, safety) and for row 11 on the scripted claude
 - `test_review.py` - tests for the Do-not-redo review: the entry parser, the token and candidate rules, the row 7 facts, the candidate file, the review table, hostile text and the caps
 - `test_runroot.py` - tests for run roots
 - `test_sanitize.py` - tests for the sanitizer
