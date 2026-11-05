@@ -1,0 +1,3 @@
+Step 2 is done: I added `widget_export.py`, a CSV-only exporter (per the plan's CSV decision, JSON deferred). It's made of small pure functions, and `export_widgets_csv(widgets)` writes an `id,name` header followed by one row per widget.
+The repo had no existing source or language convention, so I picked Python, and I haven't run it.
+I didn't run tests, commit, or start step 3, and the step 2 checkbox in the plan is unchanged.

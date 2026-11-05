@@ -1,0 +1,3 @@
+I implemented step 2 as a CSV exporter in `widget_export.py`. It uses small pure functions (`escape_field`, `format_row`, `widget_to_row`, `widgets_to_csv`) with the `id,name` columns from step 1 and no JSON, per the plan's CSV decision.
+The project had no existing source files, so I chose Python and put the file at the project root. Tell me if you want a different language or location.
+I didn't run tests or commit, and I left the plan checkbox and step 3 alone.

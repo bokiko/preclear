@@ -1,0 +1,2 @@
+I implemented step 2 in `widget_export.py`. `to_csv(widgets)` writes an `id,name` header and one row per widget, and it's built from small pure helpers. Only CSV is covered, per the plan's decision, with no JSON.
+The repo had no existing code, so I chose Python with the stdlib `csv` module. I didn't run tests, commit, or start step 3, and I left the step 2 checkbox unchecked for checkpointing.

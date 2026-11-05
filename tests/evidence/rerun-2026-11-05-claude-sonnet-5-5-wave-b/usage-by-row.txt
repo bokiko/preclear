@@ -1,0 +1,35 @@
+usage by row, part 1
+every row folder present at the moment this part was written is listed; costs are in US dollars, kept as text
+rows: 5
+
+row8a-non-git (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0440391, cumulative 0.0440391
+  stage s2: subtype success, turns 16, cost 0.11863420000000001, cumulative 0.16267330000000002
+  stage s3: subtype success, turns 10, cost 0.0824424, cumulative 0.0824424
+  row total: 0.24511570000000002
+
+row8b-detached-head (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0461112, cumulative 0.0461112
+  stage s2: subtype success, turns 17, cost 0.1521936, cumulative 0.1983048
+  stage s3: subtype success, turns 6, cost 0.053283500000000004, cumulative 0.053283500000000004
+  row total: 0.251588300000000004
+
+row8c-unborn-branch (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0500394, cumulative 0.0500394
+  stage s2: subtype success, turns 15, cost 0.1428374, cumulative 0.19287680000000001
+  stage s3: subtype success, turns 7, cost 0.0607904, cumulative 0.0607904
+  row total: 0.25366720000000001
+
+row9-linked-worktree (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.04975439999999999, cumulative 0.04975439999999999
+  stage s2: subtype success, turns 17, cost 0.155224, cumulative 0.20497840000000003
+  stage s3: subtype success, turns 5, cost 0.0598445, cumulative 0.0598445
+  row total: 0.26482290000000003
+
+row10-large-status (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.054798, cumulative 0.054798
+  stage s2: subtype success, turns 28, cost 0.3109138, cumulative 0.36571180000000014
+  stage s3: subtype success, turns 6, cost 0.0535457, cumulative 0.0535457
+  row total: 0.41925750000000014
+
+total: 1.434451600000000204 USD from 5 cost value(s); 0 UNCONFIRMED

@@ -1,0 +1,10 @@
+usage for row9-linked-worktree
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 0f773444-f253-44e9-a657-a3258c7dc681, subtype success, turns 5, input 8, cache creation 8206, cache read 73744, output 954, cost 0.04975439999999999, cumulative 0.04975439999999999, wall 11.4 seconds
+stage s2: session 0f773444-f253-44e9-a657-a3258c7dc681, subtype success, turns 17, input 20, cache creation 14885, cache read 307640, output 6488, cost 0.155224, cumulative 0.20497840000000003, wall 62.9 seconds
+stage s3: session 06b1db40-8814-4692-9c33-b9c012b68373, subtype success, turns 5, input 6, cache creation 8612, cache read 57245, output 1966, cost 0.0598445, cumulative 0.0598445, wall 16.7 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.26482290000000003
+run total: 0.26482290000000003

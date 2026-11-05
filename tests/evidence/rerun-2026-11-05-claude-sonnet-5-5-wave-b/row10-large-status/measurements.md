@@ -1,0 +1,12 @@
+# Measurements (UTF-8 bytes on ORIGINAL unsanitized files)
+
+## <run>/project/.preclear/widget-export/checkpoint.md
+total 2793/4096 bytes, sha256 b0651a6af6e4291cc6011c272e89f805490a63065d4a09c5a6f535fe8405fac8
+- Identity and state: 548/800
+- Boundaries and blockers: 470/600
+- Next action: 217/500
+- Resume reading: 583/600
+- Evidence and working changes: 764/1000
+- Do not redo: 211/596
+
+auto-memory files: ['MEMORY.md', 'widget-export-json-default.md']

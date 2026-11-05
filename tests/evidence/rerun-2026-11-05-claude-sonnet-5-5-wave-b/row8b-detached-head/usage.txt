@@ -1,0 +1,10 @@
+usage for row8b-detached-head
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session a7760e28-08f3-4fc8-87ae-8f7881ad7dc9, subtype success, turns 4, input 6, cache creation 8352, cache read 53212, output 737, cost 0.0461112, cumulative 0.0461112, wall 24.7 seconds
+stage s2: session a7760e28-08f3-4fc8-87ae-8f7881ad7dc9, subtype success, turns 17, input 24, cache creation 15218, cache read 372676, output 6938, cost 0.1521936, cumulative 0.1983048, wall 387.0 seconds
+stage s3: session 4135a90f-3635-4647-a2f2-a267e5b45225, subtype success, turns 6, input 6, cache creation 8061, cache read 56775, output 1535, cost 0.053283500000000004, cumulative 0.053283500000000004, wall 16.6 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.251588300000000004
+run total: 0.251588300000000004
