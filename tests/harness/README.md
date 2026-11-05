@@ -43,7 +43,7 @@ does the same without the PATH check.
 - Claude Code (needed for real runs; the self-test does not use it).
 - git.
 - Python 3.9 or newer, standard library only.
-- bash for the two entry shims (`selftest` and `checkpoint-wrapper`).
+- bash for the three entry shims (`selftest`, `checkpoint-wrapper` and `git-wrapper`).
 - Nothing to install: no package manager, no extra libraries, no build step.
 
 ## Environment knobs
@@ -412,6 +412,28 @@ content preservation of the main checkout, not to the absence of every git metad
 calls stay hardened, read-only and pinned; the model's `git status` inside the worktree is not a breach. How the real
 model reports a detached, unborn, linked or absent repository, and whether the real binary's own git calls disturb the
 pinned digests, is unobserved until a paid run; the scripted claude proves the pipeline and the real run records the facts.
+
+Row 11 (a concurrent change while the model captures state) is a git-shaped row whose `/preclear` stage, and only that
+stage, runs with a git wrapper first on its search path. The seed commits `other_task_notes.md`, the notes of another
+task, in the base commit and installs `git-wrapper` as `ckpt/gitwrap/git` with four configuration files beside it: the
+real git (an absolute path that lives only in the run root), `match-argv`, `fire-on` and `inject-file`. The wrapper runs
+the real git first, with its streams and exit code untouched, and then does its bookkeeping, so the model's first status
+is the one taken before the change. A call counts as a match only when its whole argument list equals one line of
+`match-argv`: the prescribed status command in its NUL form and in its quoted-porcelain form, each starting with
+`--no-optional-locks status`. A call with a `-c` preamble, an extra flag, another verb or another order never matches,
+which keeps Claude Code's own git calls (they carry a `-c` preamble) from firing it, and the harness's own calls never
+reach the wrapper at all, because they use the absolute git path of the driver's environment and the other stages run
+with the unchanged search path. Each match appends a unique token line to `matches.log` with one write and takes its own
+line number as its ordinal; the match whose number equals `fire-on` (1 for this row) makes the lock folder `fired.lock`
+and appends one line to the inject-file inside the project, then writes `INJECTED ORD=<k>` to `injection.log`. The
+inject-file must be a plain relative name of a regular file inside the project, or nothing is injected. Every call is
+logged as one line, `T=<utc> PID=<pid> EXIT=<code> ORD=<k or -> ARGV=<arguments>`, written with one write; a logging,
+counting or lock failure never changes the call's output or exit code. A session in which the model never issues a
+listed form leaves `matches.log`, `fired.lock` and `injection.log` absent, which is filed as an empty injection log. The
+seed records the sha256 of the five wrapper files in `raw/gitwrap-digests.json`, because the wrapper folder sits in an
+approved root and a model write there would not be a breach; the filed `Git wrapper calls` section says whether the files
+still equal those digests. Which exact argument list the real model issues for its first status call is unobserved until a
+paid run.
 
 Which boundaries a row takes is recorded, not assumed: `raw/boundaries.json` is created at setup, before the setup
 guard, and lists the planned boundaries in order (setup, each stage, each hook boundary) with their snapshot names.

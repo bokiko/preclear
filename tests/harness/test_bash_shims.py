@@ -30,7 +30,7 @@ import pc_testutil
 HARNESS_DIR = os.path.dirname(os.path.abspath(__file__))
 BASH = "/bin/bash"
 SHIM = os.path.join(HARNESS_DIR, "selftest")
-EXPECTED_SHIMS = ("checkpoint-wrapper", "selftest")
+EXPECTED_SHIMS = ("checkpoint-wrapper", "git-wrapper", "selftest")
 NESTED_PATTERN = "test_preflight.py"
 BANNER = re.compile(r"^preclear harness self-test: 0 model calls; claude directories removed from PATH: (\d+)$", re.M)
 
@@ -106,7 +106,7 @@ def bash_version() -> str:
 
 
 class ShimDiscoveryTests(unittest.TestCase):
-    def test_selftest_and_checkpoint_wrapper_are_found_by_their_shebang(self) -> None:
+    def test_selftest_checkpoint_wrapper_and_git_wrapper_are_found_by_their_shebang(self) -> None:
         found = find_shims(HARNESS_DIR)
         for expected in EXPECTED_SHIMS:
             self.assertIn(expected, found, "%s was not found by its shebang" % expected)
