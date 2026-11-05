@@ -235,6 +235,288 @@ class GitWrapperTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(rig.project)), [NOTES])
 
 
+def committed_call_arguments() -> list:
+    """The complete CALL lines of the committed row 11 wrapper log, each as an argument list.
+
+    The committed file is sanitized and partly garbled (two writers interleaved in it). Only a line that starts with a
+    date, holds exactly one CALL marker and no second date is taken; a line cut at a line break is still a harmless prefix.
+    """
+    found = []
+    for line in read_text(committed(ROW11_COMMITTED, "git-calls.log")).splitlines():
+        if line.startswith(" -c "):
+            found.append(shlex.split(line))  # the rest of a call whose first part sits on the line before
+            continue
+        match = re.match(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z CALL (.*)\Z", line)
+        if match is None or re.search(r"Z CALL", match.group(1)) or "INJECTED" in match.group(1):
+            continue
+        found.append(shlex.split(match.group(1)))
+    return found
+
+
+class ExactArgvTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rig = WrapperRig(fire_on="99", repo=False)
+        stub = stub_git(os.path.join(cls.rig.base, "stub"), 0)
+        write_file(cls.rig.file("real-git"), stub + "\n")
+
+    def matches(self, *args: str) -> bool:
+        before = self.rig.match_count()
+        done = self.rig.call(*args)
+        self.assertEqual(done.returncode, 0)
+        return self.rig.match_count() == before + 1
+
+    def test_the_two_listed_argument_lists_match_exactly(self) -> None:
+        self.assertTrue(self.matches(*QUOTED))
+        self.assertTrue(self.matches(*NUL))
+
+    def test_the_seed_lines_are_the_two_forms_of_the_prescribed_status_command(self) -> None:
+        lines = rowseeds().MATCH_ARGV_LINES
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(sorted(shlex.split(line) for line in lines), sorted([list(QUOTED), list(NUL)]))
+        for line in lines:
+            self.assertTrue(line.startswith("--no-optional-locks status "))
+        self.assertEqual(len([line for line in lines if " -z " in line]), 1)
+
+    def test_a_near_miss_never_matches(self) -> None:
+        near = [
+            (),
+            ("status",),
+            ("--no-optional-locks", "status"),
+            ("status", "--no-optional-locks", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"),
+            QUOTED + ("--short",),
+            ("--short",) + QUOTED,
+            ("-c", "core.fsmonitor=") + QUOTED,
+            ("-C", ".") + QUOTED,
+            ("--no-optional-locks", "log", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"),
+            ("--no-optional-locks", "status", "--untracked-files=all", "--porcelain=v1", "--ignore-submodules=none"),
+            ("--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"),
+            ("--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"),
+            ("--no-optional-locks", "status", "--porcelain=v2", "--untracked-files=all", "--ignore-submodules=none"),
+            ("--no-optional-locks status --porcelain=v1 --untracked-files=all --ignore-submodules=none",),
+            tuple(QUOTED[:3]) + ("--untracked-files=all", "--ignore-submodules=none", ""),
+            ("", ) + QUOTED,
+        ]
+        for args in near:
+            with self.subTest(args=args):
+                self.assertFalse(self.matches(*args))
+
+    def test_a_blank_line_in_the_list_never_matches_a_call_with_no_arguments(self) -> None:
+        rig = WrapperRig(fire_on="99", repo=False, match=["", " ".join(QUOTED)])
+        write_file(rig.file("real-git"), stub_git(os.path.join(rig.base, "stub"), 0) + "\n")
+        rig.call()
+        self.assertEqual(rig.match_count(), 0)
+
+    def test_no_complete_committed_internal_call_matches_and_the_committed_model_calls_do(self) -> None:
+        arguments = committed_call_arguments()
+        internal = [args for args in arguments if args[:1] == ["-c"]]
+        self.assertGreaterEqual(len(internal), 4, "the committed log holds complete internal calls to replay")
+        for args in internal:
+            self.assertFalse(self.matches(*args), "an internal call must never fire the injector")
+        own = [args for args in arguments if args[:1] != ["-c"]]
+        self.assertIn(list(QUOTED), own, "the committed model call is the quoted form")
+        for args in own:
+            self.assertEqual(self.matches(*args), args in (list(QUOTED), list(NUL)), args)
+
+
+class OrdinalRaceTests(unittest.TestCase):
+    def stubbed(self, **options) -> WrapperRig:
+        rig = WrapperRig(repo=False, **options)
+        write_file(rig.file("real-git"), stub_git(os.path.join(rig.base, "stub"), 0) + "\n")
+        return rig
+
+    def test_with_fire_on_1_the_first_match_injects_and_the_second_does_not(self) -> None:
+        rig = self.stubbed(fire_on="1")
+        rig.call(*QUOTED)
+        self.assertEqual(len(rig.injected_lines()), 1)
+        self.assertRegex(rig.injected_lines()[0], INJECTED_LINE)
+        rig.call(*NUL)
+        self.assertEqual(len(rig.injected_lines()), 1)
+        self.assertEqual(rig.ords(), ["1", "2"])
+        self.assertEqual(lines_of(rig.file("injection.log")), ["INJECTED ORD=1"])
+        self.assertTrue(os.path.isdir(rig.file("fired.lock")))
+
+    def test_with_fire_on_2_the_second_match_injects_and_the_first_does_not(self) -> None:
+        rig = self.stubbed(fire_on="2")
+        rig.call(*QUOTED)
+        self.assertEqual(rig.injected_lines(), [])
+        self.assertFalse(os.path.exists(rig.file("injection.log")))
+        self.assertFalse(os.path.exists(rig.file("fired.lock")))
+        rig.call("status", "--short")
+        self.assertEqual(rig.injected_lines(), [])
+        rig.call(*NUL)
+        self.assertEqual(len(rig.injected_lines()), 1)
+        self.assertEqual(rig.ords(), ["1", "-", "2"])
+        self.assertEqual(lines_of(rig.file("injection.log")), ["INJECTED ORD=2"])
+
+    def test_calls_that_do_not_match_take_no_ordinal(self) -> None:
+        rig = self.stubbed(fire_on="2")
+        rig.call("status")
+        rig.call(*QUOTED)
+        rig.call("log")
+        rig.call(*QUOTED)
+        self.assertEqual(rig.ords(), ["-", "1", "-", "2"])
+
+    def test_a_missing_or_odd_fire_on_counts_but_never_injects(self) -> None:
+        for value in ("", "x", "0", "-1", "1 2", "1.5"):
+            with self.subTest(value=value):
+                rig = self.stubbed(fire_on=value)
+                rig.call(*QUOTED)
+                rig.call(*QUOTED)
+                self.assertEqual(rig.injected_lines(), [])
+                self.assertFalse(os.path.exists(rig.file("injection.log")))
+
+    def test_two_matching_calls_started_together_inject_once_with_two_distinct_ordinals(self) -> None:
+        for round_number in range(6):
+            with self.subTest(round=round_number):
+                rig = self.stubbed(fire_on="1")
+                self.race(rig, 2)
+                self.assertEqual(len(rig.injected_lines()), 1)
+                self.assertEqual(lines_of(rig.file("injection.log")), ["INJECTED ORD=1"])
+                self.assertEqual(sorted(rig.ords()), ["1", "2"])
+
+    def test_eight_parallel_matches_with_fire_on_3_inject_exactly_once_and_number_one_to_eight(self) -> None:
+        for round_number in range(3):
+            with self.subTest(round=round_number):
+                rig = self.stubbed(fire_on="3")
+                self.race(rig, 8)
+                self.assertEqual(len(rig.injected_lines()), 1)
+                self.assertEqual(lines_of(rig.file("injection.log")), ["INJECTED ORD=3"])
+                self.assertEqual(sorted(rig.ords(), key=int), [str(n) for n in range(1, 9)])
+                self.assertEqual(len(rig.log()), 8, "one complete line per call, none interleaved")
+                for line in rig.log():
+                    self.assertRegex(line, LOG_LINE)
+
+    def race(self, rig: WrapperRig, count: int) -> None:
+        command = "for i in $(seq 1 %d); do \"$0\" %s & done; wait" % (count, " ".join(shlex.quote(a) for a in QUOTED))
+        done = subprocess.run([BASH, "-c", command, rig.shim], cwd=rig.project, env=rig.env(), stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+
+class NoOpSessionTests(unittest.TestCase):
+    def test_a_session_with_only_non_matching_calls_leaves_the_three_files_absent(self) -> None:
+        rig = WrapperRig()
+        before = rig.notes()
+        for args in (("status", "--short"), ("rev-parse", "HEAD"), ("log", "--oneline"), ("-c", "core.fsmonitor=") + QUOTED, ("branch", "--show-current")):
+            rig.call(*args)
+        self.assertEqual(len(rig.log()), 5)
+        self.assertEqual(set(rig.ords()), {"-"})
+        for name in ("matches.log", "fired.lock", "injection.log"):
+            self.assertFalse(os.path.exists(rig.file(name)), name)
+        self.assertEqual(rig.notes(), before)
+
+    def test_a_missing_match_list_is_a_no_op_session_too(self) -> None:
+        rig = WrapperRig()
+        os.rename(rig.file("match-argv"), os.path.join(rig.base, "kept-match-argv"))
+        rig.call(*QUOTED)
+        self.assertEqual(rig.ords(), ["-"])
+        self.assertFalse(os.path.exists(rig.file("matches.log")))
+        self.assertEqual(rig.notes(), BASE_NOTES)
+
+
+class WrapperSafetyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("a read-only folder does not stop a superuser")
+
+    def test_a_read_only_wrapper_folder_never_changes_the_calls_output_or_exit_code(self) -> None:
+        rig = WrapperRig()
+        write_file(os.path.join(rig.project, "untracked one.txt"), "x\n")
+        direct = rig.direct(*QUOTED)
+        os.chmod(rig.w, 0o555)
+        try:
+            through = rig.call(*QUOTED)
+        finally:
+            os.chmod(rig.w, 0o755)
+        self.assertEqual((through.returncode, through.stdout, through.stderr), (direct.returncode, direct.stdout, direct.stderr))
+        self.assertIn(b"untracked one.txt", through.stdout)
+        self.assertEqual(rig.notes(), BASE_NOTES, "no ordinal could be taken, so nothing was injected")
+        for name in ("git-calls.log", "matches.log", "injection.log", "fired.lock"):
+            self.assertFalse(os.path.exists(rig.file(name)), name)
+
+    def test_unwritable_logs_never_change_the_calls_output_exit_code_or_standard_error(self) -> None:
+        rig = WrapperRig()
+        for name in ("git-calls.log", "matches.log"):
+            write_file(rig.file(name), "", 0o444)
+        direct = rig.direct("status", "--porcelain=v1")
+        through = rig.call("status", "--porcelain=v1")
+        self.assertEqual((through.returncode, through.stdout, through.stderr), (direct.returncode, direct.stdout, direct.stderr))
+        matching = rig.call(*QUOTED)
+        self.assertEqual((matching.returncode, matching.stderr), (0, b""))
+        self.assertEqual(rig.notes(), BASE_NOTES)
+
+    def test_a_failing_real_git_on_a_matching_call_keeps_its_exit_code_and_standard_error(self) -> None:
+        rig = WrapperRig(repo=False)
+        write_file(rig.file("real-git"), stub_git(os.path.join(rig.base, "stub"), 3) + "\n")
+        done = rig.call(*QUOTED)
+        self.assertEqual(done.returncode, 3)
+        self.assertEqual(done.stderr, b"stub-error\n")
+        self.assertEqual([line for line in done.stdout.decode().splitlines() if line.startswith("ARG[")], ["ARG[%s]" % a for a in QUOTED])
+        self.assertEqual(rig.log()[0].split(" EXIT=")[1].split(" ")[0], "3")
+
+    def test_an_inject_file_that_is_not_a_plain_relative_regular_file_of_the_project_injects_nothing(self) -> None:
+        for kind in ("absolute", "dot-dot", "dot-dot-inside", "directory", "missing", "symlink-file", "symlink-folder", "empty", "dot-dot-only"):
+            with self.subTest(kind=kind):
+                rig = WrapperRig(repo=False)
+                write_file(rig.file("real-git"), stub_git(os.path.join(rig.base, "stub"), 0) + "\n")
+                outside = os.path.join(rig.run, "outside.txt")
+                write_file(outside, "outside\n")
+                os.makedirs(os.path.join(rig.project, "sub"))
+                os.symlink(outside, os.path.join(rig.project, "link.md"))
+                os.symlink(rig.run, os.path.join(rig.project, "linkdir"))
+                value = {
+                    "absolute": outside,
+                    "dot-dot": "../outside.txt",
+                    "dot-dot-inside": "sub/../" + NOTES,
+                    "directory": "sub",
+                    "missing": "nothing.md",
+                    "symlink-file": "link.md",
+                    "symlink-folder": "linkdir/outside.txt",
+                    "empty": "",
+                    "dot-dot-only": "..",
+                }[kind]
+                write_file(rig.file("inject-file"), value + "\n")
+                done = rig.call(*QUOTED)
+                self.assertEqual(done.returncode, 0)
+                self.assertEqual(read_text(outside), "outside\n")
+                self.assertEqual(rig.notes(), BASE_NOTES)
+                self.assertFalse(os.path.exists(rig.file("injection.log")), "no injection is recorded for one that did not happen")
+                self.assertEqual(rig.ords(), ["1"], "the match itself is still counted and logged")
+
+    def test_a_plain_name_in_a_subfolder_of_the_project_is_accepted(self) -> None:
+        rig = WrapperRig(repo=False)
+        write_file(rig.file("real-git"), stub_git(os.path.join(rig.base, "stub"), 0) + "\n")
+        os.makedirs(os.path.join(rig.project, "docs"))
+        write_file(os.path.join(rig.project, "docs", "plan.md"), "plan\n")
+        write_file(rig.file("inject-file"), "docs/plan.md\n")
+        rig.call(*QUOTED)
+        self.assertEqual(len([l for l in lines_of(os.path.join(rig.project, "docs", "plan.md")) if l.startswith("- ")]), 1)
+        self.assertEqual(rig.notes(), BASE_NOTES)
+
+    def test_the_wrapper_writes_only_its_own_folder_and_the_one_inject_file(self) -> None:
+        rig = WrapperRig()
+        before = sorted(os.listdir(rig.project))
+        tree_before = sorted(os.listdir(rig.run))
+        rig.call(*QUOTED)
+        rig.call("status", "--short")
+        self.assertEqual(sorted(os.listdir(rig.run)), tree_before)
+        self.assertEqual(sorted(os.listdir(rig.project)), before)
+        self.assertEqual(sorted(os.listdir(rig.w)), sorted(
+            ["git", "real-git", "match-argv", "fire-on", "inject-file", "git-calls.log", "matches.log", "injection.log", "fired.lock"]))
+        self.assertEqual(len(rig.injected_lines()), 1)
+
+    def test_the_shim_text_holds_no_machine_specific_text(self) -> None:
+        text = read_text(SHIM)
+        self.assertTrue(text.isascii())
+        for banned in ("/Users/", "/home/", "/tmp/", "/var/", "/usr/bin/git"):
+            self.assertNotIn(banned, text, banned)
+        self.assertIsNone(re.search(r"[A-Za-z0-9._-]+@[A-Za-z0-9-]+\.[A-Za-z]", text))
+        self.assertIsNone(re.search(r"(?<![>0-9&])>\s*\"?\$W/", text), "no redirection that truncates a file of the wrapper folder")
+        for deletion in ("rm ", "mv ", "rmdir", "unlink", "truncate", "git clean"):
+            self.assertNotIn(deletion, text, deletion)
+
+
 class Row11RegistryTests(unittest.TestCase):
     def test_the_entry_is_the_three_stage_resume_line_row_with_the_git_profile_and_the_path_prepend(self) -> None:
         pc_rows = rows()
