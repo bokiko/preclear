@@ -38,6 +38,7 @@ ROW8C = "row8c-unborn-branch"
 ROW9 = "row9-linked-worktree"
 ROW10 = "row10-large-status"
 ROW11 = "row11-concurrent-change"
+ROW12 = "row12-frozen-handoff"
 
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
@@ -75,6 +76,8 @@ ANALYSIS_STATUS_FORM = "status-form"
 ROW10_ANALYSES: Tuple[str, ...] = (ANALYSIS_STATUS_FORM,)
 # Rows that run with the git wrapper first on the PATH file its log joined to the stream's tool_use ids (plan 04-10; used by row 11).
 ANALYSIS_GIT_CALLS = "git-calls"
+# Row 12 prints, from the filed snapshot copies only, the digests and the equality of the frozen copies of the checkpoint (plan 04-13).
+ANALYSIS_FROZEN_COPY = "frozen-copy"
 
 LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
 
@@ -124,6 +127,12 @@ PRECLEAR_TURN = "/preclear turn"
 FRESH_RESUME = "fresh resume"
 
 
+# The word after "snap-<n>-after-" in the name of a stage's snapshot: the stage's kind word, except for the fourth stage of
+# a row, a /preclear refresh that resumes the third stage's session (row 12, plan 04-13), whose committed snapshot is
+# snap-4-after-refresh. One place, so the engine, the boundary list and the filing agree.
+_SNAPSHOT_WORDS: Dict[Tuple[str, str], str] = {("s4", "preclear"): "refresh"}
+
+
 class StageSpec(NamedTuple):
     """One claude -p call of a row: its turn limit, its cap and the session it uses."""
 
@@ -134,6 +143,12 @@ class StageSpec(NamedTuple):
     cap: Decimal
     timeout: int  # seconds the stage runner waits for the process
     session: str  # new:A starts a session, resume:A continues it, new:B starts another
+
+
+def snapshot_name(stage: "StageSpec") -> str:
+    """The boundary snapshot a stage takes after its process ends: snap-<number>-after-<word>, e.g. snap-2-after-preclear."""
+    word = _SNAPSHOT_WORDS.get((stage.name, stage.kind), stage.kind)
+    return "snap-%s-after-%s" % (stage.name[1:], word)
 
 
 class RowSpec(NamedTuple):
@@ -376,6 +391,23 @@ _ROW10_SETUP_TEXT = (
     "the status form from the stream afterwards and counts it; it does not say which form was right."
 )
 
+# Row 12 (frozen handoff, plan 04-13) reads the committed folder itself: its fixture, its s2 prompt (which also asks for a
+# frozen handoff copy) and its s4 prompt are the committed bytes. Four stages and two sessions: s1 and s2 share one, s3
+# starts a fresh one from the printed resume line and s4 resumes that fresh session.
+_PUBLICATION_12 = _PUBLICATION_ROOT + "/row12-frozen-handoff"
+_ROW12_STAGES: Tuple[StageSpec, ...] = _ROW1_STAGES + (
+    StageSpec("s4", PRECLEAR_TURN, "preclear", 20, Decimal("0.60"), 1200, "resume:B"),
+)
+_ROW12_HOOKS: Tuple[Tuple[str, str], ...] = (("s2", "append-plan-note"),)
+_ROW12_SETUP_TEXT = (
+    "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. A work "
+    "turn comes first. The /preclear turn that follows, in the same session, also asks for a frozen handoff copy of the "
+    "checkpoint. After it the harness appends one note line, from another session, to the plan file and takes an extra "
+    "snapshot (`snap-2b-after-external-plan-edit`); a fresh session then resumes from the line the /preclear turn "
+    "printed, and the fourth stage resumes that fresh session with an ordinary /preclear refresh, so the frozen copy "
+    "is still in the project when the refresh runs."
+)
+
 _ROW11_SETUP_TEXT = (
     "Setup: a plain project with memory enabled and pinned inside the run root, no helper wrapper and no ledger. The "
     "repository holds one commit on main whose files include `other_task_notes.md`, the notes of another task. A work "
@@ -616,6 +648,23 @@ def _registered_rows() -> Dict[str, RowSpec]:
             chain=CHAIN_RESUME_LINE,
             analyses=(ANALYSIS_GIT_CALLS,),
             path_prepend=(("s2", "ckpt/gitwrap"),),
+        ),
+        ROW12: RowSpec(
+            ROW12,
+            KIND_ROW,
+            "Row 12: frozen handoff, external plan change, resume and refresh (2P + 1R)",
+            _ROW12_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW12),
+            _plain_sources(_PUBLICATION_12) + ((_PUBLICATION_12 + "/s4-preclear-prompt.md", "file"),),
+            seed="pc_rowseeds:seed_row12",
+            prompts=_plain_prompts(_PUBLICATION_12) + (("s4", _PUBLICATION_12 + "/s4-preclear-prompt.md"),),
+            setup_text=_ROW12_SETUP_TEXT,
+            tools_profile=PROFILE_GIT,
+            memory=MEMORY_PINNED,
+            hooks=_ROW12_HOOKS,
+            chain=CHAIN_RESUME_LINE,
         ),
     }
 

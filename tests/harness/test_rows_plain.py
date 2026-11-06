@@ -895,12 +895,13 @@ class Row6RegistryTests(unittest.TestCase):
             full = os.path.join(ROOT, *relative.split("/"))
             self.assertTrue(os.path.isdir(full) if kind == "dir" else os.path.isfile(full), "a source is missing")
 
-    def test_row6_the_hooks_field_is_defaulted_and_only_rows_6_and_7_name_a_hook(self) -> None:
+    def test_row6_the_hooks_field_is_defaulted_and_only_rows_6_7_and_12_name_a_hook(self) -> None:
         pc_rows = rows()
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
         self.assertEqual(built.hooks, ())
         named = [entry.row_id for entry in pc_rows.build_registry() if entry.hooks]
-        self.assertEqual(named, [ROW6, "row7-all-destinations-denied"])  # row 7 names the project-folder hook (plan 04-06)
+        # row 7 names the project-folder hook (plan 04-06); row 12 names the plan-note hook (plan 04-13)
+        self.assertEqual(named, [ROW6, "row7-all-destinations-denied", "row12-frozen-handoff"])
 
     def test_row6_every_hook_of_the_registry_is_known_names_a_stage_of_its_row_and_has_a_snapshot_and_a_finalizer(self) -> None:
         hooks = rowhooks()
@@ -910,7 +911,10 @@ class Row6RegistryTests(unittest.TestCase):
                 self.assertIn(stage_name, stage_names)
                 self.assertIn(hook, hooks.HOOKS)
                 self.assertIn(hook, hooks.HOOK_SNAPSHOTS)
-                self.assertIn(hooks.FINALIZER_OF[hook], hooks.FINALIZERS)
+                if hook in hooks.NO_FINALIZER:  # a hook that appends content has nothing to restore (plan 04-13)
+                    self.assertNotIn(hook, hooks.FINALIZER_OF)
+                else:
+                    self.assertIn(hooks.FINALIZER_OF[hook], hooks.FINALIZERS)
                 self.assertIn(hook, hooks.TARGETS)
 
     def test_row6_list_marks_the_row_implemented_with_two_stages_and_one_session(self) -> None:

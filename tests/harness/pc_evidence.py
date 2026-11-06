@@ -55,7 +55,7 @@ REVIEW_POINTER_LINE = (
 )
 UNCONFIRMED = "UNCONFIRMED"
 MARKER_NO_RESUME = "NO-RESUME-LINE"
-STAGE_ORDER: Tuple[str, ...] = ("s1", "s2", "s3")
+STAGE_ORDER: Tuple[str, ...] = ("s1", "s2", "s3", "s4")  # the stage names a row may have (row 12 has four, plan 04-13)
 USAGE_KEYS: Tuple[Tuple[str, str], ...] = (
     ("input_tokens", "input"),
     ("cache_creation_input_tokens", "cache creation"),

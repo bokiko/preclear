@@ -93,6 +93,7 @@ SNAPSHOT_NAMES: Dict[str, str] = {
     "s1": "snap-1-after-work",
     "s2": "snap-2-after-preclear",
     "s3": "snap-3-after-resume",
+    "s4": "snap-4-after-refresh",
 }
 
 PROBLEM_TIMEOUT = "timeout"
@@ -560,9 +561,10 @@ def allowed_tools(profile: str, wrapper: str, extra: Sequence[str] = ()) -> Tupl
 def snapshot_name(stage: pc_rows.StageSpec) -> str:
     """The boundary snapshot a stage takes after its process ends: snap-<number>-after-<kind word>.
 
-    s1 work, s2 preclear and s3 resume give the three names the Phase 3 baseline holds.
+    s1 work, s2 preclear and s3 resume give the three names the Phase 3 baseline holds; the fourth stage of a row, a
+    /preclear refresh, takes snap-4-after-refresh (pc_rows.snapshot_name holds the one rule).
     """
-    return "snap-%s-after-%s" % (stage.name[1:], stage.kind)
+    return pc_rows.snapshot_name(stage)
 
 
 def _git_executable(env: Mapping[str, str]) -> str:
@@ -1392,6 +1394,7 @@ def _walk_stages(
     totals: Dict[str, Optional[Decimal]] = {}
     resume_line = ""
     scan = BinaryScan(str(ctx.claude))
+    first_preclear = next((item.name for item in entry.stages if item.kind == "preclear"), "")
     for stage in entry.stages:
         timeout = timeout_override if timeout_override is not None else stage.timeout
         boundary = results[-1].hooklog_lines if results else 0
@@ -1415,6 +1418,8 @@ def _walk_stages(
             resume = False
             previous: Optional[Decimal] = None
         elif mode == "resume" and key in sessions:
+            # The previous cumulative total is the last one reported under this session key, not the previous stage of
+            # the list: s4 of row 12 resumes the s3 session, so its delta is taken against s3's total (plan 04-13, FA-3).
             session_id = sessions[key]
             resume = True
             previous = totals.get(key)
@@ -1465,7 +1470,9 @@ def _walk_stages(
                 _isolation_stop(stage.name, result.evaluation),
                 hooks,
             )
-        if stage.kind == "preclear":
+        if stage.kind == "preclear" and stage.name == first_preclear:
+            # Only the first /preclear turn feeds the chain: a later /preclear stage (row 12's refresh, which resumes
+            # the fresh session) neither reads a resume line nor rewrites chain.json (plan 04-13).
             if entry.chain == pc_rows.CHAIN_PRINTED_CHECKPOINT:
                 resume_line, checkpoint_reason = printed_checkpoint(_result_text(result))
                 _write_chain_checkpoint(paths, resume_line, checkpoint_reason)

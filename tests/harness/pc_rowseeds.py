@@ -61,6 +61,7 @@ ROW8C_FOLDER = PUBLICATION_ROOT + "/row8c-unborn-branch"
 ROW9_FOLDER = PUBLICATION_ROOT + "/row9-linked-worktree"
 ROW10_FOLDER = PUBLICATION_ROOT + "/row10-large-status-rerun"
 ROW11_FOLDER = PUBLICATION_ROOT + "/row11-concurrent-change-rerun"
+ROW12_FOLDER = PUBLICATION_ROOT + "/row12-frozen-handoff"
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
 PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
@@ -1069,3 +1070,32 @@ def seed_row11(
     )
     install_git_wrapper(repo_root, run_root, pc_row1._git_executable(os.environ), str(paths["raw"]))
     return paths
+
+
+def seed_row12(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 12 setup: a plain project with one commit on main, memory enabled and pinned, the canonical plan.
+
+    The project instruction file is the committed row 12 fixture, copied byte for byte (its digest is the one rows 6 to 12
+    share); the plan is the plain plan data file. The external plan edit is not part of the seed: the engine applies the
+    between-stage hook of the entry after the /preclear turn (pc_rowhooks, append-plan-note; plan 04-13).
+    """
+    return seed_plain_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW12,
+        ROW12_FOLDER + "/fixture-CLAUDE.md",
+        _memory_policy(pc_rows.ROW12),
+    )

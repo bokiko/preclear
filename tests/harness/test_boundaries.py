@@ -684,8 +684,9 @@ class HookSafetyTests(unittest.TestCase):
         self.assertEqual(hooks.TARGETS[HOOK], ((PLAN_RELATIVE, "file"),))
         self.assertEqual(hooks.HOOK_SNAPSHOTS[HOOK], RESTRICTION_SNAPSHOT)
         self.assertEqual(hooks.FINALIZER_OF[HOOK], "restore-plan-644")
-        # Row 7 (plan 04-06) adds the project-folder hook and its finalizer to the same tables.
-        self.assertEqual(set(hooks.HOOKS), {HOOK, "restrict-project-555"})
+        # Row 7 (plan 04-06) adds the project-folder hook and its finalizer to the same tables; row 12 (plan 04-13) adds a
+        # hook that appends a line and so has no finalizer.
+        self.assertEqual(set(hooks.HOOKS), {HOOK, "restrict-project-555", "append-plan-note"})
         self.assertEqual(set(hooks.FINALIZERS), {"restore-plan-644", "restore-project-755"})
         for relative, kind in hooks.TARGETS[HOOK]:
             self.assertFalse(relative.startswith("/"))
