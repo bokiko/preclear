@@ -1,0 +1,18 @@
+usage by row, part 1
+every row folder present at the moment this part was written is listed; costs are in US dollars, kept as text
+rows: 2
+
+row11-concurrent-change (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0498027, cumulative 0.0498027
+  stage s2: subtype success, turns 19, cost 0.16401059999999998, cumulative 0.21381329999999998
+  stage s3: subtype success, turns 5, cost 0.06042080000000001, cumulative 0.06042080000000001
+  row total: 0.27423409999999999
+
+row12-frozen-handoff (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.045649, cumulative 0.045649
+  stage s2: subtype success, turns 22, cost 0.21729389999999998, cumulative 0.2629429
+  stage s3: subtype success, turns 5, cost 0.05670410000000001, cumulative 0.05670410000000001
+  stage s4: subtype success, turns 12, cost 0.15453319999999998, cumulative 0.21123730000000002
+  row total: 0.47418020000000002
+
+total: 0.74841430000000001 USD from 2 cost value(s); 0 UNCONFIRMED

@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `src/widget_export.py`. It has small pure functions, `export_csv` as the entry point, and a header row of `id,name`. The repo had no existing code or language, so I chose Python; say if you want something else.
+I didn't run tests, commit, or start step 3, and I left the plan checkbox unchecked.
+JSON export stays deferred, per the plan's CSV decision.

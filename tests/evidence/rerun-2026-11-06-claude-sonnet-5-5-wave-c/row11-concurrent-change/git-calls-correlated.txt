@@ -1,0 +1,31 @@
+# Git wrapper calls joined to tool_use ids
+# internal: the call starts with -c (Claude Code's own, no tool_use exists). ambiguous: several executed parts have
+# the same arguments, so every candidate id is listed and none is chosen. unmatched: no executed part has them.
+call 1: internal ORD=- EXIT=1
+call 2: internal ORD=- EXIT=2
+call 3: internal ORD=- EXIT=0
+call 4: internal ORD=- EXIT=0
+call 5: internal ORD=- EXIT=0
+call 6: internal ORD=- EXIT=0
+call 7: internal ORD=- EXIT=0
+call 8: internal ORD=- EXIT=0
+call 9: internal ORD=- EXIT=0
+call 10: toolu_01HwMXXUmomN3MTFdGSdkyZk ORD=- EXIT=0
+call 11: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=- EXIT=0
+call 12: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=- EXIT=0
+call 13: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=1 EXIT=0
+call 14: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=- EXIT=0
+call 15: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=- EXIT=0
+call 16: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=2 EXIT=0
+call 17: toolu_01XUsyZNrRfmfefyL7zPeCx4 ORD=- EXIT=0
+call 18: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=- EXIT=0
+call 19: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=- EXIT=0
+call 20: ambiguous toolu_01HwMXXUmomN3MTFdGSdkyZk toolu_01Mqiqr7eYVsjRQcydLcjkmr toolu_01PjqahQJjVdzhpHzn2hrmSR ORD=3 EXIT=0
+
+counts:
+calls-logged: 20
+calls-internal: 9
+calls-matched-to-one-tool-use: 2
+calls-ambiguous: 9
+calls-unmatched: 0
+lines-unreadable-UNCONFIRMED: 0
