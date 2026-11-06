@@ -116,12 +116,40 @@ def _spec_of_run(data: Any) -> pc_rows.RowSpec:
     return entry
 
 
-def stage_label(spec: pc_rows.RowSpec, stage_name: str) -> str:
-    """The file label of a stage: its name and its kind (s1-work, s2-preclear, s3-resume)."""
+def is_refresh_stage(spec: pc_rows.RowSpec, stage_name: str) -> bool:
+    """True for a /preclear stage that comes after another /preclear stage of the row (row 12's s4, plan 04-13)."""
+    seen_preclear = False
     for stage in spec.stages:
         if stage.name == stage_name:
-            return "%s-%s" % (stage.name, stage.kind)
+            return stage.kind == "preclear" and seen_preclear
+        if stage.kind == "preclear":
+            seen_preclear = True
     raise EvidenceError("a stage is not part of the row")
+
+
+def stage_label(spec: pc_rows.RowSpec, stage_name: str) -> str:
+    """The file label of a stage's traces: its name and its kind (s1-work, s2-preclear, s3-resume).
+
+    A later /preclear stage (the refresh of row 12) is labelled s4-preclear-refresh, the committed name of its traces.
+    """
+    for stage in spec.stages:
+        if stage.name == stage_name:
+            word = "%s-%s" % (stage.name, stage.kind)
+            return word + "-refresh" if is_refresh_stage(spec, stage_name) else word
+    raise EvidenceError("a stage is not part of the row")
+
+
+def prompt_label(spec: pc_rows.RowSpec, stage_name: str) -> str:
+    """The file label of a stage's prompt file: the stage label, except that a refresh keeps the committed s4-preclear."""
+    label = stage_label(spec, stage_name)
+    return label[: -len("-refresh")] if label.endswith("-refresh") else label
+
+
+def exit_label(spec: pc_rows.RowSpec, stage_name: str) -> str:
+    """The base name of a stage's .exit and .err files: s1 and a refresh stage use the bare stage name (committed names)."""
+    if stage_name == "s1" or is_refresh_stage(spec, stage_name):
+        return stage_name
+    return stage_label(spec, stage_name)
 
 
 def _stage_kind(spec: pc_rows.RowSpec, stage_name: str) -> str:
@@ -1255,9 +1283,10 @@ def _chain_incomplete(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> 
     The live path files only after the last /preclear turn has run and runs a resume stage only when that turn
     printed a resume line, so a run that stopped early (a crash, an interrupt, a harness error after a paid call)
     has fewer records and must not be filed or refiled (second-pass CR-01). The chain record names which shape is
-    complete: every stage of the entry with the marker found, or every stage but those of kind resume with the
-    marker none. A spec with no stage of kind resume therefore has one complete shape, whatever the marker. The
-    stage names come from the registry entry the runner walks, not from a second list.
+    complete: every stage of the entry with the marker found, or with the marker none every stage before the
+    first stage of kind resume (that stage and every stage after it are dropped). A spec with no stage of kind resume
+    therefore has one complete shape, whatever the marker. The stage names come from the registry entry the runner walks,
+    not from a second list.
     """
     row1 = _row1()
     marker = data.chain.get("marker") if isinstance(data.chain, dict) else None
@@ -1275,7 +1304,13 @@ def _chain_incomplete(data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> 
     if marker == row1.MARKER_FOUND:
         expected = [stage.name for stage in entry.stages]
     else:
-        expected = [stage.name for stage in entry.stages if stage.kind != "resume"]
+        # No resume line: the chain ends before the first stage of kind resume, and so does every stage after it (row 12's
+        # s4 resumes the session of that resume stage, so it never runs either).
+        expected = []
+        for stage in entry.stages:
+            if stage.kind == "resume":
+                break
+            expected.append(stage.name)
     if [stage.name for stage in data.stages] != expected:
         return MESSAGE_STAGE_MISSING
     return None
@@ -1373,7 +1408,8 @@ def stage_files(
         kind = _stage_kind(row, stage.name)
         record = stage.record
         code = record.get("returncode")
-        base = "s1" if stage.name == "s1" else label
+        base = exit_label(row, stage.name)
+        prompt_name = prompt_label(row, stage.name)
         files["%s.exit" % base] = _lines(
             ["exit %s" % (code if isinstance(code, int) and not isinstance(code, bool) else UNCONFIRMED)]
         )
@@ -1390,7 +1426,7 @@ def stage_files(
                 files["session.id"] = _lines([_text(record.get("session_id"))])
         elif kind == "preclear":
             if stage.prompt is not None or filed_row:
-                files["%s-prompt.md" % label] = (stage.prompt or "").encode("utf-8")
+                files["%s-prompt.md" % prompt_name] = (stage.prompt or "").encode("utf-8")
             if readable or filed_row:
                 files["%s-trace.md" % label] = render_short_trace(row.row_id, stage, facts, clean, label)
                 files["%s-full-trace.md" % label] = render_full_trace(row.row_id, stage, label)

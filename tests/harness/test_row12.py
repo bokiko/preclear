@@ -12,9 +12,12 @@ that name a path are never asserted on by value; leak-shaped strings are never t
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import io
+import json
 import os
+import shutil
 import tempfile
 import unittest
 from decimal import Decimal
@@ -57,7 +60,16 @@ SNAPSHOTS = (
     "snap-3-after-resume",
     "snap-4-after-refresh",
 )
-DASH = "—"
+DASH = "\u2014"
+FIRST_DESTINATION = "rerun-2026-10-28-claude-sonnet-5-5-first"
+FIXED_DATE = datetime.datetime(2026, 10, 28, 12, 0, 0, tzinfo=datetime.timezone.utc)
+S4_NAMES = (
+    "s4-preclear-prompt.md",
+    "s4-preclear-refresh-trace.md",
+    "s4-preclear-refresh-full-trace.md",
+    "s4.err",
+    "s4.exit",
+)
 
 
 def hooks():
@@ -509,6 +521,36 @@ class Row12ChainTests(unittest.TestCase):
         self.assertEqual(self.chain.outcome.code, pc_exitcodes.OK)
 
 
+    def test_the_filed_s4_files_carry_the_committed_names_and_every_one_exists_in_the_committed_row(self) -> None:
+        filed = set(tree_names(self.chain.row_dir))
+        committed_names = set(tree_names(committed(ROW12)))
+        for name in S4_NAMES:
+            self.assertIn(name, filed, name)
+            self.assertIn(name, committed_names, name)
+        for folder in ("snap-2b-after-external-plan-edit/", "snap-4-after-refresh/"):
+            self.assertIn(folder, filed)
+            self.assertIn(folder, committed_names)
+        stage_files = sorted(name for name in filed if name[:2] in ("s1", "s2", "s3", "s4") and "/" not in name)
+        self.assertEqual(
+            [name for name in stage_files if name.startswith("s4")], sorted(S4_NAMES), "no other s4 name is filed"
+        )
+        self.assertNotIn("s4-preclear-trace.md", filed)
+        self.assertNotIn("s4-preclear.exit", filed)
+
+    def test_the_filed_s4_prompt_is_the_committed_prompt_and_the_s4_exit_file_reads_exit_zero(self) -> None:
+        self.assertEqual(
+            read_bytes(os.path.join(self.chain.row_dir, "s4-preclear-prompt.md")),
+            read_bytes(committed(ROW12, "s4-preclear-prompt.md")),
+        )
+        self.assertEqual(read_text(os.path.join(self.chain.row_dir, "s4.exit")), read_text(committed(ROW12, "s4.exit")))
+        self.assertEqual(read_text(os.path.join(self.chain.row_dir, "s4.err")), "")
+
+    def test_the_filed_snapshot_of_s4_holds_the_refreshed_checkpoint_and_the_frozen_copy_of_s2(self) -> None:
+        folder = os.path.join(self.chain.row_dir, "snap-4-after-refresh", "preclear", "widget-export")
+        self.assertEqual(sorted(os.listdir(folder)), [FROZEN_NAME, "checkpoint.md"])
+        self.assertIn("refreshed", read_text(os.path.join(folder, "checkpoint.md")))
+
+
 class Row12PlantedSymlinkTests(unittest.TestCase):
     def test_a_symlink_planted_at_the_plan_path_in_s2_stops_the_row_with_11_and_the_outside_file_is_unchanged(self) -> None:
         rig = pc_testutil.RowRig(
@@ -531,6 +573,195 @@ class Row12PlantedSymlinkTests(unittest.TestCase):
         self.assertFalse(os.path.lexists(os.path.join(run.run_root, "snaps", "snap-2b-after-external-plan-edit")))
         stop = read_text(os.path.join(run.ctx.destination, "STOPPED-" + ROW12, "stop.txt"))
         self.assertIn("reason: breach", stop.splitlines())
+
+
+def first_destination_chain(stages):
+    """A chain filed into a side folder, so the dated folder is free for the refile (as test_row7 does)."""
+    rig = pc_testutil.RowRig(stages=stages)
+    first = os.path.join(rig.repo, "tests", "evidence", FIRST_DESTINATION)
+    ctx = rig.context(destination=first)
+    outcome = row1().run_registered_row(ctx, ROW12)
+    assert outcome.code == 0, "\n".join(outcome.lines)
+    names = sorted(os.listdir(ctx.runs_root))
+    assert len(names) == 1, names
+    return rig, ctx, os.path.join(ctx.runs_root, names[0])
+
+
+def rewrite_chain(run_root: str, **changes) -> None:
+    path = os.path.join(run_root, "raw", "chain.json")
+    record = read_json(path)
+    record.update(changes)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle)
+
+
+def no_resume_line_stages() -> list:
+    stages = row12_stages()
+    stages[1]["result"] = dict(stages[1]["result"], text="Checkpoint written, nothing to paste.\n")
+    return stages
+
+
+class Row12ShapeTests(unittest.TestCase):
+    """The chain has two valid shapes: found with s1 to s4, and none with s1 and s2 only."""
+
+    def refile(self, rig, run_root):
+        out, err = io.StringIO(), io.StringIO()
+        code = matrix().main(
+            ["--refile", run_root], env=dict(rig.env), repo_root=rig.repo, clock=lambda: FIXED_DATE, out=out, err=err
+        )
+        return code, out.getvalue() + err.getvalue()
+
+    def dated(self, rig) -> str:
+        return os.path.join(rig.repo, "tests", "evidence", "rerun-2026-10-28-claude-sonnet-5-5")
+
+    def test_a_chain_with_no_resume_line_runs_s1_and_s2_only_records_none_and_is_filed(self) -> None:
+        run = Registered(ROW12, stages=no_resume_line_stages())
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        self.assertEqual(len(run.rig.calls()), 2, "no s3 and no s4 was launched")
+        self.assertEqual(read_json(run.raw("chain.json"))["marker"], "NO-RESUME-LINE")
+        names = tree_names(run.row_dir)
+        self.assertIn("s2-preclear-trace.md", names)
+        for name in S4_NAMES + ("s3-resume-trace.md", "s3-resume.exit"):
+            self.assertNotIn(name, names, name)
+        snaps = sorted(os.listdir(os.path.join(run.run_root, "snaps")))
+        self.assertEqual(snaps, ["snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-2b-after-external-plan-edit"])
+        self.assertEqual(sorted(r["stage"] for r in run.ledger() if r["kind"] == "launch"), ["row12-s1", "row12-s2"])
+        plan = read_text(os.path.join(run.run_root, "project", *PLAN_RELATIVE.split("/")))
+        self.assertTrue(plan.endswith(NOTE_LINE + "\n"), "the hook ran after s2 even though the chain ended")
+
+    def test_refile_accepts_the_found_run_with_four_stages_and_the_none_run_with_two_and_starts_no_process(self) -> None:
+        for stages, expect_s4 in ((row12_stages(), True), (no_resume_line_stages(), False)):
+            rig, ctx, run_root = first_destination_chain(stages)
+            calls = len(rig.calls())
+            code, text = self.refile(rig, run_root)
+            self.assertEqual(code, 0, text)
+            self.assertEqual(len(rig.calls()), calls, "a refile starts no process")
+            names = tree_names(os.path.join(self.dated(rig), ROW12))
+            self.assertEqual("s4-preclear-refresh-trace.md" in names, expect_s4)
+            self.assertIn("s2-preclear-trace.md", names)
+
+    def test_refile_refuses_a_found_marker_with_three_stages(self) -> None:
+        rig, ctx, run_root = first_destination_chain(row12_stages())
+        trimmed = run_root + "-no-s4"
+        shutil.copytree(
+            run_root,
+            trimmed,
+            symlinks=True,
+            ignore=lambda folder, names: [
+                name for name in names if name.startswith(("s4.", "s4-")) or name == "snap-4-after-refresh"
+            ],
+        )
+        self.assertFalse(os.path.lexists(os.path.join(trimmed, "raw", "s4.record.json")))
+        self.assertEqual(read_json(os.path.join(trimmed, "raw", "chain.json"))["marker"], "found")
+        code, text = self.refile(rig, trimmed)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, text)
+        self.assertFalse(os.path.lexists(self.dated(rig)), "nothing was filed")
+
+    def test_refile_refuses_the_none_marker_with_four_stages_and_the_odd_marker_words(self) -> None:
+        for marker in ("NO-RESUME-LINE", "NO-PRINTED-CHECKPOINT", "", None, "other"):
+            rig, ctx, run_root = first_destination_chain(row12_stages())
+            rewrite_chain(run_root, marker=marker)
+            code, text = self.refile(rig, run_root)
+            self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, "%r %s" % (marker, text))
+            self.assertFalse(os.path.lexists(self.dated(rig)))
+
+    def test_the_chain_rule_drops_every_stage_from_the_first_resume_stage_on_when_the_marker_is_none(self) -> None:
+        import pc_evidence
+
+        rig, ctx, run_root = first_destination_chain(row12_stages())
+        data = pc_evidence.load_stage_data(run_root)
+        spec = spec_of(ROW12)
+        self.assertEqual([stage.name for stage in data.stages], ["s1", "s2", "s3", "s4"])
+        self.assertIsNone(pc_evidence._chain_incomplete(data, spec))
+        missing = pc_evidence.MESSAGE_STAGE_MISSING
+        found3 = data._replace(stages=data.stages[:3])
+        self.assertEqual(pc_evidence._chain_incomplete(found3, spec), missing)
+        none = dict(data.chain, marker="NO-RESUME-LINE")
+        for stages, ok in (
+            (data.stages[:2], True),
+            (data.stages[:1], False),
+            (data.stages[:3], False),
+            (data.stages, False),
+            ([data.stages[0], data.stages[1], data.stages[3]], False),
+        ):
+            result = pc_evidence._chain_incomplete(data._replace(stages=stages, chain=none), spec)
+            self.assertEqual(result is None, ok, [stage.name for stage in stages])
+
+    def test_a_row_with_a_single_preclear_stage_names_its_files_as_before(self) -> None:
+        import pc_evidence
+
+        row1_spec = spec_of("row1-wrong-binding")
+        self.assertEqual(
+            [pc_evidence.stage_label(row1_spec, name) for name in ("s1", "s2", "s3")], ["s1-work", "s2-preclear", "s3-resume"]
+        )
+        self.assertEqual([pc_evidence.exit_label(row1_spec, name) for name in ("s1", "s2", "s3")], ["s1", "s2-preclear", "s3-resume"])
+        spec = spec_of(ROW12)
+        self.assertEqual(
+            [pc_evidence.stage_label(spec, name) for name in ("s1", "s2", "s3", "s4")],
+            ["s1-work", "s2-preclear", "s3-resume", "s4-preclear-refresh"],
+        )
+        self.assertEqual(
+            [pc_evidence.prompt_label(spec, name) for name in ("s2", "s4")], ["s2-preclear", "s4-preclear"]
+        )
+        self.assertEqual([pc_evidence.exit_label(spec, name) for name in ("s1", "s2", "s3", "s4")], ["s1", "s2-preclear", "s3-resume", "s4"])
+
+
+class Row12CapTests(unittest.TestCase):
+    """The fourth stage never takes the row past 2.00: the ledger refuses the launch and the harness never raises the cap."""
+
+    def execute(self, deltas):
+        rig = pc_testutil.RowRig(stages=row12_stages(deltas=deltas))
+        out, err = io.StringIO(), io.StringIO()
+        code = matrix().execute_row(spec_of(ROW12), rig.context(), out, err)
+        return rig, code, out.getvalue() + err.getvalue()
+
+    def ledger(self, rig) -> list:
+        return pc_spend.read_records(rig.context().harness_home)
+
+    def test_the_s4_launch_is_refused_with_18_before_any_process_when_the_first_three_settled_past_the_bound(self) -> None:
+        rig, code, text = self.execute(("0.30", "0.71", "0.40", "0.06"))  # 1.41 settled; 1.41 + 0.60 passes 2.00
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, text)
+        self.assertEqual(len(rig.calls()), 3, "no fourth process was started")
+        stages = [(r["kind"], r["stage"]) for r in self.ledger(rig)]
+        self.assertEqual(
+            stages,
+            [("launch", "row12-s1"), ("settle", "row12-s1"), ("launch", "row12-s2"), ("settle", "row12-s2"), ("launch", "row12-s3"), ("settle", "row12-s3")],
+        )
+        self.assertNotIn("row12-s4", [stage for _kind, stage in stages], "the ledger holds no s4 launch line")
+        self.assertEqual(rig.tripwire(), [])
+
+    def test_the_refusal_writes_no_authorization_line_and_changes_no_cap(self) -> None:
+        rig, code, text = self.execute(("0.30", "0.71", "0.40", "0.06"))
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, text)
+        self.assertEqual({r["kind"] for r in self.ledger(rig)}, {"launch", "settle"})
+        self.assertEqual(
+            [str(stage.cap) for stage in spec_of(ROW12).stages], ["0.30", "1.30", "0.40", "0.60"], "the registry caps are untouched"
+        )
+        self.assertEqual(rows().worst_case(spec_of(ROW12)), Decimal("2.00"))
+        self.assertEqual(rows().ROW_CAP, Decimal("2.00"))
+
+    def test_the_boundary_is_exact_1_40_settled_still_launches_s4_and_the_row_ends_at_2_00_pessimistic(self) -> None:
+        rig, code, text = self.execute(("0.30", "0.70", "0.40", "0.06"))  # 1.40 + 0.60 is exactly 2.00
+        self.assertEqual(code, pc_exitcodes.OK, text)
+        self.assertEqual(len(rig.calls()), 4)
+        launches = [r for r in self.ledger(rig) if r["kind"] == "launch"]
+        self.assertEqual([r["stage"] for r in launches], ["row12-s1", "row12-s2", "row12-s3", "row12-s4"])
+        self.assertEqual(launches[3]["cap"], Decimal("0.60"))
+        self.assertEqual(pc_spend.row_pessimistic_total(rig.context().harness_home, "row12-frozen-handoff"), Decimal("1.46"))
+
+    def test_the_s4_delta_is_taken_against_the_s3_chain_total_not_the_s2_one(self) -> None:
+        rig = pc_testutil.RowRig(stages=row12_stages(deltas=("0.30", "0.50", "0.20", "0.07")))
+        run = Registered(ROW12, rig=rig)
+        self.assertEqual(run.outcome.code, 0, "\n".join(run.outcome.lines))
+        s2 = read_json(run.raw("s2.record.json"))
+        s3 = read_json(run.raw("s3.record.json"))
+        s4 = read_json(run.raw("s4.record.json"))
+        self.assertEqual(Decimal(s2["cumulative"]), Decimal("0.80"))
+        self.assertEqual(Decimal(s3["cumulative"]), Decimal("0.20"))
+        self.assertEqual(Decimal(s4["cumulative"]), Decimal("0.27"))
+        self.assertEqual(Decimal(s4["delta"]), Decimal("0.07"))
+        self.assertEqual(Decimal(s4["cumulative"]) - Decimal(s3["cumulative"]), Decimal(s4["delta"]))
+        self.assertEqual(s4["cumulative_consistent"], "yes")
 
 
 if __name__ == "__main__":
