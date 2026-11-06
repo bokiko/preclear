@@ -493,13 +493,15 @@ class ScriptedChainTests(unittest.TestCase):
 
         r = review()
         self.assertEqual(spec_of(ROW7).analyses, ("row7-facts", "do-not-redo"))
-        # plan 04-10 added status-form (row 10) and git-calls (named by row 11 in plan 04-12)
-        self.assertEqual(sorted(r.ANALYSES), ["do-not-redo", "git-calls", "row7-facts", "status-form"])
+        # plan 04-10 added status-form (row 10) and git-calls (named by row 11 in plan 04-12); plan 04-13 added frozen-copy (row 12)
+        self.assertEqual(sorted(r.ANALYSES), ["do-not-redo", "frozen-copy", "git-calls", "row7-facts", "status-form"])
         for entry in pc_rows.build_registry():
             if entry.row_id == "row10-large-status":
                 self.assertEqual(entry.analyses, ("status-form",))
             elif entry.row_id == "row11-concurrent-change":
                 self.assertEqual(entry.analyses, ("git-calls",))
+            elif entry.row_id == "row12-frozen-handoff":
+                self.assertEqual(entry.analyses, ("frozen-copy",))
             elif entry.row_id != ROW7:
                 self.assertEqual(entry.analyses, (), entry.row_id)
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
@@ -1056,7 +1058,7 @@ class StatusFormTests(unittest.TestCase):
         self.assertIn("status-form", review().ANALYSES)
         self.assertEqual(review().STATUS_FORM_SECTION, "Row 10 status form")
         for entry in pc_rows.build_registry():
-            if entry.row_id not in (ROW7, "row10-large-status", "row11-concurrent-change"):
+            if entry.row_id not in (ROW7, "row10-large-status", "row11-concurrent-change", "row12-frozen-handoff"):
                 self.assertEqual(entry.analyses, (), entry.row_id)
 
 

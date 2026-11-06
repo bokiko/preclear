@@ -25,6 +25,7 @@ from decimal import Decimal
 import pc_exitcodes
 import pc_spend
 import pc_testutil
+from test_evidence import verdict_pattern
 from test_row_generic import Registered, tree_names
 from test_rows_git import SeededGit, dry_run_row
 from test_rows_plain import (
@@ -108,7 +109,7 @@ def checkpoint_write(path: str, text: str) -> list:
     ]
 
 
-def row12_stages(deltas=("0.03", "0.06", "0.04", "0.06"), s2_ops=(), s4_ops=None, s3_ops=()) -> list:
+def row12_stages(deltas=("0.03", "0.06", "0.04", "0.06"), s2_ops=(), s4_ops=None, s3_ops=(), frozen=True) -> list:
     """The scripted stages of a clean row 12 run: the plain scripts, a frozen copy written by s2 and a refresh by s4.
 
     s2 also writes the frozen copy named like the committed run's; s4 rewrites the mutable checkpoint only (its ops are
@@ -120,8 +121,8 @@ def row12_stages(deltas=("0.03", "0.06", "0.04", "0.06"), s2_ops=(), s4_ops=None
     stages[1]["result"] = dict(
         stages[1]["result"], text="Checkpoint and a frozen copy written.\n\n```\n" + resume_line_text() + "\n```\n"
     )
-    frozen = checkpoint_write(CHECKPOINT_DIR + "/" + FROZEN_NAME, "frozen copy of the checkpoint\n")
-    stages = pc_testutil._with_ops(stages, 1, frozen + list(s2_ops))
+    frozen_ops = checkpoint_write(CHECKPOINT_DIR + "/" + FROZEN_NAME, "frozen copy of the checkpoint\n") if frozen else []
+    stages = pc_testutil._with_ops(stages, 1, frozen_ops + list(s2_ops))
     if s3_ops:
         stages = pc_testutil._with_ops(stages, 2, list(s3_ops))
     refresh = s4_ops
@@ -162,7 +163,7 @@ class Row12RegistryTests(unittest.TestCase):
         self.assertEqual(spec.memory, pc_rows.MEMORY_PINNED)
         self.assertEqual(spec.chain, pc_rows.CHAIN_RESUME_LINE)
         self.assertEqual(spec.hooks, (("s2", "append-plan-note"),))
-        self.assertEqual(spec.analyses, ())  # the frozen-copy analysis is named in the entry by the last task of plan 04-13
+        self.assertEqual(spec.analyses, ("frozen-copy",))
         self.assertEqual(spec.path_prepend, ())
         self.assertEqual(spec.seed, "pc_rowseeds:seed_row12")
         self.assertEqual([name for name, _path in spec.prompts], ["s1", "s2", "s4"])
@@ -762,6 +763,185 @@ class Row12CapTests(unittest.TestCase):
         self.assertEqual(Decimal(s4["delta"]), Decimal("0.07"))
         self.assertEqual(Decimal(s4["cumulative"]) - Decimal(s3["cumulative"]), Decimal(s4["delta"]))
         self.assertEqual(s4["cumulative_consistent"], "yes")
+
+
+def section_lines(run, title: str = "Frozen copy") -> list:
+    text = read_text(os.path.join(run.row_dir, "mechanical-checks.md"))
+    return text.split("## %s\n" % title, 1)[1].split("\n## ", 1)[0].splitlines()
+
+
+def sha_of_file(path: str) -> str:
+    return hashlib.sha256(read_bytes(path)).hexdigest()
+
+
+def review():
+    import pc_review
+
+    return pc_review
+
+
+class FrozenCopyTests(unittest.TestCase):
+    """The Frozen copy section prints digests, counts and yes or no equality read from the filed snapshot copies only."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.kept = Row12Run()
+        assert cls.kept.outcome.code == 0, "\n".join(cls.kept.outcome.lines)
+        rewriting = checkpoint_write(CHECKPOINT_DIR + "/" + FROZEN_NAME, "the frozen copy was rewritten\n") + checkpoint_write(
+            CHECKPOINT_DIR + "/checkpoint.md", "## Identity and state\nrefreshed\n"
+        )
+        cls.rewritten = Row12Run(stages=row12_stages(s4_ops=rewriting))
+        assert cls.rewritten.outcome.code == 0, "\n".join(cls.rewritten.outcome.lines)
+        cls.without = Row12Run(stages=row12_stages(frozen=False))
+        assert cls.without.outcome.code == 0, "\n".join(cls.without.outcome.lines)
+        cls.stopped_early = Registered(ROW12, stages=no_resume_line_stages())
+        assert cls.stopped_early.outcome.code == 0, "\n".join(cls.stopped_early.outcome.lines)
+
+    def test_the_registry_names_the_analysis_and_the_section_is_filed_once_at_the_end_of_the_checks(self) -> None:
+        self.assertIn("frozen-copy", review().ANALYSES)
+        self.assertEqual(review().FROZEN_COPY_SECTION, "Frozen copy")
+        text = read_text(os.path.join(self.kept.row_dir, "mechanical-checks.md"))
+        self.assertEqual(text.count("## Frozen copy\n"), 1)
+        self.assertTrue(text.rstrip("\n").splitlines()[-1].startswith("frozen-copy "), "the section is the last one")
+
+    def test_an_untouched_frozen_copy_lists_its_digest_in_all_four_snapshots_and_equal_yes(self) -> None:
+        lines = section_lines(self.kept)
+        frozen = sha_of_file(os.path.join(self.kept.snapshot("snap-2-after-preclear"), "preclear", "widget-export", FROZEN_NAME))
+        for snapshot in review().FROZEN_SNAPSHOTS:
+            self.assertIn("%s: frozen-copies 1" % snapshot, lines)
+            self.assertIn("%s: frozen-copy widget-export/%s sha256 %s" % (snapshot, FROZEN_NAME, frozen), lines)
+            checkpoint = sha_of_file(os.path.join(self.kept.snapshot(snapshot), "preclear", "widget-export", "checkpoint.md"))
+            self.assertIn("%s: checkpoint widget-export/checkpoint.md sha256 %s" % (snapshot, checkpoint), lines)
+        self.assertIn("frozen-copy-names-in-any-snapshot: 1", lines)
+        self.assertIn(
+            "frozen-copy widget-export/%s: held-in-snapshots 4 of 4, digest-same-in-every-snapshot-that-holds-it yes" % FROZEN_NAME,
+            lines,
+        )
+
+    def test_the_mutable_checkpoint_digest_changes_with_the_refresh_and_the_frozen_digest_does_not(self) -> None:
+        lines = section_lines(self.kept)
+        checkpoint = [line.split(" ")[-1] for line in lines if " checkpoint widget-export/checkpoint.md sha256 " in line]
+        self.assertEqual(len(checkpoint), 4)
+        self.assertNotEqual(checkpoint[0], checkpoint[3], "the scripted s4 rewrote the mutable checkpoint")
+        self.assertEqual(checkpoint[0], checkpoint[1])
+        self.assertEqual(checkpoint[1], checkpoint[2])
+        frozen = set(line.split(" ")[-1] for line in lines if " frozen-copy widget-export/" in line and " sha256 " in line)
+        self.assertEqual(len(frozen), 1)
+
+    def test_a_scripted_s4_that_rewrites_the_frozen_copy_gives_equal_no_and_still_no_verdict_word(self) -> None:
+        lines = section_lines(self.rewritten)
+        self.assertIn(
+            "frozen-copy widget-export/%s: held-in-snapshots 4 of 4, digest-same-in-every-snapshot-that-holds-it no" % FROZEN_NAME,
+            lines,
+        )
+        digests = [line.split(" ")[-1] for line in lines if " frozen-copy widget-export/" in line and " sha256 " in line]
+        self.assertEqual(len(digests), 4)
+        self.assertEqual(len(set(digests[:3])), 1)
+        self.assertNotEqual(digests[2], digests[3])
+        for run in (self.kept, self.rewritten, self.without, self.stopped_early):
+            text = "\n".join(section_lines(run))
+            self.assertIsNone(verdict_pattern().search(text), "no verdict word")
+            for word in ("correct", "wrong", "good", "bad", "unchanged", "violat", "intact", "broken"):
+                self.assertNotIn(word, text.lower(), word)
+
+    def test_a_run_with_no_frozen_copy_prints_zero_copies_and_no_error(self) -> None:
+        lines = section_lines(self.without)
+        for snapshot in review().FROZEN_SNAPSHOTS:
+            self.assertIn("%s: frozen-copies 0" % snapshot, lines)
+        self.assertIn("frozen-copy-names-in-any-snapshot: 0", lines)
+        self.assertEqual([line for line in lines if line.startswith("frozen-copy ")], [])
+        self.assertNotIn("UNCONFIRMED", "\n".join(lines))
+
+    def test_a_chain_that_ended_after_s2_reports_the_later_snapshot_folders_as_absent(self) -> None:
+        lines = section_lines(self.stopped_early)
+        self.assertIn("snap-3-after-resume: snapshot folder absent", lines)
+        self.assertIn("snap-4-after-refresh: snapshot folder absent", lines)
+        self.assertIn("snap-2b-after-external-plan-edit: frozen-copies 1", lines)
+        self.assertIn("frozen-copy widget-export/%s: held-in-snapshots 2 of 4, digest-same-in-every-snapshot-that-holds-it yes" % FROZEN_NAME, lines)
+
+    def test_the_section_adds_no_file_to_the_row_folder_and_holds_no_path_or_session_id(self) -> None:
+        names = set(tree_names(self.kept.row_dir))
+        self.assertFalse(any("frozen" in name for name in names if "/" not in name), "no extra flat file")
+        text = "\n".join(section_lines(self.kept))
+        self.assertNotIn(self.kept.run_root, text)
+        self.assertNotIn(os.sep + "tmp", text)
+
+    def snaps(self, layout: dict) -> str:
+        base = tempfile.mkdtemp(prefix="pc-frozen-")
+        for snapshot, files in layout.items():
+            folder = os.path.join(base, snapshot)
+            os.makedirs(folder)
+            if files is None:
+                continue
+            os.makedirs(os.path.join(folder, "preclear"))
+            for relative, text in files.items():
+                full = os.path.join(folder, "preclear", *relative.split("/"))
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+        return base
+
+    def test_a_snapshot_folder_without_a_preclear_copy_prints_absent_and_a_missing_folder_prints_absent(self) -> None:
+        base = self.snaps({"snap-2-after-preclear": None, "snap-2b-after-external-plan-edit": {"w/checkpoint.md": "a\n"}})
+        lines = review().frozen_copy_lines(base)
+        self.assertIn("snap-2-after-preclear: preclear copy absent", lines)
+        self.assertIn("snap-2b-after-external-plan-edit: frozen-copies 0", lines)
+        self.assertIn("snap-3-after-resume: snapshot folder absent", lines)
+        self.assertIn("snap-4-after-refresh: snapshot folder absent", lines)
+        self.assertEqual(review().frozen_copy_lines(tempfile.mkdtemp(prefix="pc-frozen-"))[0], "snap-2-after-preclear: snapshot folder absent")
+
+    def test_only_names_of_the_frozen_pattern_count_and_a_link_or_a_folder_of_that_name_is_skipped(self) -> None:
+        good = "checkpoint-20261019T233549Z-k7q2.md"
+        base = self.snaps(
+            {
+                "snap-2-after-preclear": {
+                    "w/checkpoint.md": "mutable\n",
+                    "w/" + good: "frozen\n",
+                    "w/checkpoint-notatime-k7q2.md": "x\n",
+                    "w/checkpoint-20261019T233549Z.md": "x\n",
+                    "w/checkpoint-20261019T233549Z-k7q2.txt": "x\n",
+                    "w/old-" + good: "x\n",
+                    "other/" + good: "second\n",
+                }
+            }
+        )
+        folder = os.path.join(base, "snap-2-after-preclear", "preclear")
+        os.symlink(os.path.join(folder, "w", good), os.path.join(folder, "w", "checkpoint-20261019T233550Z-zzzz.md"))
+        os.makedirs(os.path.join(folder, "w", "checkpoint-20261019T233551Z-dirs.md"))
+        lines = review().frozen_copy_lines(base)
+        self.assertIn("snap-2-after-preclear: frozen-copies 2", lines)
+        self.assertEqual(len([line for line in lines if line.startswith("snap-2-after-preclear: frozen-copy ")]), 2)
+        self.assertIn("frozen-copy-names-in-any-snapshot: 2", lines)
+
+    def test_the_list_of_one_snapshot_is_capped_and_the_rest_is_counted(self) -> None:
+        files = dict(("w/checkpoint-20261019T2335%02dZ-a%d.md" % (n % 60, n), "x%d\n" % n) for n in range(review().MAX_FROZEN_FILES + 3))
+        lines = review().frozen_copy_lines(self.snaps({"snap-2-after-preclear": files}))
+        listed = [line for line in lines if line.startswith("snap-2-after-preclear: frozen-copy ")]
+        self.assertEqual(len(listed), review().MAX_FROZEN_FILES)
+        self.assertIn("snap-2-after-preclear: frozen-copies %d" % (review().MAX_FROZEN_FILES + 3), lines)
+        self.assertIn("snap-2-after-preclear: frozen-copies-not-listed 3", lines)
+
+    def test_read_over_the_committed_row_12_snapshots_in_place_the_one_frozen_copy_is_equal_in_all_four(self) -> None:
+        lines = review().frozen_copy_lines(committed(ROW12))
+        self.assertIn("frozen-copy-names-in-any-snapshot: 1", lines)
+        self.assertIn(
+            "frozen-copy widget-export/%s: held-in-snapshots 4 of 4, digest-same-in-every-snapshot-that-holds-it yes" % FROZEN_NAME,
+            lines,
+        )
+        digests = set(line.split(" ")[-1] for line in lines if " frozen-copy widget-export/" in line and " sha256 " in line)
+        self.assertEqual(len(digests), 1)
+        # the committed copies are the sanitized ones, so their digest is not the one measured on the original file
+        checkpoints = set(line.split(" ")[-1] for line in lines if " checkpoint widget-export/checkpoint.md sha256 " in line)
+        self.assertGreaterEqual(len(checkpoints), 2, "the refresh changed the mutable checkpoint")
+
+    def test_the_analysis_returns_the_section_and_no_extra_file(self) -> None:
+        import pc_evidence
+
+        data = pc_evidence.load_stage_data(self.kept.run_root)
+        title, lines, files = review().analyse_frozen_copy(spec_of(ROW12), data, {}, lambda text: text)
+        self.assertEqual(title, "Frozen copy")
+        self.assertEqual(files, {})
+        self.assertEqual(lines, section_lines(self.kept))
 
 
 if __name__ == "__main__":

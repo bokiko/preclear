@@ -435,6 +435,29 @@ approved root and a model write there would not be a breach; the filed `Git wrap
 still equal those digests. Which exact argument list the real model issues for its first status call is unobserved until a
 paid run.
 
+Row 12 (a frozen handoff) has four stages in two sessions. The work turn and the `/preclear` turn share the first
+session, and the committed `/preclear` prompt also asks for a frozen handoff copy of the checkpoint. After that turn the
+harness itself appends one note line, as written by another session, to the plan file (the between-stage hook
+`append-plan-note`) and takes an extra snapshot, `snap-2b-after-external-plan-edit`, with its own git state and guard. The
+hook checks the plan first as every hook does (a regular file of the running user with one name, no link anywhere in its
+path, a real path inside the project), then opens it append-only, never creating or truncating, and adds a newline first
+only when the file does not end in one; nothing is restored afterwards, and the snapshot holds no mode listing. The third
+stage is a fresh session fed with the resume line the `/preclear` turn printed, and the fourth stage resumes that fresh
+session, not the first one, with an ordinary `/preclear` refresh whose prompt is the committed one. The cost of the fourth
+stage is taken against the cumulative total of the third session, because the previous total is kept per session key.
+The fourth stage has its own cap and turn limit, and the four caps add up to more than one row may cost, so the spend
+ledger decides: a fourth launch whose settled spend plus its cap passes the row limit is refused with exit code 18 before
+any process starts, and the harness never raises the cap or writes an authorization line. The chain has two shapes: a
+resume line found with all four stages, and none with the first two stages only (the third and fourth never run, and
+`--refile` accepts exactly those two). The fourth stage's files carry the committed names (`s4-preclear-prompt.md`,
+`s4-preclear-refresh-trace.md`, `s4-preclear-refresh-full-trace.md`, `s4.err`, `s4.exit`) and its snapshot is
+`snap-4-after-refresh`. The filed `Frozen copy` section lists, for the snapshots 2, 2b, 3 and 4, the sha256 of the
+mutable checkpoint and of every frozen copy (a file named `checkpoint-<timestamp>-<suffix>.md`) under that snapshot's copy
+of the project's `.preclear` folder, the number of frozen copies, and for each frozen copy whether its digest is the same
+in every snapshot that holds it, as yes or no. It reads filed snapshot files only and says nothing about whether a copy
+was frozen correctly; whether the real model's refresh keeps the frozen copy as it is, whether the fourth stage's cap and
+turn limit are enough, and what the model does when the plan changed under it are unobserved until a paid run.
+
 Which boundaries a row takes is recorded, not assumed: `raw/boundaries.json` is created at setup, before the setup
 guard, and lists the planned boundaries in order (setup, each stage, each hook boundary) with their snapshot names.
 The checks read the snapshots, stage records, git states and guards through that list. The boundaries on disk must be
@@ -864,9 +887,9 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_row1.py` - row 1 and the engine every row runs through: the seed, the snapshots, the stage chain (resume line or printed checkpoint), the probe call and the init and instruction-audit assertions
-- `pc_rowhooks.py` - the between-stage hooks and their finalizers, the live chmod probe, the boundary plan of a row and the mode-only `perms.txt`
-- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups, the git shapes and the row 8a to 10 setups
-- `pc_review.py` - the Do-not-redo review: the entries of a printed checkpoint, the mechanical candidates for each, the row 7 facts, the candidate file and the side-by-side review table; the row 10 status-form counts and the join of git wrapper log lines to tool_use ids
+- `pc_rowhooks.py` - the between-stage hooks and their finalizers (the plan-file and project-folder restrictions, and the row 12 plan-note append), the live chmod probe, the boundary plan of a row and the mode-only `perms.txt`
+- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups, the git shapes and the row 8a to 10 setups, and the row 11 and row 12 setups
+- `pc_review.py` - the Do-not-redo review: the entries of a printed checkpoint, the mechanical candidates for each, the row 7 facts, the candidate file and the side-by-side review table; the row 10 status-form counts, the join of git wrapper log lines to tool_use ids and the row 12 frozen-copy digests across the filed snapshots
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer

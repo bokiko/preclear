@@ -665,6 +665,7 @@ def _registered_rows() -> Dict[str, RowSpec]:
             memory=MEMORY_PINNED,
             hooks=_ROW12_HOOKS,
             chain=CHAIN_RESUME_LINE,
+            analyses=(ANALYSIS_FROZEN_COPY,),
         ),
     }
 

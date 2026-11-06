@@ -34,6 +34,14 @@ Two more pure readings serve the git-shaped rows (plan 04-10; HARN-10, HARN-11):
                           equal to one executed part carries that tool_use id, a call equal to several parts is
                           ambiguous with every candidate id, and a line that cannot be read is UNCONFIRMED, counted
 
+One more pure reading serves row 12 (plan 04-13; the frozen handoff):
+
+  * frozen_copy_lines   for the filed snapshots 2, 2b, 3 and 4: the sha256 of the mutable checkpoint and of every file named
+                          checkpoint-<timestamp>-<suffix>.md (a frozen copy) under the snapshot's copy of the project's
+                          preclear folder, the number of frozen copies, and whether each frozen copy's digest is the same in
+                          every snapshot that holds it, as yes or no and counts. It reads filed snapshot files only and
+                          never says whether a copy was frozen correctly.
+
 The analyses (ANALYSES) are the hook pc_evidence.collect_files runs for a row whose registry entry names them: each
 returns a section for mechanical-checks.md and extra flat files for the row folder. Standard library only, Python 3.9
 floor. Nothing here deletes, renames, moves or truncates a file, and nothing here reads a run root except through the
@@ -1277,9 +1285,106 @@ def analyse_git_calls(spec: Any, data: Any, facts: Mapping[str, Any], clean: Cal
     return GIT_CALLS_SECTION, lines, files
 
 
+# ---------------------------------------------------------------------------------------------
+# Row 12: the frozen copy of the checkpoint across the filed snapshots (plan 04-13)
+# ---------------------------------------------------------------------------------------------
+
+FROZEN_COPY_SECTION = "Frozen copy"
+ANALYSIS_FROZEN_COPY = "frozen-copy"
+FROZEN_SNAPSHOTS: Tuple[str, ...] = (
+    "snap-2-after-preclear",
+    "snap-2b-after-external-plan-edit",
+    "snap-3-after-resume",
+    "snap-4-after-refresh",
+)
+MUTABLE_CHECKPOINT_NAME = "checkpoint.md"
+MAX_FROZEN_FILES = 32  # frozen copies listed per snapshot; the count of any further ones is stated
+_FROZEN_NAME = re.compile(r"checkpoint-[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]{1,16}\.md\Z")
+
+
+def _sha256_of(path: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(_CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError:
+        raise ReviewError("a snapshot copy cannot be read") from None
+    return digest.hexdigest()
+
+
+def frozen_copy_files(snapshot_dir: str) -> Optional[Tuple[Dict[str, str], Dict[str, str]]]:
+    """(mutable checkpoints, frozen copies) of one snapshot as relative name to sha256, or None without a preclear copy.
+
+    Only regular files under the snapshot's own copy of the project's preclear folder are read (links and special files
+    are skipped). A mutable checkpoint is a file named checkpoint.md; a frozen copy matches
+    checkpoint-<UTC timestamp>-<short suffix>.md. The relative name is the path below that copy with forward slashes.
+    """
+    base = os.path.join(snapshot_dir, SIDECAR_FOLDER)
+    if os.path.islink(base) or not os.path.isdir(base):
+        return None
+    mutable: Dict[str, str] = {}
+    frozen: Dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames.sort()
+        for name in sorted(filenames):
+            kind = mutable if name == MUTABLE_CHECKPOINT_NAME else frozen if _FROZEN_NAME.match(name) else None
+            full = os.path.join(dirpath, name)
+            if kind is None or os.path.islink(full) or not os.path.isfile(full):
+                continue
+            kind[os.path.relpath(full, base).replace(os.sep, "/")] = _sha256_of(full)
+    return mutable, frozen
+
+
+def frozen_copy_lines(snaps_dir: str) -> List[str]:
+    """The lines of the Frozen copy section: digests, counts and yes or no equality, never a verdict."""
+    lines: List[str] = []
+    held: Dict[str, Dict[str, str]] = {}
+    for snapshot in FROZEN_SNAPSHOTS:
+        folder = os.path.join(snaps_dir, snapshot)
+        if os.path.islink(folder) or not os.path.isdir(folder):
+            lines.append("%s: snapshot folder absent" % snapshot)
+            continue
+        found = frozen_copy_files(folder)
+        if found is None:
+            lines.append("%s: preclear copy absent" % snapshot)
+            continue
+        mutable, frozen = found
+        if mutable:
+            for name in sorted(mutable):
+                lines.append("%s: checkpoint %s sha256 %s" % (snapshot, name, mutable[name]))
+        else:
+            lines.append("%s: checkpoint none" % snapshot)
+        lines.append("%s: frozen-copies %d" % (snapshot, len(frozen)))
+        for index, name in enumerate(sorted(frozen)):
+            held.setdefault(name, {})[snapshot] = frozen[name]
+            if index < MAX_FROZEN_FILES:
+                lines.append("%s: frozen-copy %s sha256 %s" % (snapshot, name, frozen[name]))
+        if len(frozen) > MAX_FROZEN_FILES:
+            lines.append("%s: frozen-copies-not-listed %d" % (snapshot, len(frozen) - MAX_FROZEN_FILES))
+    lines.append("frozen-copy-names-in-any-snapshot: %d" % len(held))
+    for name in sorted(held)[:MAX_FROZEN_FILES]:
+        digests = held[name]
+        same = len(set(digests.values())) == 1
+        lines.append(
+            "frozen-copy %s: held-in-snapshots %d of %d, digest-same-in-every-snapshot-that-holds-it %s"
+            % (name, len(digests), len(FROZEN_SNAPSHOTS), "yes" if same else "no")
+        )
+    return lines
+
+
+def analyse_frozen_copy(spec: Any, data: Any, facts: Mapping[str, Any], clean: Callable[[str], str]) -> Tuple[str, List[str], Dict[str, bytes]]:
+    """The `Frozen copy` section of mechanical-checks.md (no extra file): read from the filed snapshot copies only."""
+    return FROZEN_COPY_SECTION, frozen_copy_lines(str(data.paths["snaps"])), {}
+
+
 ANALYSES: Dict[str, Analysis] = {
     ANALYSIS_FACTS: analyse_row7_facts,
     ANALYSIS_DO_NOT_REDO: analyse_do_not_redo,
     ANALYSIS_STATUS_FORM: analyse_status_form,
     ANALYSIS_GIT_CALLS: analyse_git_calls,
+    ANALYSIS_FROZEN_COPY: analyse_frozen_copy,
 }
