@@ -222,6 +222,19 @@ class DataFileTests(unittest.TestCase):
             self.assertIsNone(SHAPED.search(text), "a setup text holds a path-shaped string")
             self.assertTrue(text.isascii())
 
+    def test_every_registered_row_setup_text_holds_no_verdict_word(self) -> None:
+        # EVID-05: the Setup paragraph is copied into each row README, which check-words scans; wave C was held
+        # by one such word in a row 11 sentence, so every registered row's text is checked here before a run.
+        pc_rows = rows()
+        pattern = evidence().verdict_pattern()
+        checked = 0
+        for entry in pc_rows.build_registry():
+            if entry.kind != pc_rows.KIND_ROW or not entry.setup_text:
+                continue
+            checked += 1
+            self.assertEqual(pattern.findall(entry.setup_text), [], entry.row_id + " setup text holds a verdict word")
+        self.assertGreaterEqual(checked, 12)
+
 
 class RegistryTests(unittest.TestCase):
     def test_5a_and_5b_both_rows_are_registered_with_the_two_committed_stages_and_the_plain_policy(self) -> None:
