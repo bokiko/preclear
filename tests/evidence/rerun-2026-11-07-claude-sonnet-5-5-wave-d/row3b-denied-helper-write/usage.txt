@@ -1,0 +1,8 @@
+usage for row3b-denied-helper-write
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session a89142db-e964-44eb-9c55-765fe4a1b71c, subtype success, turns 5, input 6, cache creation 9314, cache read 54644, output 928, cost 0.0520124, cumulative 0.0520124, wall 9.4 seconds
+stage s2: session a89142db-e964-44eb-9c55-765fe4a1b71c, subtype success, turns 25, input 24, cache creation 22483, cache read 435900, output 9560, cost 0.22917000000000004, cumulative 0.28118240000000005, wall 75.3 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.28118240000000005
+run total: 0.28118240000000005

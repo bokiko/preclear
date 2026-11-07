@@ -1,0 +1,2 @@
+- [widget-export](project_widget_export.md) - export format decision for sample-project (JSON default, CSV on explicit request)
+- [deploy-reference](project_unrelated_reference.md) - sample-project deploy and CI reference

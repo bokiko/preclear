@@ -1,0 +1,2 @@
+JSON is the default export format; CSV only on explicit request (user relayed 2026-11-07: downstream owner confirmed; consumer migrated to a JSON API week of 2026-10-12). Supersedes the earlier "CSV first, JSON deferred" decision, which rested on the consumer reading only CSV. Applies to future sessions.
+Do not redo: step 2 CSV exporter exists in widget_export.py (sha256 586b181bc32a22a87ef389a83951c76a01b86e2238e688bfec6885b9d1eaf884); keep it as the opt-in CSV path. Invalid if that digest changes.

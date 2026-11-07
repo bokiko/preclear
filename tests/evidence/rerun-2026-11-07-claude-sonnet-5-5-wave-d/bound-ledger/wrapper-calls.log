@@ -1,0 +1,28 @@
+2026-11-07T09:30:16Z CALL status
+2026-11-07T09:30:16Z EXIT 0
+2026-11-07T09:30:21Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+2026-11-07T09:30:21Z EXIT 0
+2026-11-07T09:31:07Z CALL validate --from <run>/project/.preclear/backend-inputs/full.block
+2026-11-07T09:31:07Z EXIT 0
+2026-11-07T09:31:12Z CALL update --section Goal\ \&\ current\ state --expect-section f6dac610436b5c1744315ebb4eb0804fa33bf88cf5613764b2f2332d68020871 --from <run>/project/.preclear/backend-inputs/goal.txt
+2026-11-07T09:31:12Z EXIT 0
+2026-11-07T09:31:15Z CALL update --section Decisions\ \(with\ reasons\) --expect-section 2b0f84aac189b468066ae72aae01359d73b6c64b25e2de7f39406441014ce366 --from <run>/project/.preclear/backend-inputs/decisions.txt
+2026-11-07T09:31:15Z EXIT 0
+2026-11-07T09:31:19Z CALL update --section Blockers\ \&\ open\ questions --expect-section 903ea500e7ccf842c1312b6c2f964e3e98ff146456cecec717e9a0e122bf735f --from <run>/project/.preclear/backend-inputs/blockers.txt
+2026-11-07T09:31:19Z EXIT 0
+2026-11-07T09:31:22Z CALL update --section Authorization\ boundaries --expect-section 53a00e3d685a1ef22503246102a91c087ce058e7864edba017bee9002e65d1c5 --from <run>/project/.preclear/backend-inputs/auth.txt
+2026-11-07T09:31:22Z EXIT 0
+2026-11-07T09:31:25Z CALL update --section Evidence\ \&\ key\ paths --expect-section 2caab006bb9d0bba2c4f412d9522c4181baf140aadef7e5a186025be7f06fb01 --from <run>/project/.preclear/backend-inputs/evidence.txt
+2026-11-07T09:31:25Z EXIT 0
+2026-11-07T09:31:28Z CALL update --section Next\ action --expect-section ce26d74e1d4ccc3ec8ba4add6a30df523b974bf263b5d32b353d115e7744529e --from <run>/project/.preclear/backend-inputs/next.txt
+2026-11-07T09:31:29Z EXIT 0
+2026-11-07T09:31:33Z CALL lint
+2026-11-07T09:31:33Z EXIT 0
+2026-11-07T09:31:33Z CALL status
+2026-11-07T09:31:33Z EXIT 0
+2026-11-07T09:31:38Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md --section Evidence\ \&\ key\ paths
+2026-11-07T09:31:38Z EXIT 0
+2026-11-07T09:31:47Z CALL update --section Evidence\ \&\ key\ paths --expect-section 153d9b6896edc1b9bfdbdd67a72033ac0df9deb2e9eaeedaf31ca6067cd74074 --from <run>/project/.preclear/backend-inputs/evidence.txt
+2026-11-07T09:31:47Z EXIT 0
+2026-11-07T09:31:50Z CALL lint
+2026-11-07T09:31:50Z EXIT 0

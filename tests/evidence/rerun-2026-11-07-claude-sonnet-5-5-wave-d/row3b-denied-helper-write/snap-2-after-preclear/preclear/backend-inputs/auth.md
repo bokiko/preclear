@@ -1,0 +1,2 @@
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit /preclear; setup is separate. Read the ledger file directly, or use show --ledger without binding. Next action is a chat-only diff: no proposal files, section-input files, binding changes, or ledger writes. Do not apply it, run tests, commit, or push. Earlier "edit files inside project" scope is historical.
+Detail: thoughts/plans/2026-10-15-widget-export.md

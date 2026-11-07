@@ -1,0 +1,8 @@
+2026-11-07T09:35:52Z CALL status
+2026-11-07T09:35:52Z EXIT 0
+2026-11-07T09:35:52Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+2026-11-07T09:35:52Z EXIT 0
+2026-11-07T09:36:15Z CALL validate --from <run>/project/.preclear/backend-inputs/full-block.md
+2026-11-07T09:36:15Z EXIT 0
+2026-11-07T09:36:33Z CALL status
+2026-11-07T09:36:33Z EXIT 0

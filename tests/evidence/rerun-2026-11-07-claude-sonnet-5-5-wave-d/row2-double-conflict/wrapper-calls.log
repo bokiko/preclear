@@ -1,0 +1,14 @@
+2026-11-07T09:32:40Z CALL status
+2026-11-07T09:32:40Z EXIT 0
+2026-11-07T09:32:44Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+2026-11-07T09:32:44Z EXIT 0
+2026-11-07T09:33:37Z CALL validate --from <run>/project/.preclear/backend-inputs/block.txt
+2026-11-07T09:33:37Z EXIT 0
+2026-11-07T09:33:41Z CALL update --section Goal\ \&\ current\ state --expect-section 0c381d360ac6594e7013982f3d25cbf893fad9b8f7f88c917d79da412e76d69f --from <run>/project/.preclear/backend-inputs/goal.txt
+2026-11-07T09:33:41Z EXIT 3
+2026-11-07T09:33:45Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+2026-11-07T09:33:45Z EXIT 0
+2026-11-07T09:33:52Z CALL update --section Goal\ \&\ current\ state --expect-section 40c9fa3cbc78e8a150b0429e18eaf06a178419d93acc1340fa2279f662522a77 --from <run>/project/.preclear/backend-inputs/goal.txt
+2026-11-07T09:33:52Z EXIT 3
+2026-11-07T09:33:56Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+2026-11-07T09:33:56Z EXIT 0

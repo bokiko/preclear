@@ -1,0 +1,3 @@
+Step 2 is implemented in `widget_export.py`. It has small pure functions (`escape_field`, `format_row`, `widget_to_values`, `widgets_to_csv`) and exports the `id` and `name` columns as CSV, per the ledger's CSV-first decision.
+I didn't run tests, commit, or start step 3. The plan checkbox is unchanged for checkpointing to reconcile.
+The project had no existing code, so I chose Python for the language, and I picked CRLF line endings, which RFC 4180 specifies and which you may want to change.

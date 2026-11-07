@@ -1,0 +1,1 @@
+In the project directory, reply in chat only: show a proposed unified diff to widget_export.py making JSON the default export, with CSV only on explicit request. Done when the diff is shown for user review, unapplied.

@@ -1,0 +1,1 @@
+- [small pure functions](feedback_small_pure_functions.md) - keep functions small and pure

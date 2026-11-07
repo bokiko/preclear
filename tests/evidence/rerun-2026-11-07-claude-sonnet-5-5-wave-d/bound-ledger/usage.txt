@@ -1,0 +1,10 @@
+usage for bound-ledger
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 896198d6-f642-49bc-953b-64608d694c26, subtype success, turns 5, input 6, cache creation 9232, cache read 54541, output 937, cost 0.05176410000000001, cumulative 0.05176410000000001, wall 9.5 seconds
+stage s2: session 896198d6-f642-49bc-953b-64608d694c26, subtype success, turns 38, input 44, cache creation 29077, cache read 898717, output 13664, cost 0.3429076999999999, cumulative 0.39467179999999996, wall 116.4 seconds
+stage s3: session b9f578e0-6e3c-430b-84cd-239453036040, subtype success, turns 6, input 6, cache creation 8240, cache read 56649, output 1809, cost 0.056726900000000004, cumulative 0.056726900000000004, wall 15.2 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.451398699999999964
+run total: 0.451398699999999964

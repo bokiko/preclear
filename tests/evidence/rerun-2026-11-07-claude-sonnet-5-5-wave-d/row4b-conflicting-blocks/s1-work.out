@@ -1,0 +1,3 @@
+Step 2 is implemented in `widget_export.py`. It exports CSV only, with columns `id,name` and a header row, and has four small pure functions: `escape_field`, `format_row`, `widget_to_row` and `export_csv`.
+I didn't run tests, commit or start step 3. I also left the plan checkbox unchecked for checkpointing to reconcile.
+The repo had no existing code, so I picked Python for the module. `CLAUDE.md` and `CLAUDE.local.md` give different `task` names (`widget-export` and `widget-export-v2`) for the same ledger path, and I didn't touch either.

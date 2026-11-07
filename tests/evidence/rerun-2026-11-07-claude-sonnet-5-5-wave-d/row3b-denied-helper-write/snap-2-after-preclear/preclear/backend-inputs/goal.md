@@ -1,0 +1,1 @@
+widget-export in <run>/project. Steps 1-2 done: widget_export.py holds the CSV exporter (sha256 0c680c2c85bec24ade734cda92d754a3e5ff3ba4db43512345be0a68c7d00490; no tests run). Step 3 not started. PENDING: JSON becomes the default export format (user, 2026-11-07); implementation unchanged. Branch main @ 3623ad7ca376a226a00713615997d0897b8563bc, nothing committed.

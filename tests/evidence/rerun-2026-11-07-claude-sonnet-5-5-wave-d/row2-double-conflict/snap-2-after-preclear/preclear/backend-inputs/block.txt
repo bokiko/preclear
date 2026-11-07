@@ -1,0 +1,26 @@
+<!-- CHECKPOINT:BEGIN updated: 1970-01-01T00:00:00Z by: preclear -->
+## Goal & current state
+widget-export in <run>/project: export widgets. Step 1 (columns id, name) done. Step 2 CSV exporter written in widget_export.py (escape_field, widget_to_row, widgets_to_csv); untested. Pending: export default changed to JSON (CSV on explicit request only); not implemented. Branch main.
+
+## Decisions (with reasons)
+JSON is the default export format; CSV only on explicit request (user relayed 2026-11-07: downstream owner confirmed; consumer migrated to a JSON API week of 2026-10-12). Supersedes the earlier "CSV first, JSON deferred" decision, which rested on the consumer reading only CSV. Applies to future sessions.
+Do not redo: step 2 CSV exporter exists in widget_export.py (sha256 586b181bc32a22a87ef389a83951c76a01b86e2238e688bfec6885b9d1eaf884); keep it as the opt-in CSV path. Invalid if that digest changes.
+
+## Blockers & open questions
+Pending: JSON-default implementation not written; awaiting user review of a drafted diff.
+UNCONFIRMED: CSV exporter behavior (no tests run); JSON shape (assumed list of {id, name}); owner confirmation known only via the user's relay.
+Plan update pending: step 2 checkbox ticked; plan has no JSON step; step 3 (empty-input test) unstarted and now format-dependent.
+
+## Authorization boundaries
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit /preclear; setup is separate. Read the ledger file directly, or `show --ledger <absolute-ledger-path>` without binding.
+Next action is reply-only: no proposal files, section-input files, binding changes, or ledger writes; do not apply the diff. No tests, commits, or pushes. Earlier "edit project files" scope was for step 2 (historical).
+Detail: thoughts/plans/2026-10-15-widget-export.md
+
+## Evidence & key paths
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit /preclear; setup is separate. Read the ledger file directly, or `show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md` without binding.
+Resume reading: cd to <run>/project; verify branch main, full HEAD 80cdf0fa5f80dbdf79d04c9e7839a02d10b28905; then git status. On mismatch reconcile before acting. Read widget_export.py (all), ledger Decisions and Next action. Execute only Next action within Boundaries; preserve ledger and .preclear inputs until /preclear. No file output, binding, or backend write without authorization.
+Working changes (non-preclear): staged 0, conflicted 0, unstaged 1 (plan step 2 ticked, sha256 29145abe...520c), untracked: widget_export.py (created this task, sha256 586b181b...f884), .claude/ (4 skill files, ownership unknown). Preclear inputs: .preclear/backend-inputs/{goal,decisions,blockers,authorization,evidence,next}.txt and block.txt. Verification: none run (no tests, by instruction); binding n/a.
+
+## Next action
+In the project directory, in the reply only: draft a proposed unified diff to widget_export.py making JSON the default export (CSV only via an explicit format request), keeping functions small and pure. Done when the diff is shown for user review; do not apply it.
+<!-- CHECKPOINT:END -->

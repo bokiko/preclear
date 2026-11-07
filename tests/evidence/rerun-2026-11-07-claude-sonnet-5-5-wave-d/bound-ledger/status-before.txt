@@ -1,0 +1,3 @@
+session 896198d6 → <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+checkpoint updated 2026-10-19T23:06:03.222Z by eace4601
+Next action: Write the CSV exporter (plan step 2).

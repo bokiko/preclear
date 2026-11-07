@@ -1,0 +1,3 @@
+Step 2 is done: I added `src/widget_export.py`, a CSV-only exporter built from three small pure functions (`widget_to_row`, `rows_to_csv`, `export_widgets_csv`), following the CSV-first decision with JSON deferred.
+The step 1 columns aren't recorded anywhere in the repo, so `export_widgets_csv` takes `columns` as a parameter. Check whether you want them fixed in the code.
+I didn't run tests, commit or start step 3, and the plan checkbox is unchanged.

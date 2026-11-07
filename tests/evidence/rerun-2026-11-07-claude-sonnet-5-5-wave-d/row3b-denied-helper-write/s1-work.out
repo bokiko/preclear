@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `widget_export.py`. It has three small pure functions, `escape_field`, `widget_to_row` and `export_widgets_csv`, and it outputs the `id,name` columns as CSV only, following the ledger.
+I didn't run tests, commit, start step 3, or touch the plan checkbox, so that is still unchecked for checkpointing to reconcile.
+The project had no existing code, so I chose Python. Say so if you want a different language.

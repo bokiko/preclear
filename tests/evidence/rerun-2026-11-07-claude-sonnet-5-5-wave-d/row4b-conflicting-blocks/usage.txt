@@ -1,0 +1,8 @@
+usage for row4b-conflicting-blocks
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 5c871ad0-04a8-4c43-8d95-cabad9ddd30b, subtype success, turns 5, input 6, cache creation 9701, cache read 55388, output 957, cost 0.053924799999999995, cumulative 0.053924799999999995, wall 9.5 seconds
+stage s2: session 5c871ad0-04a8-4c43-8d95-cabad9ddd30b, subtype success, turns 6, input 8, cache creation 12117, cache read 116583, output 3560, cost 0.0957423, cumulative 0.1496671, wall 30.6 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.1496671
+run total: 0.1496671

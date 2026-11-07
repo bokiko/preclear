@@ -1,0 +1,3 @@
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit /preclear. Read the ledger file directly, or use show --ledger without binding.
+Resume reading: cd to the project path; verify branch main and full HEAD 3623ad7ca376a226a00713615997d0897b8563bc, then git status; on mismatch reconcile before acting. Read this ledger, then widget_export.py, then the plan (step 3). Execute only Next action within Boundaries.
+Working changes: untracked widget_export.py (this task) and .claude/ (ownership unknown); staged 0, unstaged 0, conflicted 0. Plan step 2 marked [x]. Preclear inputs: project/.preclear/backend-inputs/.

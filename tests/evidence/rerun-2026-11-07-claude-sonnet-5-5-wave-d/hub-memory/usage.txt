@@ -1,0 +1,10 @@
+usage for hub-memory
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session eec13221-7279-4747-b4ac-de2fdf27b35b, subtype success, turns 5, input 10, cache creation 8670, cache read 94163, output 1173, cost 0.055846299999999995, cumulative 0.055846299999999995, wall 15.0 seconds
+stage s2: session eec13221-7279-4747-b4ac-de2fdf27b35b, subtype success, turns 11, input 16, cache creation 12832, cache read 237285, output 4894, cost 0.12402850000000001, cumulative 0.1798748, wall 42.5 seconds
+stage s3: session 63c260ef-0111-45f8-84c3-df527ad0bb61, subtype success, turns 4, input 6, cache creation 8292, cache read 56684, output 1414, cost 0.0529884, cumulative 0.0529884, wall 12.9 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.2328632
+run total: 0.2328632

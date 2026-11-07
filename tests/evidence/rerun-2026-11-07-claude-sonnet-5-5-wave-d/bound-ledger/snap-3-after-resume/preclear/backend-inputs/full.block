@@ -1,0 +1,29 @@
+<!-- CHECKPOINT:BEGIN updated: 1970-01-01T00:00:00Z by: preclear -->
+## Goal & current state
+widget-export in <run>/project: export widgets. Plan step 1 (columns id, name) done. Step 2 (CSV exporter, src/export-csv.js, written 2026-11-07) done, untested. Step 3 (empty-input test) not started. Pending format change: JSON becomes the default export, CSV only on explicit request; not implemented. Plan update pending for the JSON work. Branch main, HEAD 822561dd5e7f05b13a09123ef4cb03e36856c2d1.
+
+## Decisions (with reasons)
+JSON default, CSV on explicit request (user correction 2026-11-07, from the downstream owner): the consumer migrated to a JSON API in the week of 2026-10-12. Supersedes the CSV-first decision ("consumer only reads CSV"), now historical. Applies to future sessions.
+src/export-csv.js stays as the explicit-request path until the user decides otherwise.
+Do not redo: step 2 CSV exporter exists (sha256 b2f1cefb63dd...6bb); do not rewrite. Invalid if that digest changes.
+
+## Blockers & open questions
+None blocking.
+UNCONFIRMED: no tests have been run on src/export-csv.js.
+UNCONFIRMED: JSON shape (fields, envelope, API schema); the diff may assume an array of {id, name} and must state that.
+Note: helper output carries a "checkpoint-stub: STUB-BACKED test apparatus" banner line not in the documented format; treated as informational.
+
+## Authorization boundaries
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit `/preclear`; setup is a separate user action. Read the ledger file directly, or use `show --ledger <absolute-ledger-path>` without binding.
+Next action is reply-only: no proposal files, section-input files, binding changes, or ledger writes; no project edits, tests, commits, or pushes until the user says so. Earlier "edit files inside the project" scope is historical.
+Detail: thoughts/plans/2026-10-15-widget-export.md
+
+## Evidence & key paths
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit `/preclear`; setup is a separate user action. Read the ledger file directly, or use `show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md` without binding.
+Resume reading: cd to the project path, verify branch main and HEAD 822561dd5e7f05b13a09123ef4cb03e36856c2d1, then git status; on mismatch reconcile before acting. Read this ledger, then src/export-csv.js, then plan thoughts/plans/2026-10-15-widget-export.md. Execute only Next action within Boundaries; preserve ledger until `/preclear`.
+Evidence: untracked src/export-csv.js (sha256 b2f1cefb63dde261a78a466a284f8b7e15445654af1485f8ec71e138d6e6d6bb). Untracked .claude/ (skills/preclear, ownership unknown). Staged 0, unstaged 0, conflicted 0. Preclear artifacts: .preclear/backend-inputs/*.txt, *.block. No tests run.
+Plan: thoughts/plans/2026-10-15-widget-export.md.
+
+## Next action
+In <run>/project, draft in the reply only a proposed diff that makes JSON the default export and keeps CSV on explicit request, building on src/export-csv.js. Do not apply it. Done when the diff is shown to the user for review. State the assumed JSON shape (UNCONFIRMED).
+<!-- CHECKPOINT:END -->

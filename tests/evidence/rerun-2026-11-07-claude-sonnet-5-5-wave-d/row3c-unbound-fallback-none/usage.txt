@@ -1,0 +1,8 @@
+usage for row3c-unbound-fallback-none
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 8988c62c-9b00-42dc-a24a-6be0f56bb48a, subtype success, turns 5, input 8, cache creation 9428, cache read 75486, output 1073, cost 0.056006600000000004, cumulative 0.056006600000000004, wall 12.3 seconds
+stage s2: session 8988c62c-9b00-42dc-a24a-6be0f56bb48a, subtype success, turns 9, input 12, cache creation 14162, cache read 181442, output 5420, cost 0.1290162, cumulative 0.18502280000000004, wall 43.4 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.18502280000000004
+run total: 0.18502280000000004

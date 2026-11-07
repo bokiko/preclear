@@ -1,0 +1,8 @@
+ M PLAN.md
+ M memory/project_widget_export.md
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? .claude/skills/preclear/references/status-sidecar.md
+?? .preclear/widget-export/checkpoint.md
+?? widget_export.py

@@ -1,0 +1,1 @@
+In <run>/project, draft in the reply only a proposed diff that makes JSON the default export and keeps CSV on explicit request, building on src/export-csv.js. Do not apply it. Done when the diff is shown to the user for review. State the assumed JSON shape (UNCONFIRMED).

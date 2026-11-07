@@ -1,0 +1,4 @@
+None blocking.
+UNCONFIRMED: no tests have been run on src/export-csv.js.
+UNCONFIRMED: JSON shape (fields, envelope, API schema); the diff may assume an array of {id, name} and must state that.
+Note: helper output carries a "checkpoint-stub: STUB-BACKED test apparatus" banner line not in the documented format; treated as informational.

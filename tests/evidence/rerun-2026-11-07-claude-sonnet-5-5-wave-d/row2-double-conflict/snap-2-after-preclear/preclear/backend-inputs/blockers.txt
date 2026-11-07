@@ -1,0 +1,3 @@
+Pending: JSON-default implementation not written; awaiting user review of a drafted diff.
+UNCONFIRMED: CSV exporter behavior (no tests run); JSON shape (assumed list of {id, name}); owner confirmation known only via the user's relay.
+Plan update pending: step 2 checkbox ticked; plan has no JSON step; step 3 (empty-input test) unstarted and now format-dependent.

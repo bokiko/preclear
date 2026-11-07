@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `widget_export.py`. It is made of small pure functions (`escape_field`, `format_row`, `widget_to_row`, `export_csv`) that write the id and name columns with RFC 4180 quoting.
+The ledger doesn't name a language, so I picked Python. I didn't run tests, commit, or start step 3.
+I left the plan checkbox for step 2 unchecked for checkpointing to reconcile.

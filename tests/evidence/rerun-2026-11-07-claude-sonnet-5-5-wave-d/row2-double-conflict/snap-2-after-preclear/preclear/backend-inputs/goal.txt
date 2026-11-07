@@ -1,0 +1,3 @@
+widget-export in <run>/project: export widgets. Step 1 (columns id, name) done. Step 2 CSV exporter written in widget_export.py (escape_field, widget_to_row, widgets_to_csv); untested. Pending: export default changed to JSON (CSV on explicit request only); not implemented. Branch main.
+
+- Concurrent fact 1 (second writer, 2026-10-20): CI runner for this project was renamed to ci-02; nothing else changed.
