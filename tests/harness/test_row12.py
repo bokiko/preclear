@@ -175,7 +175,8 @@ class Row12RegistryTests(unittest.TestCase):
     def test_only_row_6_row_7_and_row_12_name_a_hook_and_the_snapshot_names_follow_one_rule(self) -> None:
         pc_rows = rows()
         named = [entry.row_id for entry in pc_rows.build_registry() if entry.hooks]
-        self.assertEqual(named, ["row6-readonly-plan", "row7-all-destinations-denied", ROW12])
+        # row 2 names the hook that arms the wrapper (plan 04-15)
+        self.assertEqual(named, ["row2-double-conflict", "row6-readonly-plan", "row7-all-destinations-denied", ROW12])
         spec = spec_of(ROW12)
         self.assertEqual(
             [pc_rows.snapshot_name(stage) for stage in spec.stages],
@@ -230,13 +231,20 @@ class Row12RegistryTests(unittest.TestCase):
         self.assertEqual(cells[ROW12][2:], ["4", "2", "yes"])
         self.assertEqual(cells[ROW11][2:], ["3", "2", "yes"])
 
-    def test_dry_run_all_stays_under_the_ceiling_with_row_12_on_top(self) -> None:
+    def test_dry_run_all_total_is_the_sum_of_the_worst_cases_and_each_entry_fits_the_row_cap_and_the_invocation_budget(self) -> None:
+        # Plan 04-15 adds row 2: 13 entries at 24.40 became 14 at 26.00. The sum of the worst cases is no longer under the
+        # 25.00 invocation ceiling (pc_flags.INVOCATION_BUDGET_MAX); that ceiling is not raised. The driver does not refuse a
+        # plan whose sum is above the budget: it stops before the row whose worst case would take the settled spend above it.
+        import pc_flags
+
         pc_rows = rows()
         implemented = [entry for entry in pc_rows.build_registry() if entry.implemented]
         total = sum((pc_rows.worst_case(entry) for entry in implemented), Decimal("0"))
-        self.assertEqual(total, Decimal("24.40"))
-        self.assertLessEqual(total, Decimal("25.00"))
-        self.assertEqual(len(implemented), 13)
+        self.assertEqual(total, Decimal("26.00"))
+        self.assertEqual(len(implemented), 14)
+        self.assertEqual(Decimal(pc_flags.format_invocation_budget("25.00")), Decimal("25.00"), "the ceiling is unchanged")
+        for entry in implemented:
+            self.assertLessEqual(pc_rows.worst_case(entry), pc_rows.ROW_CAP, entry.row_id)
 
 
 class Row12SeedTests(unittest.TestCase):

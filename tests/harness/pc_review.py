@@ -1381,10 +1381,212 @@ def analyse_frozen_copy(spec: Any, data: Any, facts: Mapping[str, Any], clean: C
     return FROZEN_COPY_SECTION, frozen_copy_lines(str(data.paths["snaps"])), {}
 
 
+# ---------------------------------------------------------------------------------------------
+# Row 2: the wrapper's injection log (plan 04-15)
+# ---------------------------------------------------------------------------------------------
+
+ANALYSIS_WRAPPER_INJECTION = "wrapper-injection"
+WRAPPER_INJECTION_SOURCE = "injection.log"
+WRAPPER_INJECTION_FILE = "wrapper-injection.log"
+
+
+def analyse_wrapper_injection(spec: Any, data: Any, facts: Mapping[str, Any], clean: Callable[[str], str]) -> Tuple[str, List[str], Dict[str, bytes]]:
+    """File wrapper-injection.log, a copy of the wrapper's own injection.log, only when that file exists (no section).
+
+    The staging step sanitizes it like every filed file. A row whose wrapper never injected leaves no file and no line.
+    """
+    log = _read_capped(os.path.join(str(data.paths["wrapper_dir"]), WRAPPER_INJECTION_SOURCE))
+    return "", [], ({WRAPPER_INJECTION_FILE: log} if log is not None else {})
+
+
+# ---------------------------------------------------------------------------------------------
+# The layouts: counts, names and digests of what the session did to its project files (plan 04-15; D-13)
+# ---------------------------------------------------------------------------------------------
+
+LAYOUT_FACTS_SECTION = "Layout facts"
+ANALYSIS_LAYOUT_FACTS = "layout-facts"
+LINT_AFTER_S2_FILE = "lint-after-s2.txt"
+MAX_LAYOUT_NAMES = 64
+MAX_LINT_LINES = 12
+MEMORY_PREFIX = "project/memory/"
+PROJECT_PREFIX = "project/"
+MEMORY_INDEX = "project/memory/MEMORY.md"
+LEDGER_A_PATH = "ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md"
+_HUB_NAME = re.compile(r"hub[_-].*\.md\Z", re.IGNORECASE)
+_WRAPPER_CALL = re.compile(r"[0-9T:Z-]+ CALL(?: (?P<rest>.*))?\Z")
+_WRAPPER_EXIT = re.compile(r"[0-9T:Z-]+ EXIT (?P<code>[0-9]+)\Z")
+WITHHELD = "withheld (the text holds a word this file may not hold)"
+
+
+def _manifest_files(snaps_dir: str, name: str) -> Dict[str, str]:
+    """Path to sha256 of every regular file of one filed snapshot manifest (read only)."""
+    try:
+        manifest = pc_checks.load_manifest(os.path.join(snaps_dir, name))
+    except pc_checks.CheckError:
+        raise ReviewError("a snapshot manifest cannot be read") from None
+    return dict((path, str(entry["sha256"])) for path, entry in manifest.items() if entry.get("kind") == "f")
+
+
+def _shown_name(name: str, clean: Callable[[str], str], pattern: Any) -> str:
+    """A file name chosen by the model as one cleaned line; a name that holds a reserved word is not shown."""
+    shown = one_line(name, 160, clean) or "(empty)"
+    return "(name withheld)" if pattern.search(shown) else shown
+
+
+def _name_lines(label: str, names: Sequence[str], clean: Callable[[str], str], pattern: Any) -> List[str]:
+    lines = ["%s: %d" % (label, len(names))]
+    for index, name in enumerate(names[:MAX_LAYOUT_NAMES], 1):
+        lines.append("%s %d: %s" % (label, index, _shown_name(name, clean, pattern)))
+    if len(names) > MAX_LAYOUT_NAMES:
+        lines.append("%s not listed: %d" % (label, len(names) - MAX_LAYOUT_NAMES))
+    return lines
+
+
+def _digest_lines(label: str, files: Mapping[str, str], clean: Callable[[str], str], pattern: Any) -> List[str]:
+    lines = ["%s: %d" % (label, len(files))]
+    for index, name in enumerate(sorted(files)[:MAX_LAYOUT_NAMES], 1):
+        lines.append("%s %d: %s sha256 %s" % (label, index, _shown_name(name, clean, pattern), files[name]))
+    if len(files) > MAX_LAYOUT_NAMES:
+        lines.append("%s not listed: %d" % (label, len(files) - MAX_LAYOUT_NAMES))
+    return lines
+
+
+def memory_layout_lines(
+    before: Mapping[str, str], after: Mapping[str, str], clean: Callable[[str], str], pattern: Any, hub_layout: bool
+) -> List[str]:
+    """The counts, names and digests of a memory layout, from the manifests of the first and the last snapshot.
+
+    Both layouts: the files created under the project outside the memory folder, the files created in the memory folder,
+    the memory files that changed, and the memory file list with digests before and after. The plain-memory layout adds the
+    hub-style files among everything created; the hub-memory layout adds the MEMORY.md digest before and after.
+    """
+    created = sorted(path for path in after if path not in before)
+    created_project = [path[len(PROJECT_PREFIX):] for path in created if path.startswith(PROJECT_PREFIX) and not path.startswith(MEMORY_PREFIX)]
+    created_memory = [path[len(MEMORY_PREFIX):] for path in created if path.startswith(MEMORY_PREFIX)]
+    mem_before = dict((path, sha) for path, sha in before.items() if path.startswith(MEMORY_PREFIX))
+    mem_after = dict((path, sha) for path, sha in after.items() if path.startswith(MEMORY_PREFIX))
+    changed = sorted(path[len(MEMORY_PREFIX):] for path in mem_before if path in mem_after and mem_before[path] != mem_after[path])
+    removed = sorted(path[len(MEMORY_PREFIX):] for path in mem_before if path not in mem_after)
+    lines: List[str] = []
+    lines.extend(_name_lines("files-created-under-project", created_project, clean, pattern))
+    lines.extend(_name_lines("files-created-under-memory", created_memory, clean, pattern))
+    if not hub_layout:
+        hubs = [name for name in created_project + created_memory if _HUB_NAME.match(name.rsplit("/", 1)[-1])]
+        lines.extend(_name_lines("hub-style-files-created", hubs, clean, pattern))
+    else:
+        index_before, index_after = before.get(MEMORY_INDEX), after.get(MEMORY_INDEX)
+        lines.append("memory-index-sha256-before: %s" % (index_before or ABSENT))
+        lines.append("memory-index-sha256-after: %s" % (index_after or ABSENT))
+        lines.append("memory-index-changed: %s" % ("yes" if index_before != index_after else "no"))
+        lines.append("new-memory-files: %d" % len(created_memory))
+    lines.extend(_name_lines("memory-files-changed", changed, clean, pattern))
+    lines.extend(_name_lines("memory-files-removed", removed, clean, pattern))
+    lines.extend(_digest_lines("memory-files-before", dict((p[len(MEMORY_PREFIX):], d) for p, d in mem_before.items()), clean, pattern))
+    lines.extend(_digest_lines("memory-files-after", dict((p[len(MEMORY_PREFIX):], d) for p, d in mem_after.items()), clean, pattern))
+    return lines
+
+
+def update_calls(log_text: str) -> Tuple[int, Dict[str, int]]:
+    """The number of update calls in a wrapper log and, for each exit code, how many of them ended with it.
+
+    A call line names its verb as the first word that is not a leading --session option (the wrapper's own rule); an exit
+    line belongs to the call line before it. A call with no exit line is counted under the word none.
+    """
+    count = 0
+    codes: Dict[str, int] = {}
+    pending = False
+    for line in log_text.splitlines():
+        call = _WRAPPER_CALL.match(line)
+        if call is not None:
+            if pending:
+                codes["none"] = codes.get("none", 0) + 1
+            words = (call.group("rest") or "").split()
+            while words and words[0] == "--session":
+                words = words[2:]
+            while words and words[0].startswith("--session="):
+                words = words[1:]
+            pending = bool(words) and words[0] == "update"
+            if pending:
+                count += 1
+            continue
+        ended = _WRAPPER_EXIT.match(line)
+        if ended is not None and pending:
+            codes[ended.group("code")] = codes.get(ended.group("code"), 0) + 1
+            pending = False
+    if pending:
+        codes["none"] = codes.get("none", 0) + 1
+    return count, codes
+
+
+def bound_ledger_lines(
+    before: Mapping[str, str], after: Mapping[str, str], log: Optional[bytes], lint: Optional[bytes], clean: Callable[[str], str], pattern: Any
+) -> List[str]:
+    """The counts and digests of the bound-ledger layout: the ledger digest, the update calls and the lint text."""
+    digest_before, digest_after = before.get(LEDGER_A_PATH), after.get(LEDGER_A_PATH)
+    lines = [
+        "ledger-a-sha256-before: %s" % (digest_before or ABSENT),
+        "ledger-a-sha256-after: %s" % (digest_after or ABSENT),
+        "ledger-a-changed: %s" % ("yes" if digest_before != digest_after else "no"),
+    ]
+    if log is None:
+        lines.append("update-calls-in-wrapper-log: %s" % pc_evidence.UNCONFIRMED)
+    else:
+        count, codes = update_calls(log.decode("utf-8", "replace"))
+        lines.append("update-calls-in-wrapper-log: %d" % count)
+        for code in sorted(codes):
+            lines.append("update-calls-with-exit %s: %d" % (code, codes[code]))
+    if lint is None:
+        lines.append("lint-after-s2: %s" % ABSENT)
+        return lines
+    text = lint.decode("utf-8", "replace")
+    shown = text.splitlines()
+    lines.append("lint-after-s2: %s" % PRESENT)
+    lines.append("lint-after-s2-lines: %d" % len(shown))
+    lines.append("lint-after-s2-sha256: %s" % hashlib.sha256(lint).hexdigest())
+    for index, line in enumerate(shown[:MAX_LINT_LINES], 1):
+        one = one_line(line, 160, clean)
+        lines.append("lint-after-s2 line %d: %s" % (index, WITHHELD if pattern.search(one) else (one or "(empty)")))
+    if len(shown) > MAX_LINT_LINES:
+        lines.append("lint-after-s2 lines not listed: %d" % (len(shown) - MAX_LINT_LINES))
+    return lines
+
+
+def analyse_layout_facts(spec: Any, data: Any, facts: Mapping[str, Any], clean: Callable[[str], str]) -> Tuple[str, List[str], Dict[str, bytes]]:
+    """The `Layout facts` section of mechanical-checks.md and, for bound-ledger, the file lint-after-s2.txt.
+
+    Counts, names and digests only, read from the manifests of the first and the last filed snapshot, the wrapper log and
+    raw/lint-after-s2.txt. Nothing here says whether a layout behaved well; the section ends by naming the checks of the
+    committed layout run that the harness does not exercise.
+    """
+    names = facts.get("snapshots") if isinstance(facts, Mapping) else None
+    if not isinstance(names, list) or len(names) < 2:
+        return LAYOUT_FACTS_SECTION, ["layout-facts: " + pc_evidence.UNCONFIRMED], {}
+    snaps = str(data.paths["snaps"])
+    before = _manifest_files(snaps, str(names[0]))
+    after = _manifest_files(snaps, str(names[-1]))
+    pattern = pc_evidence.verdict_pattern()
+    lines = ["snapshot-first: %s" % names[0], "snapshot-last: %s" % names[-1]]
+    files: Dict[str, bytes] = {}
+    if spec.row_id == "bound-ledger":
+        log = _read_capped(os.path.join(str(data.paths["wrapper_dir"]), "calls.log"))
+        lint = _read_capped(os.path.join(str(data.paths["raw"]), LINT_AFTER_S2_FILE))
+        lines.extend(bound_ledger_lines(before, after, log, lint, clean, pattern))
+        if lint is not None:
+            files[LINT_AFTER_S2_FILE] = lint
+    else:
+        lines.extend(memory_layout_lines(before, after, clean, pattern, spec.row_id == "hub-memory"))
+    lines.append(
+        "not-exercised-by-the-harness: identity collision, blocked instruction, freshness edit, tamper, repeat /preclear"
+    )
+    return LAYOUT_FACTS_SECTION, lines, files
+
+
 ANALYSES: Dict[str, Analysis] = {
     ANALYSIS_FACTS: analyse_row7_facts,
     ANALYSIS_DO_NOT_REDO: analyse_do_not_redo,
     ANALYSIS_STATUS_FORM: analyse_status_form,
     ANALYSIS_GIT_CALLS: analyse_git_calls,
     ANALYSIS_FROZEN_COPY: analyse_frozen_copy,
+    ANALYSIS_WRAPPER_INJECTION: analyse_wrapper_injection,
+    ANALYSIS_LAYOUT_FACTS: analyse_layout_facts,
 }

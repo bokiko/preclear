@@ -42,6 +42,7 @@ import sys
 import uuid
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
+import pc_checks
 import pc_flags
 import pc_manifest
 import pc_rows
@@ -50,7 +51,12 @@ import pc_spike
 
 PUBLICATION_ROOT = "tests/evidence/publication-2026-10-20"
 ROW1_FOLDER = PUBLICATION_ROOT + "/row1-wrong-binding"
+ROW2_FOLDER = PUBLICATION_ROOT + "/row2-double-conflict"
+ROW3A_FOLDER = PUBLICATION_ROOT + "/row3a-missing-executable-rerun"
+ROW3B_FOLDER = PUBLICATION_ROOT + "/row3b-denied-helper-write-rerun"
+ROW3C_FOLDER = PUBLICATION_ROOT + "/row3c-unbound-fallback-none"
 ROW4A_FOLDER = PUBLICATION_ROOT + "/row4a-unknown-backend"
+ROW4B_FOLDER = PUBLICATION_ROOT + "/row4b-conflicting-blocks"
 ROW5A_FOLDER = PUBLICATION_ROOT + "/row5a-no-memory"
 ROW5B_FOLDER = PUBLICATION_ROOT + "/row5b-disabled-memory"
 ROW6_FOLDER = PUBLICATION_ROOT + "/row6-readonly-plan"
@@ -62,6 +68,10 @@ ROW9_FOLDER = PUBLICATION_ROOT + "/row9-linked-worktree"
 ROW10_FOLDER = PUBLICATION_ROOT + "/row10-large-status-rerun"
 ROW11_FOLDER = PUBLICATION_ROOT + "/row11-concurrent-change-rerun"
 ROW12_FOLDER = PUBLICATION_ROOT + "/row12-frozen-handoff"
+LAYOUT_FIXTURES = "tests/fixtures"
+LAYOUT_PLAIN_FIXTURE = LAYOUT_FIXTURES + "/plain-memory/project"
+LAYOUT_HUB_FIXTURE = LAYOUT_FIXTURES + "/hub-memory/project"
+LAYOUT_MEMORY_DIR = "memory"  # the auto-memory folder of the two memory layouts, inside the project
 DATA_DIR = "tests/harness/data"
 PLAN_DATA = DATA_DIR + "/row1-plan.md"
 PLAIN_PLAN_DATA = DATA_DIR + "/plain-plan.md"
@@ -71,6 +81,8 @@ PLAN_NAME = "2026-10-15-widget-export.md"
 TOKEN_PROJECT = "<repo>/<run>/project"
 LEDGER_NAMES: Dict[str, str] = {"A": LEDGER_A_NAME, "B": LEDGER_B_NAME}
 BOUND_NONE = "none"
+LOCAL_FILE_NAME = "CLAUDE.local.md"
+WRITER2_FILE = "writer2.session"
 
 # The git shapes of a plain project (plan 04-09). The harness identity of every commit is the pc_spike spike identity.
 SHAPE_COMMIT = "commit"
@@ -90,6 +102,8 @@ TOKEN_WRAPPER = "$WRAPPER"
 TOKEN_PROJECT_DIR = "$PROJECT"
 TOKEN_LEDGER = "$LEDGER"
 TOKEN_FALLBACK = "$FALLBACK"
+TOKEN_MISSING = "$MISSING"  # a file that does not exist beside the working wrapper (row 3a)
+MISSING_WRAPPER_NAME = "missing-checkpoint"
 DEFAULT_VALUES: Dict[str, str] = {
     "executable": TOKEN_WRAPPER,
     "project": TOKEN_PROJECT_DIR,
@@ -200,7 +214,12 @@ def _run_stub(interpreter: str, stub: str, project: str, ckpt: str, args: Sequen
 
 
 def _filled_values(
-    templates: Mapping[str, str], wrapper: str, project: str, ledger_a: Optional[str], fallback: str
+    templates: Mapping[str, str],
+    wrapper: str,
+    project: str,
+    ledger_a: Optional[str],
+    fallback: str,
+    missing: Optional[str] = None,
 ) -> Dict[str, str]:
     """Fill the four configuration value templates; a token whose path was not made is a ValueError."""
     if set(templates) != set(DEFAULT_VALUES):
@@ -210,6 +229,7 @@ def _filled_values(
         TOKEN_PROJECT_DIR: project,
         TOKEN_LEDGER: ledger_a,
         TOKEN_FALLBACK: fallback,
+        TOKEN_MISSING: missing,
     }
     filled: Dict[str, str] = {}
     for key, template in templates.items():
@@ -236,6 +256,10 @@ def seed_helper_row(
     ledger_sources: Mapping[str, str],
     bound: str,
     values: Optional[Mapping[str, str]] = None,
+    second_writer: bool = False,
+    local_fixture: Optional[str] = None,
+    local_values: Optional[Mapping[str, str]] = None,
+    expected_changes: Sequence[str] = (),
 ) -> Dict[str, Optional[str]]:
     """Build the setup of a helper-backed row inside the already-created run root and return its paths.
 
@@ -244,7 +268,14 @@ def seed_helper_row(
     those ledgers are created. bound is the letter of the ledger the session is bound to through the stub's own
     bind, or none. values holds a template for each of the four configuration keys (executable, project, ledger,
     fallback_directory) in which the tokens $WRAPPER, $PROJECT, $LEDGER (ledger A) and $FALLBACK stand for the
-    paths made here; a template with no token is written as it is, so a relative executable stays relative.
+    paths made here (and $MISSING for a file that does not exist beside the working wrapper); a template with no token
+    is written as it is, so a relative executable stays relative.
+
+    second_writer (row 2) binds a second, fresh session to ledger A through the stub and writes its id to
+    wrapper/writer2.session, the file the armed wrapper reads. local_fixture (row 4b) is the repo-relative path of a
+    committed fixture-CLAUDE.local.md; it is filled the same way (local_values, default the four default templates with
+    the fallback directory the word none) and written as CLAUDE.local.md beside CLAUDE.md before the first commit.
+    expected_changes are exact wrapper file names (pc_checks.WRAPPER_MADE_NAMES) recorded in raw/run.json for the checks.
 
     Everything is created exclusively, so a second call on the same run root raises FileExistsError. Created,
     in order: project, wrapper, ckpt (the ledgers and the binding), raw (the stub's status and lint output from
@@ -264,6 +295,12 @@ def seed_helper_row(
         raise ValueError("the ledger letters must be A or B")
     if bound != BOUND_NONE and bound not in letters:
         raise ValueError("the session can be bound only to a ledger the seed makes")
+    if second_writer and (bound != "A" or "A" not in letters):
+        raise ValueError("a second writer needs the session bound to ledger A")
+    try:
+        recorded_changes = list(pc_checks.validated_expected_changes(list(expected_changes)))
+    except pc_checks.CheckError:
+        raise ValueError("an expected change is not a name the wrapper creates") from None
     templates = dict(DEFAULT_VALUES if values is None else values)
     repo = os.path.realpath(repo_root)
     root = os.path.realpath(run_root)
@@ -275,6 +312,11 @@ def seed_helper_row(
     if _within(root, repo):
         raise ValueError("the run root must be outside the repository")
     source = _sources(repo, fixture, ledger_sources)
+    local_source: Optional[str] = None
+    if local_fixture is not None:
+        local_source = os.path.join(repo, *local_fixture.split("/"))
+        if not os.path.isfile(local_source):
+            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % local_fixture)
     interpreter = os.path.realpath(sys.executable)
     if not interpreter:
         raise ValueError("no interpreter path is known")
@@ -296,7 +338,21 @@ def seed_helper_row(
         project,
         ledger_paths["A"] if "A" in letters else None,
         os.path.join(project, ".preclear"),
+        os.path.join(wrapper_dir, MISSING_WRAPPER_NAME),
     )
+    local_filled: Dict[str, str] = {}
+    if local_source is not None:
+        local_templates = dict(DEFAULT_VALUES if local_values is None else local_values)
+        if local_values is None:
+            local_templates["fallback_directory"] = "none"
+        local_filled = _filled_values(
+            local_templates,
+            wrapper,
+            project,
+            ledger_paths["A"] if "A" in letters else None,
+            os.path.join(project, ".preclear"),
+            os.path.join(wrapper_dir, MISSING_WRAPPER_NAME),
+        )
 
     _copy_fixture_project(source["fixture"], project)
     thoughts = os.path.join(project, "thoughts")
@@ -307,6 +363,9 @@ def seed_helper_row(
     pc_runroot.write_exclusive(os.path.join(plans, PLAN_NAME), _read(source["plan"]), 0o644)
     configuration = pc_spike._fill_configuration(_read(source["claude_md"]).decode("utf-8"), filled)
     pc_runroot.write_exclusive(os.path.join(project, "CLAUDE.md"), configuration.encode("utf-8"), 0o644)
+    if local_source is not None:
+        local_configuration = pc_spike._fill_configuration(_read(local_source).decode("utf-8"), local_filled)
+        pc_runroot.write_exclusive(os.path.join(project, LOCAL_FILE_NAME), local_configuration.encode("utf-8"), 0o644)
     pc_spike._run_git(project, ["init", "-q"])
     pc_spike._run_git(project, ["symbolic-ref", "HEAD", "refs/heads/main"])
     pc_spike._run_git(project, ["add", "-A"])
@@ -335,6 +394,15 @@ def seed_helper_row(
         _run_stub(
             interpreter, source["stub"], project, ckpt, ["bind", "--ledger", ledger_paths[bound], "--session", session_id]
         )
+    if second_writer:
+        # The second writer is bound through the stub directly, never through the wrapper (which refuses bind).
+        writer2 = str(uuid.uuid4())
+        while writer2 == session_id:
+            writer2 = str(uuid.uuid4())
+        _run_stub(
+            interpreter, source["stub"], project, ckpt, ["bind", "--ledger", ledger_paths["A"], "--session", writer2]
+        )
+        pc_runroot.write_exclusive(os.path.join(wrapper_dir, WRITER2_FILE), (writer2 + "\n").encode("utf-8"), 0o644)
 
     pc_runroot.exclusive_dir(raw, 0o700)
     status = _run_stub(interpreter, source["stub"], project, ckpt, ["status", "--session", session_id])
@@ -354,6 +422,7 @@ def seed_helper_row(
         "evidence_date": evidence_date,
         "session_id": session_id,
         "isolation": isolation_mode(),
+        "expected_changes": recorded_changes,
     }
     pc_runroot.write_exclusive(
         os.path.join(raw, "run.json"), (json.dumps(run_facts, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
@@ -442,9 +511,181 @@ def seed_row4a(
 
 
 
+def _expected_changes_of(row_id: str) -> Tuple[str, ...]:
+    """The expected-change names of a registry entry, taken from the entry and never typed in a seed."""
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row_id)
+    if entry is None:
+        raise ValueError("the row is not in the registry")
+    return tuple(entry.expected_changes)
+
+
+def _ledger_a_source(folder: str) -> Dict[str, str]:
+    return {"A": folder + "/snap-0-setup/" + LEDGER_A_NAME}
+
+
+def seed_row2(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 2 setup: one ledger, the model's session bound to it and a second session bound as another writer.
+
+    The configuration is row 1's, byte for byte in everything but the four values. The second session is bound through
+    the stub directly and its id is written to wrapper/writer2.session, which the armed wrapper reads; the hook
+    arm-wrapper-conflict arms the wrapper after the work turn. The five names the wrapper creates while armed are recorded
+    in raw/run.json as expected changes (the registry entry holds them).
+    """
+    return seed_helper_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW2,
+        ROW2_FOLDER + "/fixture-CLAUDE.md",
+        _ledger_a_source(ROW2_FOLDER),
+        "A",
+        second_writer=True,
+        expected_changes=_expected_changes_of(pc_rows.ROW2),
+    )
+
+
+def seed_row3a(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 3a setup: one ledger bound to the session; the configured executable names a file that does not exist.
+
+    The executable is wrapper/missing-checkpoint inside the run root; the working wrapper stays beside it as
+    wrapper/checkpoint, so the allowlist and the logging wrapper are the same as in every helper row.
+    """
+    return seed_helper_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW3A,
+        ROW3A_FOLDER + "/fixture-CLAUDE.md",
+        _ledger_a_source(ROW3A_FOLDER),
+        "A",
+        values={
+            "executable": TOKEN_MISSING,
+            "project": TOKEN_PROJECT_DIR,
+            "ledger": TOKEN_LEDGER,
+            "fallback_directory": TOKEN_FALLBACK,
+        },
+    )
+
+
+def seed_row3b(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 3b setup: row 1's configuration with one ledger bound to the session; the allowlist (registry) is read-only."""
+    return seed_helper_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW3B,
+        ROW3B_FOLDER + "/fixture-CLAUDE.md",
+        _ledger_a_source(ROW3B_FOLDER),
+        "A",
+    )
+
+
+def seed_row3c(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 3c setup: one ledger, no binding at all, and the fallback directory is the word none.
+
+    No bind call is made, so no bindings folder exists under ckpt. The fallback value is a template with no token, so it
+    is written as the word none, as the committed fixture holds it.
+    """
+    return seed_helper_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW3C,
+        ROW3C_FOLDER + "/fixture-CLAUDE.md",
+        _ledger_a_source(ROW3C_FOLDER),
+        BOUND_NONE,
+        values={
+            "executable": TOKEN_WRAPPER,
+            "project": TOKEN_PROJECT_DIR,
+            "ledger": TOKEN_LEDGER,
+            "fallback_directory": "none",
+        },
+    )
+
+
+def seed_row4b(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The row 4b setup: row 1's configuration plus a CLAUDE.local.md whose block names another task and fallback none.
+
+    The local file is the committed fixture-CLAUDE.local.md with its four values filled (executable, project and ledger as
+    in CLAUDE.md; fallback_directory the word none; task widget-export-v2 as committed). The session is bound to the one
+    ledger.
+    """
+    return seed_helper_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.ROW4B,
+        ROW4B_FOLDER + "/fixture-CLAUDE.md",
+        _ledger_a_source(ROW4B_FOLDER),
+        "A",
+        local_fixture=ROW4B_FOLDER + "/fixture-CLAUDE.local.md",
+    )
+
+
+
 def _memory_policy(row_id: str) -> str:
     """The memory policy word of a registry entry, taken from the entry and never typed in a seed."""
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row_id)
     if entry is None or entry.memory not in (pc_rows.MEMORY_PINNED, pc_rows.MEMORY_DISABLED):
         raise ValueError("the row has no known memory policy")
     return entry.memory
@@ -514,6 +755,26 @@ def _write_plain_files(base: str, source: Mapping[str, str]) -> None:
     pc_runroot.write_exclusive(os.path.join(base, "CLAUDE.md"), _read(source["claude_md"]), 0o644)
 
 
+def _copy_tree_in_place(source: str, dest: str) -> None:
+    """Create DEST and copy every file and folder of the frozen fixture tree SOURCE into it, byte for byte (plan 04-15).
+
+    Nothing is left out and nothing is changed: a symbolic link or a special file in the source is refused. Everything
+    is created exclusively, so a second call on the same destination raises FileExistsError.
+    """
+    entries = pc_manifest.tree_manifest(source)
+    for entry in entries:
+        if entry["kind"] not in ("d", "f"):
+            raise ValueError("a source tree holds a symlink or special file")
+    pc_runroot.exclusive_dir(dest, 0o700)
+    for entry in entries:
+        relative = os.fsdecode(entry["path"])
+        target = os.path.join(dest, relative)
+        if entry["kind"] == "d":
+            pc_runroot.exclusive_dir(target, 0o700)
+        else:
+            pc_runroot.write_exclusive(target, _read(os.path.join(source, relative)), 0o644)
+
+
 def _write_extra_files(base: str, extra_files: Sequence[Tuple[str, str]]) -> None:
     """Create each (relative name, text) pair directly under BASE, exclusively; a name must be one plain file name."""
     for name, text in extra_files:
@@ -533,7 +794,12 @@ def _commit_all(folder: str, message: str) -> None:
 
 
 def _build_plain_project(
-    shape: str, root: str, project: str, source: Mapping[str, str], extra_files: Sequence[Tuple[str, str]] = ()
+    shape: str,
+    root: str,
+    project: str,
+    source: Mapping[str, str],
+    extra_files: Sequence[Tuple[str, str]] = (),
+    tree: Optional[str] = None,
 ) -> None:
     """Make the project of a plain row in the git shape named by SHAPE (the skill copy is added by the caller).
 
@@ -555,7 +821,10 @@ def _build_plain_project(
         pc_runroot.exclusive_dir(project, 0o700)
         pc_spike._run_git(main_checkout, ["worktree", "add", "-q", "-b", FEATURE_BRANCH, project])
         return
-    _write_plain_files(project, source)
+    if tree is not None:
+        _copy_tree_in_place(tree, project)
+    else:
+        _write_plain_files(project, source)
     _write_extra_files(project, extra_files)
     if shape == SHAPE_NONE:
         return
@@ -584,8 +853,15 @@ def seed_plain_row(
     memory: str,
     shape: str = SHAPE_COMMIT,
     extra_files: Sequence[Tuple[str, str]] = (),
+    fixture_tree: Optional[str] = None,
+    memory_dir: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """Build the setup of a row with no helper inside the already-created run root and return its paths.
+
+    fixture_tree (the layouts, plan 04-15) is the repo-relative folder of a frozen fixture project: it is copied in place
+    (every file and folder, byte for byte) instead of writing the instruction file and the plain plan. memory_dir is a
+    folder name inside the project (the layouts pin the auto-memory directory to project/memory): the settings name it,
+    no run-root auto-memory folder is made, and raw/run.json records auto_memory as the run-root-relative text.
 
     shape is the git shape of the project (SHAPE_COMMIT, the default and the only one of rows 5a to 7, or one of
     the others of GIT_SHAPES; see _build_plain_project).
@@ -629,6 +905,8 @@ def seed_plain_row(
         ("plan", PLAIN_PLAN_DATA),
         ("claude_md", fixture),
     )
+    if fixture_tree is not None:
+        wanted = tuple(item for item in wanted if item[0] != "plan")  # the fixture tree holds the plan itself
     source: Dict[str, str] = {}
     for key, relative in wanted:
         path = os.path.join(repo, *relative.split("/"))
@@ -638,6 +916,13 @@ def seed_plain_row(
     references = os.path.join(repo, "references")
     if not os.path.isdir(references):
         raise pc_spike.SpikeError("a source the run root needs is missing: references")
+    tree: Optional[str] = None
+    if fixture_tree is not None:
+        tree = os.path.join(repo, *fixture_tree.split("/"))
+        if not os.path.isdir(tree):
+            raise pc_spike.SpikeError("a source the run root needs is missing: %s" % fixture_tree)
+    if memory_dir is not None and (not re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z", memory_dir) or memory_dir.endswith(".")):
+        raise ValueError("the memory folder must be one plain folder name")
     interpreter = os.path.realpath(sys.executable)
     if not interpreter:
         raise ValueError("no interpreter path is known")
@@ -646,13 +931,15 @@ def seed_plain_row(
     wrapper_dir = os.path.join(root, "wrapper")
     ckpt = os.path.join(root, "ckpt")
     ledgers = os.path.join(ckpt, "ledgers")
-    auto_memory = os.path.join(root, "auto-memory")
+    auto_memory = os.path.join(root, "auto-memory") if memory_dir is None else os.path.join(project, memory_dir)
     raw = os.path.join(root, "raw")
     snaps = os.path.join(root, "snaps")
     settings = os.path.join(root, "settings.json")
     hooklog = os.path.join(raw, "hooklog.jsonl")
 
-    _build_plain_project(shape, root, project, source, extra_files)
+    _build_plain_project(shape, root, project, source, extra_files, tree)
+    if memory_dir is not None and not os.path.isdir(auto_memory):
+        raise pc_spike.SpikeError("the fixture project holds no memory folder")
 
     skill_dir = os.path.join(project, ".claude", "skills", "preclear")
     pc_runroot.exclusive_dir(os.path.join(project, ".claude"), 0o700)
@@ -664,7 +951,8 @@ def seed_plain_row(
     pc_runroot.exclusive_dir(ckpt, 0o700)
     pc_runroot.exclusive_dir(ledgers, 0o700)
     pc_runroot.exclusive_dir(raw, 0o700)
-    pc_runroot.exclusive_dir(auto_memory, 0o700)
+    if memory_dir is None:
+        pc_runroot.exclusive_dir(auto_memory, 0o700)
     pc_runroot.exclusive_dir(snaps, 0o700)
     command = " ".join(shlex.quote(part) for part in (interpreter, "-I", "-B", source["hooklog"], hooklog))
     rendered = pc_flags.render_settings(auto_memory, command, memory == pc_rows.MEMORY_PINNED)
@@ -678,6 +966,8 @@ def seed_plain_row(
         "session_id": session_id,
         "isolation": isolation_mode(),
     }
+    if memory_dir is not None:
+        run_facts["auto_memory"] = "project/" + memory_dir
     pc_runroot.write_exclusive(
         os.path.join(raw, "run.json"), (json.dumps(run_facts, indent=2, sort_keys=True) + "\n").encode("utf-8"), 0o600
     )
@@ -1098,4 +1388,109 @@ def seed_row12(
         pc_rows.ROW12,
         ROW12_FOLDER + "/fixture-CLAUDE.md",
         _memory_policy(pc_rows.ROW12),
+    )
+
+
+def _seed_layout_memory(
+    layout_id: str,
+    fixture_tree: str,
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """A memory layout (plan 04-15; D-13): the frozen fixture project copied in place, memory pinned inside the project.
+
+    Every file of the fixture project (the instruction file, the plan, every memory file) is copied byte for byte, one
+    commit is made on main as in the plain rows, the skill copy is added as untracked files, and the auto-memory directory
+    is pinned to project/memory. There is no wrapper, no stub, no ledger and no binding, and no auto-memory folder is made
+    in the run root. raw/run.json records auto_memory as project/memory, which paths_for and --refile read.
+    """
+    return seed_plain_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        layout_id,
+        fixture_tree + "/CLAUDE.md",
+        _memory_policy(layout_id),
+        fixture_tree=fixture_tree,
+        memory_dir=LAYOUT_MEMORY_DIR,
+    )
+
+
+def seed_layout_plain(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The plain-memory layout setup: the frozen plain-memory fixture project copied in place, memory at project/memory."""
+    return _seed_layout_memory(
+        pc_rows.LAYOUT_PLAIN,
+        LAYOUT_PLAIN_FIXTURE,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+    )
+
+
+def seed_layout_hub(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The hub-memory layout setup: the frozen hub-memory fixture project copied in place, memory at project/memory."""
+    return _seed_layout_memory(
+        pc_rows.LAYOUT_HUB,
+        LAYOUT_HUB_FIXTURE,
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+    )
+
+
+def seed_layout_bound(
+    repo_root: str,
+    run_root: str,
+    session_id: str,
+    harness_home_dir: str,
+    runs_dir: str,
+    evidence_date: str,
+    model: str,
+) -> Dict[str, Optional[str]]:
+    """The bound-ledger layout setup: row 1's seed with ledger A only, the session bound to it (the configured ledger)."""
+    return seed_helper_row(
+        repo_root,
+        run_root,
+        session_id,
+        harness_home_dir,
+        runs_dir,
+        evidence_date,
+        model,
+        pc_rows.LAYOUT_BOUND,
+        ROW1_FOLDER + "/fixture-CLAUDE.md",
+        _ledger_a_source(ROW1_FOLDER),
+        "A",
     )

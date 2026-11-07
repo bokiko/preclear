@@ -25,6 +25,11 @@ What is here:
   * NO_FINALIZER      the hooks that change content and not a mode, so nothing is undone afterwards (append-plan-note,
                       plan 04-13: one fixed line is appended to the plan file by the harness between two stages);
                       NO_PERMS lists the hooks whose snapshot holds no perms.txt for the same reason
+  * HOOK_ARM_WRAPPER   arm-wrapper-conflict (row 2, plan 04-15): writes the count 2 into wrapper/armed after s1, so the
+                      real wrapper gives the model's first two updates to one section a genuine exit 3; it has a snapshot
+                      and a boundary of its own, no finalizer and no perms.txt, and names no project file
+  * HOOK_LINT_AFTER_S2 lint-after-s2 (bound-ledger layout, plan 04-15): the driver runs the stub's lint directly after s2 and
+                      files its text in raw/lint-after-s2.txt; it takes no snapshot and no boundary (NO_BOUNDARY)
   * PROBES            probe id to the live probe the row runner makes before any spend (chmod-denial: a folder at mode
                       555 must refuse a create with EACCES, else the row is skipped); chmod_precondition is the
                       write-free registry check (plan 04-06; HARN-12, D-08)
@@ -44,6 +49,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+import subprocess
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 import pc_checks
@@ -61,6 +67,20 @@ HOOK_RESTRICT_PROJECT = "restrict-project-555"
 FINALIZER_RESTORE_PROJECT = "restore-project-755"
 
 HOOK_APPEND_NOTE = "append-plan-note"
+
+HOOK_ARM_WRAPPER = "arm-wrapper-conflict"
+# The count the hook writes: the wrapper's armed file holds the number of injections still to make (two for row 2).
+ARMED_TEXT = "2\n"
+ARMED_MODE = 0o644
+WRAPPER_FOLDER = "wrapper"
+ARMED_NAME = "armed"
+WRITER2_NAME = pc_rowseeds.WRITER2_FILE
+
+HOOK_LINT_AFTER_S2 = "lint-after-s2"
+LINT_AFTER_S2_NAME = pc_checks.LINT_AFTER_S2_NAME
+LINT_TIMEOUT_SECONDS = 60
+MAX_LINT_BYTES = 65536
+LINT_DID_NOT_RUN = "lint did not run\n"
 # The one line the hook appends (row 12, plan 04-13). The date is the committed run's, a date later than the run itself:
 # the committed run recorded that the model flagged it, so the text is kept as committed and not made current (FA-2).
 PLAN_NOTE_LINE = "Note 2026-10-21 (other session): step 3 test must cover both JSON and CSV."
@@ -79,12 +99,15 @@ MESSAGE_REFUSED = "the hook target is not a plain file inside the project; nothi
 MESSAGE_CHMOD = "the hook could not set the mode of its target; nothing more was changed"
 MESSAGE_UNKNOWN = "the row names a hook that is not known"
 MESSAGE_APPEND = "the hook could not append its line to its target; nothing more was changed"
+MESSAGE_ARM = "the wrapper folder is not as the row seeded it; the wrapper was not armed"
+MESSAGE_LINT = "the lint text could not be written; nothing more was changed"
 
 # The table of what each hook may touch: path relative to the project, and whether it is a regular file or a folder.
 TARGETS: Dict[str, Tuple[Tuple[str, str], ...]] = {
     HOOK_RESTRICT_PLAN: ((PLAN_RELATIVE, KIND_FILE),),
     HOOK_RESTRICT_PROJECT: ((PROJECT_RELATIVE, KIND_DIR), (PLANS_RELATIVE, KIND_DIR)),
     HOOK_APPEND_NOTE: ((PLAN_RELATIVE, KIND_FILE),),
+    HOOK_ARM_WRAPPER: (),  # it names no project file: it writes one file of the wrapper folder, checked by arm_wrapper_conflict
 }
 # What a hook changes, for a hook that lists more in perms.txt than it changes. A hook not named here changes exactly
 # the entries of its TARGETS row.
@@ -96,6 +119,7 @@ HOOK_SNAPSHOTS: Dict[str, str] = {
     HOOK_RESTRICT_PLAN: "snap-1b-after-restriction",
     HOOK_RESTRICT_PROJECT: "snap-1b-after-restriction",
     HOOK_APPEND_NOTE: "snap-2b-after-external-plan-edit",
+    HOOK_ARM_WRAPPER: "snap-1b-after-arming",
 }
 # The finalizer that undoes each hook.
 FINALIZER_OF: Dict[str, str] = {
@@ -103,8 +127,11 @@ FINALIZER_OF: Dict[str, str] = {
     HOOK_RESTRICT_PROJECT: FINALIZER_RESTORE_PROJECT,
 }
 # A hook that appends content has nothing to restore and lists no mode: it has no finalizer and no perms.txt.
-NO_FINALIZER = frozenset([HOOK_APPEND_NOTE])
-NO_PERMS = frozenset([HOOK_APPEND_NOTE])
+NO_FINALIZER = frozenset([HOOK_APPEND_NOTE, HOOK_ARM_WRAPPER, HOOK_LINT_AFTER_S2])
+NO_PERMS = frozenset([HOOK_APPEND_NOTE, HOOK_ARM_WRAPPER])
+# A hook that adds no boundary: it runs after its stage and writes its own file, and takes no snapshot, no perms.txt, no git
+# state and no guard of its own (the lint of the bound-ledger layout). It is not part of the planned boundary list.
+NO_BOUNDARY = frozenset([HOOK_LINT_AFTER_S2])
 
 
 class HookRefused(Exception):
@@ -129,6 +156,8 @@ def boundary_name(stage_name: str, hook_id: str) -> str:
 
 
 def known_hook(hook_id: Any) -> bool:
+    if isinstance(hook_id, str) and hook_id in NO_BOUNDARY:
+        return hook_id in HOOKS
     return isinstance(hook_id, str) and hook_id in HOOKS and hook_id in HOOK_SNAPSHOTS and hook_id in TARGETS
 
 
@@ -160,7 +189,8 @@ def plan_boundaries(spec: pc_rows.RowSpec) -> List[Tuple[str, str]]:
     for stage in spec.stages:
         planned.append((stage.name, pc_rows.snapshot_name(stage)))
         for hook in hooks_of(spec, stage.name):
-            planned.append((boundary_name(stage.name, hook), HOOK_SNAPSHOTS[hook]))
+            if hook not in NO_BOUNDARY:
+                planned.append((boundary_name(stage.name, hook), HOOK_SNAPSHOTS[hook]))
     return planned
 
 
@@ -322,10 +352,107 @@ def append_plan_note(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) ->
         os.close(checked)
 
 
+def _wrapper_folder_of(paths: Mapping[str, Optional[str]]) -> str:
+    """The wrapper folder of the run root after its checks: a real folder directly inside the real run root, not a link."""
+    run_root = os.path.realpath(str(paths["run_root"]))
+    folder = os.path.join(run_root, WRAPPER_FOLDER)
+    try:
+        status = os.lstat(folder)
+    except OSError:
+        raise HookRefused(MESSAGE_ARM) from None
+    if not stat.S_ISDIR(status.st_mode) or os.path.realpath(folder) != folder or status.st_uid != os.getuid():
+        raise HookRefused(MESSAGE_ARM)
+    return folder
+
+
+def _regular_file_in(folder: str, name: str) -> bool:
+    try:
+        status = os.lstat(os.path.join(folder, name))
+    except OSError:
+        return False
+    return stat.S_ISREG(status.st_mode)
+
+
+def arm_wrapper_conflict(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) -> None:
+    """Write the count 2 into wrapper/armed, exclusively, after the checks of the wrapper folder (plan 04-15; row 2).
+
+    The folder must be the real wrapper folder directly inside the run root (no link, owned by the running user) and it must
+    already hold the second writer's session file, the checkpoint wrapper and the stub path the wrapper reads, as regular
+    files; `armed` must not exist yet. The file is created with O_EXCL and never following a link, so a file or link planted
+    there is a refusal and nothing is changed. The wrapper itself rewrites the file in place afterwards (that is the one
+    way the count goes down), and the name is an expected change of the row (pc_checks.WRAPPER_MADE_NAMES).
+    """
+    folder = _wrapper_folder_of(paths)
+    for name in (WRITER2_NAME, "checkpoint", "py", "stub"):
+        if not _regular_file_in(folder, name):
+            raise HookRefused(MESSAGE_ARM)
+    try:
+        pc_runroot.write_exclusive(os.path.join(folder, ARMED_NAME), ARMED_TEXT.encode("utf-8"), ARMED_MODE)
+    except OSError:
+        raise HookRefused(MESSAGE_ARM) from None
+
+
+def lint_after_s2(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) -> None:
+    """Run the stub's lint directly (never through the wrapper) and file its text as raw/lint-after-s2.txt, exclusively.
+
+    The interpreter and the stub are the two paths the seed wrote beside the wrapper, read after checking that they are
+    regular files; the call is made as the seed makes its lint-before call, with the checkpoint state folder as CKPT_HOME,
+    in the project, with no input, a short time limit and the output capped. The file holds the output text and, when lint
+    exits non-zero, one more line naming the exit code. A lint that cannot be run is written as the fixed line `lint did not
+    run`; the hook never stops a row for what lint says.
+    """
+    folder = _wrapper_folder_of(paths)
+    raw = str(paths["raw"])
+    try:
+        python = _read_small(os.path.join(folder, "py"))
+        stub = _read_small(os.path.join(folder, "stub"))
+    except OSError:
+        raise HookRefused(MESSAGE_LINT) from None
+    text = LINT_DID_NOT_RUN
+    if python and stub and os.path.isabs(python) and os.path.isabs(stub):
+        try:
+            done = subprocess.run(
+                [python, "-I", "-B", stub, "lint"],
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "CKPT_HOME": str(paths["ckpt"])},
+                cwd=str(paths["project"]),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=LINT_TIMEOUT_SECONDS,
+                shell=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            done = None
+        if done is not None:
+            text = done.stdout[:MAX_LINT_BYTES].decode("utf-8", "replace")
+            if text and not text.endswith("\n"):
+                text += "\n"
+            if done.returncode != 0:
+                text += "lint exit %d\n" % done.returncode
+    try:
+        pc_runroot.write_exclusive(os.path.join(raw, LINT_AFTER_S2_NAME), text.encode("utf-8"), 0o600)
+    except OSError:
+        raise HookRefused(MESSAGE_LINT) from None
+
+
+def _read_small(path: str) -> str:
+    """The text of a small regular file (the path files of the wrapper folder), without a trailing line end."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        return os.read(descriptor, 4096).decode("utf-8", "replace").strip()
+    finally:
+        os.close(descriptor)
+
+
 HOOKS: Dict[str, Any] = {
     HOOK_RESTRICT_PLAN: restrict_plan_444,
     HOOK_RESTRICT_PROJECT: restrict_project_555,
     HOOK_APPEND_NOTE: append_plan_note,
+    HOOK_ARM_WRAPPER: arm_wrapper_conflict,
+    HOOK_LINT_AFTER_S2: lint_after_s2,
 }
 FINALIZERS: Dict[str, Any] = {
     FINALIZER_RESTORE_PLAN: restore_plan_644,
@@ -493,6 +620,8 @@ def run_after_stage(
         if run is not None:
             run.applied.append(hook)
         HOOKS[hook](ctx, paths, spec)
+        if hook in NO_BOUNDARY:
+            continue
         snapshot = HOOK_SNAPSHOTS[hook]
         vcs = pc_row1._git_executable(ctx.env)
         pc_row1.take_snapshot(paths, snapshot, vcs, pin=ctx.setup_pin)

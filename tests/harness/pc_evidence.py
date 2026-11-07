@@ -110,7 +110,7 @@ def _spec_of_run(data: Any) -> pc_rows.RowSpec:
     """
     run = data.run if isinstance(data.run, dict) else {}
     row = run.get("row", pc_rows.ROW1)
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row) if isinstance(row, str) else None
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row) if isinstance(row, str) else None
     if entry is None:
         raise EvidenceError("the run record names a row that is not in the registry")
     return entry
@@ -457,7 +457,7 @@ def _file_sha(path: str) -> str:
 
 def _has_wrapper(row: pc_rows.RowSpec) -> bool:
     """True for a row whose allowlist profile carries the logging wrapper; a plain row has none (plan 04-04)."""
-    return row.tools_profile == pc_rows.PROFILE_HELPER
+    return row.tools_profile in (pc_rows.PROFILE_HELPER, pc_rows.PROFILE_HELPER_READ)
 
 
 def render_digests(ctx: pc_rows.RunContext, data: RunData, spec: Optional[pc_rows.RowSpec] = None) -> bytes:
@@ -948,7 +948,7 @@ def render_mechanical_checks(
         stage_facts = session["stages"][name]
         session_lines.append("%s init-session-as-requested: %s" % (name, _yes_no(stage_facts["init_session_as_requested"])))
         session_lines.append("%s result-session-as-requested: %s" % (name, _yes_no(stage_facts["result_session_as_requested"])))
-    for key in ("status_begins_with_session", "status_holds_s1_prefix", "status_names_ledger_b"):
+    for key in pc_checks.STATUS_FIRST_KEYS + (pc_checks.status_ledger_key(session),):
         session_lines.append("%s: %s" % (key.replace("_", "-"), session[key]))
     ids = ", ".join("%s %s" % (stage.name, _text(stage.record.get("session_id"))) for stage in data.stages)
     session_lines.append("session-ids: %s" % (ids or UNCONFIRMED))

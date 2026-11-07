@@ -449,19 +449,25 @@ def build_allowed_tools(wrapper_path: str, verbs: Sequence[str]) -> Tuple[str, .
 PROFILE_HELPER = "helper"
 PROFILE_PLAIN = "plain"
 PROFILE_GIT = "git"
+# The helper profile with the four read verbs only (row 3b, plan 04-15): no rule for update, note or handoff.
+PROFILE_HELPER_READ = "helper-read"
+READ_ONLY_WRAPPER_VERBS: Tuple[str, ...] = ("status", "show", "validate", "lint")
 _EXTRA_RULE = re.compile(r"[A-Za-z]+(?:\([A-Za-z0-9 ._:*-]+\))?\Z")
 
 
 def build_row_tools(profile: str, wrapper_path: str, extra: Sequence[str] = ()) -> Tuple[str, ...]:
     """Return the --allowedTools rules of a row: its profile's rules, then the extra rules in the order given.
 
-    The helper profile is the baseline plus one rule per model-facing wrapper verb (build_allowed_tools); the plain
+    The helper profile is the baseline plus one rule per model-facing wrapper verb (build_allowed_tools); the
+    helper-read profile is the baseline plus one rule for each of the four read verbs only; the plain
     and git profiles are the baseline alone and never take a wrapper rule, so the wrapper path is not used for
     them. An unknown profile, an extra rule that is not a plain tool rule (no comma, no new line, no slash, so no path to a
     wrapper), a repeated rule or a rule already in the list is a ValueError.
     """
     if profile == PROFILE_HELPER:
         rules = list(build_allowed_tools(wrapper_path, MODEL_FACING_WRAPPER_VERBS))
+    elif profile == PROFILE_HELPER_READ:
+        rules = list(build_allowed_tools(wrapper_path, READ_ONLY_WRAPPER_VERBS))
     elif profile in (PROFILE_PLAIN, PROFILE_GIT):
         rules = list(BASELINE_ALLOWED_TOOLS)
     else:

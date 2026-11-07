@@ -747,7 +747,7 @@ def _usable_run_folder(
         return None
     if not isinstance(record, dict):
         return None
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, record.get("row"))
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), record.get("row"))
     if entry is None or not entry.implemented:
         return None
     if not isinstance(record.get("evidence_date"), str) or not isinstance(record.get("model"), str):

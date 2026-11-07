@@ -70,7 +70,7 @@ def matrix():
 
 def spec_of(row_id: str):
     pc_rows = rows()
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row_id)  # a row or a layout (plan 04-15)
     assert entry is not None, row_id
     return entry
 
@@ -295,8 +295,8 @@ class RegisteredRowTests(unittest.TestCase):
             "",
             None,
             5,
-            "row2-double-conflict",
-            "plain-memory",
+            "row13-not-a-row",
+            "layout-plain-memory",
         )
         for value in odd:
             with self.assertRaises(pc_spike.SpikeError, msg="an id that is not an implemented registry id"):

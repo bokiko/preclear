@@ -929,6 +929,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_row7.py` - tests for row 7: the live chmod probe and the SKIPPED label, the 555 restriction and its restore, the printed-checkpoint chain and its fence scanner, including the committed replies
 - `test_rows_git.py` - tests for the git-shaped rows 8a, 8b, 8c, 9 and 10: the git shape seeds and their byte-tie, the no-git and worktree git states, the main-checkout exclusion, the row 10 hostile tree and status form, the static allowlist scan and a scripted chain of each
 - `test_git_wrapper.py` - tests for the row 11 git wrapper (transparency, exact argument lists, ordinal and race, no-op session, safety) and for row 11 on the scripted claude
+- `test_rows_helper.py` - tests for the helper-backed rows: the row 2 double conflict through the real wrapper and stub, the expected-change names, the arm hook and the bound-ledger status questions
 - `test_row12.py` - tests for row 12 (frozen handoff): the seed byte-tie, the plan-note hook and its safety, the four-stage chain with s4 resuming the third session, and the ledger bound on the fourth stage
 - `test_review.py` - tests for the Do-not-redo review: the entry parser, the token and candidate rules, the row 7 facts, the candidate file, the review table, hostile text and the caps
 - `test_runroot.py` - tests for run roots

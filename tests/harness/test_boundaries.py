@@ -685,8 +685,12 @@ class HookSafetyTests(unittest.TestCase):
         self.assertEqual(hooks.HOOK_SNAPSHOTS[HOOK], RESTRICTION_SNAPSHOT)
         self.assertEqual(hooks.FINALIZER_OF[HOOK], "restore-plan-644")
         # Row 7 (plan 04-06) adds the project-folder hook and its finalizer to the same tables; row 12 (plan 04-13) adds a
-        # hook that appends a line and so has no finalizer.
-        self.assertEqual(set(hooks.HOOKS), {HOOK, "restrict-project-555", "append-plan-note"})
+        # hook that appends a line and so has no finalizer; row 2 and the bound-ledger layout (plan 04-15) add the hook that
+        # arms the wrapper (a snapshot of its own, no finalizer) and the lint hook (no snapshot, no boundary, no finalizer).
+        self.assertEqual(
+            set(hooks.HOOKS),
+            {HOOK, "restrict-project-555", "append-plan-note", "arm-wrapper-conflict", "lint-after-s2"},
+        )
         self.assertEqual(set(hooks.FINALIZERS), {"restore-plan-644", "restore-project-755"})
         for relative, kind in hooks.TARGETS[HOOK]:
             self.assertFalse(relative.startswith("/"))

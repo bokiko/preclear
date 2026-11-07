@@ -187,7 +187,10 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 #   init   override: emit the system init event (implicit before the first stream op)
 #   text   text: an assistant text message
 #   tool   name, input, run ("wrapper" really runs the wrapper; the result is its standard output and standard
-#          error merged in time order, as the real Bash tool returns them), args, denied, reject, content
+#          error merged in time order, as the real Bash tool returns them), args, denied, reject, content. In the input
+#          and in args the token $HASH[<section>] stands for the section hash the ledger holds at that moment, read through the
+#          stub directly (never through the wrapper, so the wrapper log is not changed) as the model reads it with show
+#          (plan 04-15: a hash a seeded ledger gives cannot be written into the script before the run root exists)
 #   write  path, text: really write a file
 #   git    args: run git in the cwd with a hygiene environment
 #   run_git args: run `git` resolved through the child's own PATH (so a git wrapper first on that PATH really runs), in the
@@ -213,7 +216,7 @@ def git_env(base: Dict[str, str]) -> Dict[str, str]:
 # $OUTSIDE, $CONFIG, $WRAPPER, $SID. An init override value of "$DELETE" removes that key.
 
 _SCRIPTED_CLAUDE = r'''#!__PYTHON__
-import json, os, shlex, subprocess, sys, time
+import json, os, re, shlex, subprocess, sys, time
 
 here = os.path.dirname(os.path.abspath(__file__))
 args = sys.argv[1:]
@@ -273,6 +276,31 @@ def subst(value):
     return value
 
 
+def section_hash(section):
+    wdir = os.path.join(os.path.dirname(cwd), "wrapper")
+    with open(os.path.join(wdir, "py")) as handle:
+        py = handle.read().strip()
+    with open(os.path.join(wdir, "stub")) as handle:
+        stub = handle.read().strip()
+    env = dict(os.environ)
+    env["CLAUDE_CODE_SESSION_ID"] = sid
+    done = subprocess.run([py, "-I", "-B", stub, "show"], env=env, cwd=cwd, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    found = re.search(r"(?m)^## " + re.escape(section) + r"\nsection-hash: ([0-9a-f]{64})$",
+                      done.stdout.decode("utf-8", "replace"))
+    return found.group(1) if found else "NO-SUCH-SECTION"
+
+
+def fill_hashes(value):
+    if isinstance(value, str):
+        return re.sub(r"\$HASH\[([^\]]*)\]", lambda found: section_hash(found.group(1)), value) if "$HASH[" in value else value
+    if isinstance(value, list):
+        return [fill_hashes(item) for item in value]
+    if isinstance(value, dict):
+        return dict((key, fill_hashes(item)) for key, item in value.items())
+    return value
+
+
 def emit(event):
     sys.stdout.write(json.dumps(event) + "\n")
     sys.stdout.flush()
@@ -319,7 +347,7 @@ def do_tool(op):
     state["tools"] += 1
     tool_id = "toolu_%04d" % state["tools"]
     name = op.get("name", "Bash")
-    tool_input = subst(op.get("input", {}))
+    tool_input = fill_hashes(subst(op.get("input", {})))
     emit({"type": "assistant", "session_id": sid,
           "message": {"role": "assistant", "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}]}})
     denied = bool(op.get("denied"))
@@ -329,7 +357,7 @@ def do_tool(op):
         env["CLAUDE_CODE_SESSION_ID"] = sid
         # The real Bash tool returns the two streams merged in the order the process wrote them, so the stub's
         # brand line (standard error, written first) leads the result (WR-02).
-        done = subprocess.run([subs["$WRAPPER"]] + subst(op.get("args", [])), env=env, cwd=cwd,
+        done = subprocess.run([subs["$WRAPPER"]] + fill_hashes(subst(op.get("args", []))), env=env, cwd=cwd,
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         content = done.stdout.decode("utf-8", "replace")
     rejected = denied or bool(op.get("reject"))
@@ -636,7 +664,7 @@ def default_row_stages(spec: Any) -> list:
         for index, stage in enumerate(spec.stages):
             if stage.kind == "preclear":
                 chosen[index] = printed_checkpoint_stage()
-    if getattr(spec, "tools_profile", "helper") != "helper":
+    if getattr(spec, "tools_profile", "helper") not in ("helper", "helper-read"):
         # A row with no helper (a plain row) has no wrapper to call and no memory file to write: the scripts lose the
         # ops that name the wrapper and the auto-memory folder, and keep the listing, the checkpoint and the replies.
         for stage in chosen:

@@ -913,8 +913,8 @@ class Row6RegistryTests(unittest.TestCase):
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
         self.assertEqual(built.hooks, ())
         named = [entry.row_id for entry in pc_rows.build_registry() if entry.hooks]
-        # row 7 names the project-folder hook (plan 04-06); row 12 names the plan-note hook (plan 04-13)
-        self.assertEqual(named, [ROW6, "row7-all-destinations-denied", "row12-frozen-handoff"])
+        # row 7 names the project-folder hook (plan 04-06); row 12 names the plan-note hook (plan 04-13); row 2 the arm hook (04-15)
+        self.assertEqual(named, ["row2-double-conflict", ROW6, "row7-all-destinations-denied", "row12-frozen-handoff"])
 
     def test_row6_every_hook_of_the_registry_is_known_names_a_stage_of_its_row_and_has_a_snapshot_and_a_finalizer(self) -> None:
         hooks = rowhooks()

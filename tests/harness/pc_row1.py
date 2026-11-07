@@ -156,11 +156,36 @@ def seed_row1(
     )
 
 
+# The two places a seed may pin the auto-memory directory, as the run-root-relative text raw/run.json records them: the
+# run root's own folder (every row so far) and the folder named memory inside the project (the memory layouts, plan 04-15).
+AUTO_MEMORY_DEFAULT = "auto-memory"
+AUTO_MEMORY_IN_PROJECT = "project/memory"
+AUTO_MEMORY_PLACES: Tuple[str, ...] = (AUTO_MEMORY_DEFAULT, AUTO_MEMORY_IN_PROJECT)
+
+
+def auto_memory_relative(raw_dir: str) -> str:
+    """The run-root-relative auto-memory location the run record names, else the default folder.
+
+    The record is read (never written). Only the two known places are honoured: a record that names anything else, is not
+    a mapping, is not valid text or does not exist gives the default, so a changed record cannot point the memory checks
+    at another folder.
+    """
+    try:
+        with open(os.path.join(raw_dir, "run.json"), "rb") as handle:
+            record = json.loads(handle.read(65536).decode("utf-8"))
+    except (OSError, ValueError):
+        return AUTO_MEMORY_DEFAULT
+    if isinstance(record, dict) and record.get("auto_memory") in AUTO_MEMORY_PLACES:
+        return str(record["auto_memory"])
+    return AUTO_MEMORY_DEFAULT
+
+
 def paths_for(run_root: str) -> Dict[str, Optional[str]]:
     """Return the paths mapping seed_row1 returned, rebuilt from a run root alone; it touches nothing.
 
     Filing and --refile use it so they need no memory of the run. The names are the fixed folder names of the
-    seed, so the same call on the same folder always gives the same mapping.
+    seed, so the same call on the same folder always gives the same mapping; the auto-memory folder is the one the run
+    record names (auto_memory_relative), so a memory folder inside the project is found too.
     """
     root = os.path.realpath(run_root)
     wrapper_dir = os.path.join(root, "wrapper")
@@ -178,7 +203,7 @@ def paths_for(run_root: str) -> Dict[str, Optional[str]]:
         "ledgers": ledgers,
         "ledger_a": os.path.join(ledgers, LEDGER_A_NAME),
         "ledger_b": os.path.join(ledgers, LEDGER_B_NAME),
-        "auto_memory": os.path.join(root, "auto-memory"),
+        "auto_memory": os.path.join(root, *auto_memory_relative(raw).split("/")),
         "raw": raw,
         "snaps": os.path.join(root, "snaps"),
         "settings": os.path.join(root, "settings.json"),
@@ -533,7 +558,7 @@ def _row_stage_keys(
     row_id: str = ROW_ID, campaign: Optional[str] = None, attempt: int = 1, matrix: bool = False
 ) -> Tuple[str, ...]:
     """The ledger stage keys of a row under a scope: the allowed-stage tuple the spend ledger checks a launch against."""
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row_id)
     if entry is None:
         raise pc_spike.SpikeError("the row is not in the registry")
     return tuple(pc_rows.scoped_stage_key(row_id, stage.name, campaign, attempt, matrix) for stage in entry.stages)
@@ -541,7 +566,7 @@ def _row_stage_keys(
 
 def _entry_of(row_id: str) -> pc_rows.RowSpec:
     """The implemented registry entry of a row id, matched exactly; anything else is a SpikeError."""
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id) if isinstance(row_id, str) else None
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row_id) if isinstance(row_id, str) else None
     if entry is None or not entry.implemented:
         raise pc_spike.SpikeError("the row is not in the registry")
     return entry
@@ -1222,6 +1247,27 @@ def run_row(ctx: pc_rows.RunContext, timeout_override: Optional[int] = None) -> 
 # ---------------------------------------------------------------------------------------------
 
 
+def prompt_section(text: str, name: str) -> str:
+    """The prompt under the level-two heading `## <name>` of a prompts file: its text up to the next heading, trimmed.
+
+    The prompt ends with one line end. A heading that is missing or appears twice is a SpikeError, so a misspelt section
+    never reaches a stage as an empty or a wrong prompt.
+    """
+    lines = text.split("\n")
+    starts = [index for index, line in enumerate(lines) if line == "## " + name]
+    if len(starts) != 1:
+        raise pc_spike.SpikeError("a prompts file has no single section of that name")
+    body: List[str] = []
+    for line in lines[starts[0] + 1:]:
+        if line.startswith("## ") or line.startswith("# "):
+            break
+        body.append(line)
+    prompt = "\n".join(body).strip("\n")
+    if not prompt:
+        raise pc_spike.SpikeError("a prompts file section is empty")
+    return prompt + "\n"
+
+
 def read_prompts(repo_root: str, entry: pc_rows.RowSpec, ledger_a_path: Optional[str]) -> Dict[str, str]:
     """Return the prompt of each stage the entry names, read in place from its repo-relative file.
 
@@ -1230,7 +1276,10 @@ def read_prompts(repo_root: str, entry: pc_rows.RowSpec, ledger_a_path: Optional
     """
     found: Dict[str, str] = {}
     for name, relative in entry.prompts:
-        text = _read(os.path.join(repo_root, *relative.split("/"))).decode("utf-8")
+        path, _hash, section = relative.partition("#")
+        text = _read(os.path.join(repo_root, *path.split("/"))).decode("utf-8")
+        if _hash:
+            text = prompt_section(text, section)
         if ledger_a_path:
             text = text.replace(LEDGER_PLACEHOLDER, ledger_a_path)
         found[name] = text

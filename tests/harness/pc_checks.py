@@ -54,6 +54,15 @@ import pc_stream
 
 APPROVED_ROOTS: Tuple[str, ...] = ("project", "ckpt", "auto-memory")
 EXPECTED_CHANGES: Tuple[str, ...] = ("wrapper/calls.log",)
+# The five names the armed checkpoint wrapper itself creates beside itself (plan 04-15, row 2). A run record may list any
+# of them as an expected change and nothing else: no folder, no pattern, no other name (T-04-68).
+WRAPPER_MADE_NAMES: Tuple[str, ...] = (
+    "wrapper/armed",
+    "wrapper/target-section",
+    "wrapper/injection.log",
+    "wrapper/writer2-body-1.md",
+    "wrapper/writer2-body-2.md",
+)
 SNAPSHOT_ORDER: Tuple[str, ...] = ("snap-0-setup", "snap-1-after-work", "snap-2-after-preclear", "snap-3-after-resume")
 STAGE_NAMES: Tuple[str, ...] = ("s1", "s2", "s3")
 SETUP_STATE = "setup"
@@ -65,6 +74,7 @@ BREACH_RECORD = "run-record-changes"
 # The boundaries at which the run root's own record is guarded, in order (the same order as SNAPSHOT_ORDER).
 GUARD_ORDER: Tuple[str, ...] = ("setup", "s1", "s2", "s3")
 HOOKLOG_NAME = "hooklog.jsonl"
+LINT_AFTER_S2_NAME = "lint-after-s2.txt"
 VIOLATION_RAW_CHANGED = "raw-entry-changed"
 VIOLATION_RAW_UNEXPECTED = "raw-entry-unexpected"
 VIOLATION_SNAPSHOT_CHANGED = "snapshot-changed"
@@ -181,6 +191,22 @@ def diff_manifests(before: Mapping[str, Mapping[str, Any]], after: Mapping[str, 
     return sorted(found, key=lambda item: (item[1], item[0]))
 
 
+def validated_expected_changes(value: Any) -> Tuple[str, ...]:
+    """The expected-change names of a run record, checked: a list of distinct names from WRAPPER_MADE_NAMES, else CheckError.
+
+    The allowance is by exact name. A name that is not one of the five the wrapper creates, a repeat, a folder, a pattern or
+    a value of another shape is refused, so a record cannot widen the write boundary beyond the wrapper's own files.
+    """
+    if not isinstance(value, list) or len(value) > len(WRAPPER_MADE_NAMES):
+        raise CheckError("the run facts list expected changes in an unexpected shape")
+    seen: List[str] = []
+    for name in value:
+        if not isinstance(name, str) or name not in WRAPPER_MADE_NAMES or name in seen:
+            raise CheckError("the run facts list an expected change that is not a name the wrapper creates")
+        seen.append(name)
+    return tuple(seen)
+
+
 def outside_changes(
     diff: Sequence[Tuple[str, str]], approved: Sequence[str] = APPROVED_ROOTS, expected: Sequence[str] = EXPECTED_CHANGES
 ) -> List[str]:
@@ -195,15 +221,18 @@ def outside_changes(
     return sorted(found)
 
 
-def write_boundary(snaps_dir: str, names: Sequence[str]) -> Dict[str, Any]:
-    """Diff every consecutive pair of snapshots and the first against the last; list what lies outside the roots."""
+def write_boundary(snaps_dir: str, names: Sequence[str], expected: Sequence[str] = EXPECTED_CHANGES) -> Dict[str, Any]:
+    """Diff every consecutive pair of snapshots and the first against the last; list what lies outside the roots.
+
+    expected holds the exact paths that are not counted (the wrapper log, and the wrapper's own files for a row whose
+    record lists them); everything else outside the approved roots is listed."""
     manifests = [load_manifest(os.path.join(snaps_dir, name)) for name in names]
     pairs = [(manifests[i], manifests[i + 1]) for i in range(len(manifests) - 1)]
     if len(manifests) > 2:
         pairs.append((manifests[0], manifests[-1]))
     outside = set()
     for before, after in pairs:
-        outside.update(outside_changes(diff_manifests(before, after)))
+        outside.update(outside_changes(diff_manifests(before, after), APPROVED_ROOTS, expected))
     paths = sorted(outside)
     return {"count": len(paths), "paths": paths}
 
@@ -2293,14 +2322,30 @@ def _yes_no(value: bool) -> str:
     return CORRELATED_YES if value else CORRELATED_NO
 
 
+STATUS_FIRST_KEYS: Tuple[str, str] = ("status_begins_with_session", "status_holds_s1_prefix")
+STATUS_LEDGER_KEY_A = "status_names_ledger_a"
+STATUS_LEDGER_KEY_B = "status_names_ledger_b"
+
+
+def status_ledger_key(session: Mapping[str, Any]) -> str:
+    """The name of the third status question in a session facts mapping: ledger A for a row bound to A, else ledger B."""
+    return STATUS_LEDGER_KEY_A if STATUS_LEDGER_KEY_A in session else STATUS_LEDGER_KEY_B
+
+
 def session_facts(
-    events_by_stage: Mapping[str, Sequence[Dict[str, Any]]], requested: Mapping[str, str], first_status: Optional[str]
+    events_by_stage: Mapping[str, Sequence[Dict[str, Any]]],
+    requested: Mapping[str, str],
+    first_status: Optional[str],
+    bound_ledger: str = "B",
 ) -> Dict[str, Any]:
     """Session agreement per stage, the denial ids per stage and three questions about the first status result.
 
     Each stage reports whether init.session_id and result.session_id equal the session requested for it. The
     status questions (the helper's session line is among the first STATUS_SCAN_LINES lines, holds the first eight
-    characters of the s1 session, names ledger B) are yes or no, or UNCONFIRMED when s2 made no status call.
+    characters of the s1 session, names the ledger the session is bound to) are yes or no, or UNCONFIRMED when s2 made no
+    status call. bound_ledger is the run record's word: B (row 1, the default and the key status_names_ledger_b as
+    always), A (the key status_names_ledger_a, asked about ledger A), or none, where the session is bound to no ledger and
+    the third question stays UNCONFIRMED under its old key.
     The helper prints its brand line first and the tool result merges both streams, so the first line of the real
     result is the brand and the question is about the session line that follows it (WR-02; the key name is kept).
     Reply text is never read.
@@ -2315,14 +2360,22 @@ def session_facts(
             "result_session_as_requested": want is not None and result.get("session_id") == want,
             "denial_ids": sorted(pc_stream.denial_report(events).union),
         }
+    if bound_ledger not in ("A", "B", "none"):
+        raise CheckError("the run facts name a bound ledger that is not known")
+    ledger_key = STATUS_LEDGER_KEY_A if bound_ledger == "A" else STATUS_LEDGER_KEY_B
     if first_status is None:
-        status = dict((key, UNCONFIRMED) for key in ("status_begins_with_session", "status_holds_s1_prefix", "status_names_ledger_b"))
+        status = dict((key, UNCONFIRMED) for key in STATUS_FIRST_KEYS + (ledger_key,))
     else:
         s1 = requested.get("s1") or ""
+        names_bound = UNCONFIRMED
+        if bound_ledger == "A":
+            names_bound = _yes_no(_row1().LEDGER_A_NAME in first_status)
+        elif bound_ledger == "B":
+            names_bound = _yes_no(_row1().LEDGER_B_NAME in first_status)
         status = {
             "status_begins_with_session": _yes_no(_session_line_in_front(first_status)),
             "status_holds_s1_prefix": _yes_no(s1 != "" and s1[:8] in first_status),
-            "status_names_ledger_b": _yes_no(_row1().LEDGER_B_NAME in first_status),
+            ledger_key: names_bound,
         }
     return dict({"stages": stages}, **status)
 
@@ -2619,6 +2672,7 @@ def _window_names(name: str, previous: Optional[str] = None) -> set:
         allowed.add(previous + ".record.json")
     if previous.split("-", 1)[0] == "s2":
         allowed.add("chain.json")
+        allowed.add(LINT_AFTER_S2_NAME)  # the driver's own lint text, taken after s2 by the bound-ledger layout (plan 04-15)
     return allowed
 
 
@@ -2693,6 +2747,7 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
     snaps = os.path.join(root, "snaps")
     project = os.path.join(root, "project")
     approved_abs = [os.path.join(root, name) for name in APPROVED_ROOTS]
+    expected_changes = validated_expected_changes(run.get("expected_changes", []))
     planned, present = present_boundaries(raw, snaps)
     names = [snapshot for _name, snapshot in present]
     if not names:
@@ -2766,7 +2821,8 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
 
     requested = dict((name, records[name].get("session_id")) for name in stages)
     status_text = first_status_text(events_by_stage["s2"], wrapper) if "s2" in events_by_stage else None
-    session = session_facts(events_by_stage, requested, status_text)
+    bound = run.get("bound_ledger", "B")  # a record made before the key existed is a row 1 record
+    session = session_facts(events_by_stage, requested, status_text, bound if isinstance(bound, str) else "")
 
     return {
         "snapshots": names,
@@ -2774,7 +2830,7 @@ def compute_facts(run_root: str, config_dir: str) -> Dict[str, Any]:
         "boundaries": boundaries,
         "program_counts": counted,
         "streams": streams,
-        "write_boundary": write_boundary(snaps, names),
+        "write_boundary": write_boundary(snaps, names, EXPECTED_CHANGES + expected_changes),
         "trace_writes": {"count": len(trace), "paths": sorted(trace)},
         "bash_mentions": mentions,
         "memory_probe": memory_probe(config_dir, project),

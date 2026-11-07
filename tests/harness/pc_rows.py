@@ -27,7 +27,12 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tu
 
 ROW_CAP = Decimal("2.00")  # D-12: the most one row may cost, in US dollars
 ROW1 = "row1-wrong-binding"
+ROW2 = "row2-double-conflict"
+ROW3A = "row3a-missing-executable"
+ROW3B = "row3b-denied-helper-write"
+ROW3C = "row3c-unbound-fallback-none"
 ROW4A = "row4a-unknown-backend"
+ROW4B = "row4b-conflicting-blocks"
 ROW5A = "row5a-no-memory"
 ROW5B = "row5b-disabled-memory"
 ROW6 = "row6-readonly-plan"
@@ -43,6 +48,9 @@ ROW12 = "row12-frozen-handoff"
 # Allowlist profiles (RowSpec.tools_profile). PROFILE_HELPER is the committed 33-rule baseline plus one rule per
 # model-facing verb of the logging wrapper; the runner and the filing turn the word into rules, never this module.
 PROFILE_HELPER = "helper"
+# PROFILE_HELPER_READ is the baseline plus one rule for each of the four read verbs of the wrapper (status, show, validate,
+# lint) and none for update, note or handoff: row 3b, whose committed rerun denied a write through the helper (plan 04-15).
+PROFILE_HELPER_READ = "helper-read"
 # PROFILE_PLAIN is the baseline alone (no wrapper rule of any kind); a row adds its own extra rules in RowSpec.extra_tools.
 PROFILE_PLAIN = "plain"
 # PROFILE_GIT is the baseline alone as well, with no extra rule: the git-shaped rows 8a to 10 need neither chmod nor touch
@@ -76,10 +84,17 @@ ANALYSIS_STATUS_FORM = "status-form"
 ROW10_ANALYSES: Tuple[str, ...] = (ANALYSIS_STATUS_FORM,)
 # Rows that run with the git wrapper first on the PATH file its log joined to the stream's tool_use ids (plan 04-10; used by row 11).
 ANALYSIS_GIT_CALLS = "git-calls"
+# Row 2 files the wrapper's injection log next to the wrapper log (plan 04-15; no section of its own).
+ANALYSIS_WRAPPER_INJECTION = "wrapper-injection"
+# The three layouts print counts, names and digests of what the session did to the files of its project (plan 04-15; D-13).
+ANALYSIS_LAYOUT_FACTS = "layout-facts"
 # Row 12 prints, from the filed snapshot copies only, the digests and the equality of the frozen copies of the checkpoint (plan 04-13).
 ANALYSIS_FROZEN_COPY = "frozen-copy"
 
-LAYOUT_IDS: Tuple[str, ...] = ("plain-memory", "hub-memory", "bound-ledger")
+LAYOUT_PLAIN = "plain-memory"
+LAYOUT_HUB = "hub-memory"
+LAYOUT_BOUND = "bound-ledger"
+LAYOUT_IDS: Tuple[str, ...] = (LAYOUT_PLAIN, LAYOUT_HUB, LAYOUT_BOUND)
 
 # The acceptance order of the twelve publication cases (tests/acceptance.md, Publication matrix).
 ROW_IDS: Tuple[str, ...] = (
@@ -173,6 +188,7 @@ class RowSpec(NamedTuple):
     probe: str = PROBE_NONE  # a live probe id the runner makes before any spend, or PROBE_NONE (plan 04-06)
     analyses: Tuple[str, ...] = ()  # ids of pc_review.ANALYSES that filing runs for a completed chain (plan 04-07)
     path_prepend: Tuple[Tuple[str, str], ...] = ()  # (stage name, run-root-relative folder): that folder leads the PATH of that stage only (plan 04-12)
+    expected_changes: Tuple[str, ...] = ()  # exact run-root-relative file names the wrapper itself creates; the seed records them in raw/run.json (plan 04-15)
 
 
 class RunContext(NamedTuple):
@@ -435,6 +451,113 @@ _ROW4A_SETUP_TEXT = (
 )
 
 
+# Rows 2, 3a, 3b, 3c and 4b (helper-backed rows, plan 04-15): the committed two stages of row 4a, one ledger (the configured
+# one) and the stub seed of row 1 with the committed difference of each row. Each reads its own committed folder; 3a and 3b
+# read the rerun folders, whose fixture and s2 prompt are the ones of the corrected runs.
+_PUBLICATION_2 = _PUBLICATION_ROOT + "/row2-double-conflict"
+_PUBLICATION_3A = _PUBLICATION_ROOT + "/row3a-missing-executable-rerun"
+_PUBLICATION_3B = _PUBLICATION_ROOT + "/row3b-denied-helper-write-rerun"
+_PUBLICATION_3C = _PUBLICATION_ROOT + "/row3c-unbound-fallback-none"
+_PUBLICATION_4B = _PUBLICATION_ROOT + "/row4b-conflicting-blocks"
+_HELPER_TWO_STAGES: Tuple[StageSpec, ...] = _ROW4A_STAGES
+# The five names the wrapper itself creates under wrapper/ while it is armed (checkpoint-wrapper): they are the only expected
+# changes of row 2 besides the wrapper log, and no folder or pattern stands for them (T-04-68).
+_ROW2_EXPECTED_CHANGES: Tuple[str, ...] = (
+    "wrapper/armed",
+    "wrapper/target-section",
+    "wrapper/injection.log",
+    "wrapper/writer2-body-1.md",
+    "wrapper/writer2-body-2.md",
+)
+_ROW2_HOOKS: Tuple[Tuple[str, str], ...] = (("s1", "arm-wrapper-conflict"),)
+
+
+def _helper_sources(folder: str, extra: Tuple[Tuple[str, str], ...] = ()) -> Tuple[Tuple[str, str], ...]:
+    return _COMMON_SOURCES + (
+        (folder + "/fixture-CLAUDE.md", "file"),
+        (folder + "/s2-preclear-prompt.md", "file"),
+        (folder + "/snap-0-setup/CONTINUITY_CLAUDE-widget-export.md", "file"),
+        ("tests/fixtures/bound-ledger/project", "dir"),
+        (_S1_PROMPT, "file"),
+        (_PLAN_DATA, "file"),
+    ) + extra
+
+
+def _helper_prompts(folder: str) -> Tuple[Tuple[str, str], ...]:
+    return (("s1", _S1_PROMPT), ("s2", folder + "/s2-preclear-prompt.md"))
+
+
+_ROW2_SETUP_TEXT = (
+    "Setup: one ledger, ledger A (`CONTINUITY_CLAUDE-widget-export.md`), named by the configuration; the harness bound two "
+    "sessions to it through the checkpoint stub, the model's session and a second session that stands for another writer. "
+    "A work turn comes first. After it the harness arms the wrapper with a count of 2: before each of the model's first two "
+    "`update` calls to one section, the wrapper has the second writer update that same section through the stub, so the stub "
+    "itself returns exit 3 to the model. The wrapper changes nothing about the model's arguments, hashes or output, and the "
+    "two second-writer updates are recorded in `wrapper-injection.log`. The /preclear turn follows in the same session; no "
+    "fresh session follows."
+)
+_ROW3A_SETUP_TEXT = (
+    "Setup: one ledger, ledger A, named by the configuration, with the session bound to it through the checkpoint stub. The "
+    "configuration's `executable` names `wrapper/missing-checkpoint`, a file that does not exist; the working wrapper stands "
+    "beside it as `wrapper/checkpoint`. A work turn comes first, then the /preclear turn in the same session; no fresh "
+    "session follows."
+)
+_ROW3B_SETUP_TEXT = (
+    "Setup: one ledger, ledger A, named by the configuration, with the session bound to it through the checkpoint stub. The "
+    "allowlist holds a rule for each of the four read verbs `status`, `show`, `validate` and `lint` of the wrapper, and none "
+    "for `update`, `note` or `handoff`, so the permission gate refuses a write through the helper. A work turn comes first, "
+    "then the /preclear turn in the same session; no fresh session follows."
+)
+_ROW3C_SETUP_TEXT = (
+    "Setup: one ledger, ledger A, named by the configuration, but the session is never bound: the harness makes no binding, "
+    "so the checkpoint state holds no bindings folder, and `fallback_directory` in the configuration is the word none. A "
+    "work turn comes first, then the /preclear turn in the same session; no fresh session follows."
+)
+_ROW4B_SETUP_TEXT = (
+    "Setup: one ledger, ledger A, with the session bound to it through the checkpoint stub. The project holds two "
+    "instruction files: `CLAUDE.md` with the row 1 configuration block, and `CLAUDE.local.md` with a second block that names "
+    "`task: widget-export-v2` and `fallback_directory: none`, so the two blocks name different tasks and fallbacks. A work "
+    "turn comes first, then the /preclear turn in the same session; no fresh session follows."
+)
+
+# The three layouts (plan 04-15; D-13): one core chain each (s1 work turn, s2 /preclear turn, s3 fresh resume), the shared
+# committed /preclear prompt of row 1 read in place, a work-turn prompt that is new text (data/layout-s1-prompts.md, one
+# section per layout, named after a '#' in the prompt path) and the committed frozen fixture copied in place.
+LAYOUT_PROMPTS_FILE = "tests/harness/data/layout-s1-prompts.md"
+_LAYOUT_NOT_EXERCISED = (
+    "The harness does not exercise the identity collision, blocked instruction, freshness edit, tamper or repeat "
+    "/preclear checks of the committed layout run; those stay manual."
+)
+_LAYOUT_PLAIN_SETUP_TEXT = (
+    "Setup: the frozen plain-memory fixture project copied in place: its instruction file, `PLAN.md` and a flat "
+    "`MEMORY.md` index with one topic file. The auto-memory directory is pinned to the `memory` folder inside the project, "
+    "so a memory write lands in the project, which is an approved root and is under watch in every snapshot. No helper "
+    "wrapper, no ledger and no binding. A work turn comes first, then the /preclear turn with the JSON-default correction "
+    "in the same session, then a fresh session that pastes the resume line the /preclear turn printed. The work-turn prompt "
+    "is new text written for this harness, so this run is a new baseline and not a replication of the committed layout "
+    "run. The harness prints counts, names and digests of the project and memory files. " + _LAYOUT_NOT_EXERCISED
+)
+_LAYOUT_HUB_SETUP_TEXT = (
+    "Setup: the frozen hub-memory fixture project copied in place: its instruction file, the plan under `thoughts/plans`, a "
+    "hub-only `MEMORY.md` index, two hub files and the topic files. The auto-memory directory is pinned to the `memory` "
+    "folder inside the project, so a memory write lands in the project, which is an approved root and is under watch in "
+    "every snapshot. No helper wrapper, no ledger and no binding. A work turn comes first, then the /preclear turn with the "
+    "JSON-default correction in the same session, then a fresh session that pastes the resume line the /preclear turn "
+    "printed. The work-turn prompt is new text written for this harness, so this run is a new baseline and not a "
+    "replication of the committed layout run. The harness prints the `MEMORY.md` digest before and after, the memory file "
+    "list and the number of new memory files. " + _LAYOUT_NOT_EXERCISED
+)
+_LAYOUT_BOUND_SETUP_TEXT = (
+    "Setup: the row 1 setup with ledger A only: the configuration names ledger A (`CONTINUITY_CLAUDE-widget-export.md`) and "
+    "the harness bound the session to it through the checkpoint stub; there is no ledger B. The auto-memory directory is "
+    "pinned inside the run root as in row 1. A work turn comes first with the row 1 work-turn prompt, then the /preclear "
+    "turn with the JSON-default correction in the same session, then a fresh session that pastes the resume line the "
+    "/preclear turn printed. After the /preclear turn the harness runs the stub's lint directly and files its text. The "
+    "harness prints whether the ledger digest changed, the number of executed `update` calls in the wrapper log and the "
+    "lint text. " + _LAYOUT_NOT_EXERCISED
+)
+
+
 def _title_of(identifier: str) -> str:
     return identifier.replace("-", " ")
 
@@ -466,6 +589,24 @@ def _registered_rows() -> Dict[str, RowSpec]:
             prompts=_ROW1_PROMPTS,
             setup_text=_ROW1_SETUP_TEXT,
             tools_profile=PROFILE_HELPER,
+        ),
+        ROW2: RowSpec(
+            ROW2,
+            KIND_ROW,
+            "Row 2: two real same-section conflicts (1P)",
+            _HELPER_TWO_STAGES,
+            True,
+            None,
+            _lazy_runner(ROW2),
+            _helper_sources(_PUBLICATION_2),
+            seed="pc_rowseeds:seed_row2",
+            prompts=_helper_prompts(_PUBLICATION_2),
+            setup_text=_ROW2_SETUP_TEXT,
+            tools_profile=PROFILE_HELPER,
+            memory=MEMORY_PINNED,
+            hooks=_ROW2_HOOKS,
+            analyses=(ANALYSIS_WRAPPER_INJECTION,),
+            expected_changes=_ROW2_EXPECTED_CHANGES,
         ),
         ROW4A: RowSpec(
             ROW4A,
@@ -670,12 +811,83 @@ def _registered_rows() -> Dict[str, RowSpec]:
     }
 
 
+def _layout_sources(fixture_project: str) -> Tuple[Tuple[str, str], ...]:
+    return _PLAIN_COMMON_SOURCES + (
+        (fixture_project, "dir"),
+        (_PUBLICATION + "/s2-preclear-prompt.md", "file"),
+        (LAYOUT_PROMPTS_FILE, "file"),
+    )
+
+
+def _registered_layouts() -> Dict[str, RowSpec]:
+    """The implemented layouts by id (plan 04-15): one core chain each, in the shape of a row entry."""
+    layout_s2 = ("s2", _PUBLICATION + "/s2-preclear-prompt.md")
+    return {
+        LAYOUT_PLAIN: RowSpec(
+            LAYOUT_PLAIN,
+            KIND_LAYOUT,
+            "Layout plain-memory: flat memory index kept inside the project (1P + 1R)",
+            _ROW1_STAGES,
+            True,
+            None,
+            _lazy_runner(LAYOUT_PLAIN),
+            _layout_sources("tests/fixtures/plain-memory/project"),
+            seed="pc_rowseeds:seed_layout_plain",
+            prompts=(("s1", LAYOUT_PROMPTS_FILE + "#" + LAYOUT_PLAIN), layout_s2),
+            setup_text=_LAYOUT_PLAIN_SETUP_TEXT,
+            tools_profile=PROFILE_PLAIN,
+            memory=MEMORY_PINNED,
+            chain=CHAIN_RESUME_LINE,
+            analyses=(ANALYSIS_LAYOUT_FACTS,),
+        ),
+        LAYOUT_HUB: RowSpec(
+            LAYOUT_HUB,
+            KIND_LAYOUT,
+            "Layout hub-memory: hub-only memory index kept inside the project (1P + 1R)",
+            _ROW1_STAGES,
+            True,
+            None,
+            _lazy_runner(LAYOUT_HUB),
+            _layout_sources("tests/fixtures/hub-memory/project"),
+            seed="pc_rowseeds:seed_layout_hub",
+            prompts=(("s1", LAYOUT_PROMPTS_FILE + "#" + LAYOUT_HUB), layout_s2),
+            setup_text=_LAYOUT_HUB_SETUP_TEXT,
+            tools_profile=PROFILE_PLAIN,
+            memory=MEMORY_PINNED,
+            chain=CHAIN_RESUME_LINE,
+            analyses=(ANALYSIS_LAYOUT_FACTS,),
+        ),
+        LAYOUT_BOUND: RowSpec(
+            LAYOUT_BOUND,
+            KIND_LAYOUT,
+            "Layout bound-ledger: one ledger bound to the session (1P + 1R)",
+            _ROW1_STAGES,
+            True,
+            None,
+            _lazy_runner(LAYOUT_BOUND),
+            _helper_sources(_PUBLICATION),
+            seed="pc_rowseeds:seed_layout_bound",
+            prompts=_helper_prompts(_PUBLICATION),
+            setup_text=_LAYOUT_BOUND_SETUP_TEXT,
+            tools_profile=PROFILE_HELPER,
+            memory=MEMORY_PINNED,
+            hooks=(("s2", "lint-after-s2"),),
+            chain=CHAIN_RESUME_LINE,
+            analyses=(ANALYSIS_LAYOUT_FACTS,),
+        ),
+    }
+
+
 def build_registry(extra: Optional[Sequence[RowSpec]] = None) -> Tuple[RowSpec, ...]:
     """Return the layouts, then the rows in acceptance order, then any extra rows a test injects."""
     registered = _registered_rows()
+    layouts: Dict[str, RowSpec] = {}  # TASK3-PLACEHOLDER
     entries: List[RowSpec] = []
     for identifier in LAYOUT_IDS:
-        entries.append(RowSpec(identifier, KIND_LAYOUT, _title_of(identifier), (), False, None, None, ()))
+        found_layout = layouts.get(identifier)
+        if found_layout is None:
+            found_layout = RowSpec(identifier, KIND_LAYOUT, _title_of(identifier), (), False, None, None, ())
+        entries.append(found_layout)
     for identifier in ROW_IDS:
         found = registered.get(identifier)
         if found is None:
@@ -701,6 +913,15 @@ def find_entry(registry: Sequence[RowSpec], kind: str, text: Any) -> Optional[Ro
         if entry.kind == kind and entry.row_id == text:
             return entry
     return None
+
+
+def find_runnable(registry: Sequence[RowSpec], text: Any) -> Optional[RowSpec]:
+    """Return the entry, a row or a layout, whose id equals text exactly, else None (never a prefix match).
+
+    A row id and a layout id never coincide, so one exact lookup serves the engine, the filing and --refile for both.
+    """
+    found = find_entry(registry, KIND_ROW, text)
+    return found if found is not None else find_entry(registry, KIND_LAYOUT, text)
 
 
 def worst_case(row: RowSpec) -> Decimal:
