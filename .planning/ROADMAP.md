@@ -152,7 +152,7 @@ Plans:
   4. A new dated evidence folder holds a per-row digest table, the measured cost per row and a label that the run is a new baseline on the pinned model. It also holds the comparer's per-row differences against `tests/evidence/publication-2026-10-20/`, and every file passed the leak gate. Codex's per-row verdicts, from a review in a visible Herdr tab, are recorded in it before any acceptance claim is made. (RERUN-03, RERUN-04)
   5. `tests/harness/README.md` states the prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), the measured cost, the supported platforms and what a pass proves. `tests/acceptance.md` and `CHANGELOG.md` both point to it. (RERUN-05)
 
-**Plans:** 14/21 plans executed
+**Plans:** 15/21 plans executed
 
 Plans:
 **Wave 1**
@@ -198,7 +198,7 @@ Plans:
 - [x] 04-14-PLAN.md — Wave C, paid, on bokiko's word: rows 11 and 12 (HARN-11, RERUN-02)
 
 **Wave 15** *(blocked on Wave 14 completion)*
-- [ ] 04-15-PLAN.md — The helper rows 2, 3a, 3b, 3c and 4b plus the three layouts; every `--list` entry is implemented (RERUN-02)
+- [x] 04-15-PLAN.md — The helper rows 2, 3a, 3b, 3c and 4b plus the three layouts; every `--list` entry is implemented (RERUN-02)
 
 **Wave 16** *(blocked on Wave 15 completion)*
 - [ ] 04-16-PLAN.md — Wave D, paid, on bokiko's word: the three layouts and the helper rows (RERUN-02)
@@ -245,4 +245,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
 | 3. Walking Skeleton (Row 1) | 12/12 | Complete    | 2026-10-29 |
-| 4. Full Matrix, Row 7 and Review | 14/21 | In Progress | - |
+| 4. Full Matrix, Row 7 and Review | 15/21 | In Progress | - |
