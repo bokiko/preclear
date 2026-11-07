@@ -520,5 +520,343 @@ class SessionFactsTests(unittest.TestCase):
         self.assertNotIn("status-names-ledger-a", text)
 
 
+
+# ---------------------------------------------------------------------------------------------
+# Rows 3a, 3b, 3c and 4b (plan 04-15, task 2)
+# ---------------------------------------------------------------------------------------------
+
+ROW3A = "row3a-missing-executable"
+ROW3B = "row3b-denied-helper-write"
+ROW3C = "row3c-unbound-fallback-none"
+ROW4B = "row4b-conflicting-blocks"
+# The committed folder each row's fixture and /preclear prompt come from (3a and 3b read the rerun folders).
+COMMITTED_FOLDER = {
+    ROW2: "row2-double-conflict",
+    ROW3A: "row3a-missing-executable-rerun",
+    ROW3B: "row3b-denied-helper-write-rerun",
+    ROW3C: "row3c-unbound-fallback-none",
+    ROW4B: "row4b-conflicting-blocks",
+}
+HELPER_ROWS = (ROW2, ROW3A, ROW3B, ROW3C, ROW4B)
+ALLOWLIST_SIZE = {ROW2: 40, ROW3A: 40, ROW3B: 37, ROW3C: 40, ROW4B: 40}
+CONFIG_KEYS = ("executable", "project", "ledger", "fallback_directory")
+SHAPED = re.compile(r"(^|[\s(`\"'=])(/[A-Za-z0-9_.-]+/|~/|[A-Za-z]:\\)|@[A-Za-z0-9-]+\.[A-Za-z]|://")
+
+
+def seed_of(row_id: str):
+    return row1()._resolve_seed(spec_of(row_id).seed)
+
+
+class SeededRow(object):
+    """A rig, a fresh run root and the paths the seed of a registered row or layout returns."""
+
+    def __init__(self, row_id: str, name: str = "helper-seed-case") -> None:
+        self.row_id = row_id
+        self.rig = pc_testutil.RowRig(stages=pc_testutil.default_row_stages(spec_of(row_id)))
+        self.ctx = self.rig.context()
+        self.run_root = self.rig.new_run_root(self.ctx, name)
+        self.session = str(uuid.uuid4())
+        self.paths = seed_of(row_id)(
+            self.rig.repo, self.run_root, self.session, self.ctx.harness_home, self.ctx.runs_root, self.ctx.evidence_date, self.ctx.model
+        )
+
+    @property
+    def project(self) -> str:
+        return str(self.paths["project"])
+
+    def record(self) -> dict:
+        return read_json(os.path.join(str(self.paths["raw"]), "run.json"))
+
+    def listing(self, folder: str) -> list:
+        path = os.path.join(self.run_root, *folder.split("/"))
+        return sorted(name for name in os.listdir(path) if not name.startswith(".")) if os.path.isdir(path) else []
+
+
+def differing_lines(seeded: str, fixture: str) -> list:
+    """The line numbers (from 1) at which two texts differ; the texts must have the same number of lines."""
+    first, second = seeded.split("\n"), fixture.split("\n")
+    assert len(first) == len(second), "the seeded and committed files must have the same number of lines"
+    return [number for number, (one, two) in enumerate(zip(first, second), 1) if one != two]
+
+
+def value_of(text: str, key: str) -> str:
+    found = re.search(r"(?m)^\s*%s: (.*)$" % re.escape(key), text)
+    assert found, key
+    return found.group(1)
+
+
+def assert_only_the_four_values_differ(case: unittest.TestCase, seeded: str, fixture: str) -> list:
+    """Every differing line of the seeded file is a line of one of the four configuration keys; return those keys."""
+    keys = []
+    seeded_lines, fixture_lines = seeded.split("\n"), fixture.split("\n")
+    for number in differing_lines(seeded, fixture):
+        stripped = seeded_lines[number - 1].strip()
+        key = stripped.split(":", 1)[0]
+        case.assertIn(key, CONFIG_KEYS, "line %d differs and is not a configuration value" % number)
+        case.assertEqual(fixture_lines[number - 1].strip().split(":", 1)[0], key)
+        keys.append(key)
+    return keys
+
+
+class HelperRowSeedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.seeded = dict((row_id, SeededRow(row_id, "seed-" + row_id.split("-", 1)[0])) for row_id in HELPER_ROWS)
+
+    def committed(self, row_id: str, *parts: str) -> str:
+        return committed(COMMITTED_FOLDER[row_id], *parts)
+
+    def test_every_helper_row_has_one_ledger_the_configured_one_and_a_working_wrapper(self) -> None:
+        for row_id in HELPER_ROWS:
+            seeded = self.seeded[row_id]
+            self.assertEqual(seeded.listing("ckpt/ledgers"), [LEDGER_A_NAME], row_id)
+            self.assertTrue(os.path.isfile(os.path.join(str(seeded.paths["wrapper_dir"]), "checkpoint")), row_id)
+            self.assertEqual(seeded.record()["row"], row_id)
+
+    def test_each_seeded_claude_md_differs_from_its_committed_fixture_only_in_the_four_values(self) -> None:
+        for row_id in HELPER_ROWS:
+            seeded = read_text(os.path.join(self.seeded[row_id].project, "CLAUDE.md"))
+            fixture = read_text(self.committed(row_id, "fixture-CLAUDE.md"))
+            keys = assert_only_the_four_values_differ(self, seeded, fixture)
+            self.assertEqual(sorted(set(keys)), sorted(set(keys)), row_id)
+            self.assertLessEqual(len(keys), 4, row_id)
+            for key in CONFIG_KEYS:
+                self.assertNotIn("<repo>", value_of(seeded, key), row_id + " " + key)
+
+    def test_rows_2_3b_and_4b_are_on_row_1_text_and_3a_and_3c_differ_from_it_in_one_value_each(self) -> None:
+        base = read_bytes(committed("row1-wrong-binding", "fixture-CLAUDE.md"))
+        for row_id in (ROW2, ROW3B, ROW4B):
+            self.assertEqual(read_bytes(self.committed(row_id, "fixture-CLAUDE.md")), base, row_id)
+        for row_id, key in ((ROW3A, "executable"), (ROW3C, "fallback_directory")):
+            text = read_text(self.committed(row_id, "fixture-CLAUDE.md"))
+            keys = assert_only_the_four_values_differ(self, text, base.decode("utf-8"))
+            self.assertEqual(keys, [key], row_id)
+
+    def test_3a_names_an_executable_that_does_not_exist_beside_the_working_wrapper(self) -> None:
+        seeded = self.seeded[ROW3A]
+        text = read_text(os.path.join(seeded.project, "CLAUDE.md"))
+        executable = value_of(text, "executable")
+        self.assertEqual(executable, os.path.join(str(seeded.paths["wrapper_dir"]), "missing-checkpoint"))
+        self.assertFalse(os.path.lexists(executable))
+        self.assertTrue(os.path.isfile(str(seeded.paths["wrapper"])))
+        self.assertEqual(os.path.dirname(executable), str(seeded.paths["wrapper_dir"]))
+        self.assertEqual(seeded.record()["bound_ledger"], "A")
+        self.assertEqual(len(seeded.listing("ckpt/bindings")), 1)
+
+    def test_3c_has_the_word_none_as_fallback_and_no_binding_at_all(self) -> None:
+        seeded = self.seeded[ROW3C]
+        text = read_text(os.path.join(seeded.project, "CLAUDE.md"))
+        self.assertEqual(value_of(text, "fallback_directory"), "none")
+        self.assertEqual(seeded.record()["bound_ledger"], "none")
+        self.assertFalse(os.path.lexists(os.path.join(str(seeded.paths["ckpt"]), "bindings")), "no bindings folder")
+        calls = read_text(os.path.join(str(seeded.paths["wrapper_dir"]), "calls.log"))
+        self.assertEqual(calls, "", "the harness never called the wrapper, and so no bind either")
+        self.assertEqual(value_of(text, "task"), "widget-export")
+
+    def test_4b_adds_a_local_file_that_differs_from_its_committed_fixture_only_in_the_four_values(self) -> None:
+        seeded = self.seeded[ROW4B]
+        local = read_text(os.path.join(seeded.project, "CLAUDE.local.md"))
+        fixture = read_text(self.committed(ROW4B, "fixture-CLAUDE.local.md"))
+        keys = assert_only_the_four_values_differ(self, local, fixture)
+        self.assertLessEqual(len(keys), 3)
+        self.assertEqual(value_of(local, "task"), "widget-export-v2")
+        self.assertEqual(value_of(local, "fallback_directory"), "none")
+        self.assertEqual(value_of(local, "executable"), str(seeded.paths["wrapper"]))
+        self.assertEqual(value_of(local, "ledger"), str(seeded.paths["ledger_a"]))
+        main = read_text(os.path.join(seeded.project, "CLAUDE.md"))
+        self.assertEqual(value_of(main, "task"), "widget-export")
+        self.assertNotEqual(value_of(main, "fallback_directory"), "none")
+        self.assertEqual(seeded.record()["bound_ledger"], "A")
+
+    def test_only_row_4b_has_a_local_file_and_the_local_file_is_committed_with_the_base(self) -> None:
+        for row_id in HELPER_ROWS:
+            exists = os.path.isfile(os.path.join(self.seeded[row_id].project, "CLAUDE.local.md"))
+            self.assertEqual(exists, row_id == ROW4B, row_id)
+        tracked = checks_git(self.seeded[ROW4B].project, "ls-files", "CLAUDE.local.md")
+        self.assertEqual(tracked.strip(), "CLAUDE.local.md")
+
+    def test_only_row_2_has_a_second_writer_and_only_row_2_lists_expected_changes(self) -> None:
+        for row_id in HELPER_ROWS:
+            seeded = self.seeded[row_id]
+            has_writer = os.path.isfile(os.path.join(str(seeded.paths["wrapper_dir"]), "writer2.session"))
+            self.assertEqual(has_writer, row_id == ROW2, row_id)
+            self.assertEqual(seeded.record()["expected_changes"], list(WRAPPER_MADE) if row_id == ROW2 else [], row_id)
+
+    def test_the_committed_row_3_and_4b_prompts_are_the_shared_s2_prompt_read_in_place(self) -> None:
+        shared = read_bytes(committed("row1-wrong-binding", "s2-preclear-prompt.md"))
+        for row_id in HELPER_ROWS:
+            self.assertEqual(read_bytes(self.committed(row_id, "s2-preclear-prompt.md")), shared, row_id)
+            path = dict(spec_of(row_id).prompts)["s2"]
+            self.assertEqual(path, "tests/evidence/publication-2026-10-20/%s/s2-preclear-prompt.md" % COMMITTED_FOLDER[row_id])
+            self.assertEqual(dict(spec_of(row_id).prompts)["s1"], "tests/harness/data/row1-s1-prompt.md")
+
+
+def checks_git(folder: str, *args: str) -> str:
+    import subprocess
+
+    env = pc_testutil.git_env({"PATH": os.pathsep.join(pc_testutil.SYSTEM_DIRS)})
+    done = subprocess.run(["git", "-C", folder] + list(args), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert done.returncode == 0, args
+    return done.stdout.decode("utf-8")
+
+
+class HelperAllowlistTests(unittest.TestCase):
+    def rules(self, row_id: str, wrapper: str = "/run/wrapper/checkpoint") -> tuple:
+        spec = spec_of(row_id)
+        return row1().allowed_tools(spec.tools_profile, wrapper, spec.extra_tools)
+
+    def test_row_3b_has_37_rules_the_baseline_plus_the_four_read_verbs_and_the_others_have_40(self) -> None:
+        import pc_flags
+
+        for row_id, size in ALLOWLIST_SIZE.items():
+            self.assertEqual(len(self.rules(row_id)), size, row_id)
+        wrapper = "/run/wrapper/checkpoint"
+        rules = self.rules(ROW3B, wrapper)
+        self.assertEqual(rules[: len(pc_flags.BASELINE_ALLOWED_TOOLS)], tuple(pc_flags.BASELINE_ALLOWED_TOOLS))
+        self.assertEqual(
+            rules[len(pc_flags.BASELINE_ALLOWED_TOOLS):],
+            tuple("Bash(%s %s:*)" % (wrapper, verb) for verb in ("status", "show", "validate", "lint")),
+        )
+        for verb in ("update", "note", "handoff"):
+            self.assertFalse([rule for rule in rules if rule.startswith("Bash(%s %s" % (wrapper, verb))], verb)
+
+    def test_every_helper_profile_row_lists_wrapper_rules_by_verb_and_never_a_bare_prefix_or_a_driver_verb(self) -> None:
+        import pc_flags
+
+        wrapper = "/run/wrapper/checkpoint"
+        for row_id in (ROW1, ROW2, ROW3A, ROW3B, ROW3C, "row4a-unknown-backend", ROW4B):
+            own = [rule for rule in self.rules(row_id, wrapper) if wrapper in rule]
+            self.assertTrue(own, row_id)
+            for rule in own:
+                found = re.match(r"Bash\(%s ([a-z]+):\*\)\Z" % re.escape(wrapper), rule)
+                self.assertIsNotNone(found, row_id + " a wrapper rule is not by verb: " + rule)
+                self.assertIn(found.group(1), pc_flags.MODEL_FACING_WRAPPER_VERBS)
+                self.assertNotIn(found.group(1), pc_flags.DRIVER_ONLY_VERBS)
+            self.assertNotIn("Bash(%s:*)" % wrapper, self.rules(row_id, wrapper), row_id)
+
+    def test_the_profile_words_agree_between_the_registry_and_the_flag_builder(self) -> None:
+        import pc_flags
+
+        pc_rows = rows()
+        self.assertEqual(pc_rows.PROFILE_HELPER_READ, pc_flags.PROFILE_HELPER_READ)
+        self.assertEqual(spec_of(ROW3B).tools_profile, pc_rows.PROFILE_HELPER_READ)
+        for row_id in (ROW2, ROW3A, ROW3C, ROW4B):
+            self.assertEqual(spec_of(row_id).tools_profile, pc_rows.PROFILE_HELPER)
+        with self.assertRaises(ValueError):
+            pc_flags.build_row_tools("helper-write", "/run/wrapper/checkpoint")
+
+    def test_the_read_profile_takes_extra_rules_like_the_others_and_refuses_a_repeat(self) -> None:
+        import pc_flags
+
+        wrapper = "/run/wrapper/checkpoint"
+        plus = pc_flags.build_row_tools(pc_flags.PROFILE_HELPER_READ, wrapper, ("Bash(touch:*)",))
+        self.assertEqual(len(plus), 38)
+        with self.assertRaises(ValueError):
+            pc_flags.build_row_tools(pc_flags.PROFILE_HELPER_READ, wrapper, ("Bash(touch:*)", "Bash(touch:*)"))
+        self.assertEqual(len(pc_flags.build_row_tools(pc_flags.PROFILE_HELPER_READ, wrapper)), 37)
+
+    def test_the_dry_runs_print_two_stages_one_session_and_the_right_allowlist_size_and_start_nothing(self) -> None:
+        for row_id in (ROW3A, ROW3B, ROW3C, ROW4B):
+            code, text, tripwire, base = dry_run("--row", row_id)
+            self.assertEqual(code, 0, text)
+            self.assertIn("%s: 2 stages, 1 sessions" % row_id, text)
+            self.assertIn("allowlist %d rules" % ALLOWLIST_SIZE[row_id], text)
+            self.assertIn("s1: work turn, new session, 15 turns, cap 0.30", text)
+            self.assertIn("s2: /preclear turn, resumes the s1 session, 60 turns, cap 1.30", text)
+            self.assertIn("worst case 1.60 USD", text)
+            self.assertEqual(tripwire, [], row_id)
+            self.assertFalse(os.path.exists(os.path.join(base, "hh")), row_id)
+
+
+class HelperRegistryTests(unittest.TestCase):
+    def test_every_helper_row_is_registered_with_two_stages_memory_pinned_and_a_harness_worded_setup(self) -> None:
+        pattern = evidence().verdict_pattern()
+        for row_id in HELPER_ROWS:
+            spec = spec_of(row_id)
+            self.assertTrue(spec.implemented, row_id)
+            self.assertEqual([stage.name for stage in spec.stages], ["s1", "s2"], row_id)
+            self.assertEqual(spec.memory, rows().MEMORY_PINNED, row_id)
+            self.assertEqual(spec.chain, rows().CHAIN_RESUME_LINE, row_id)
+            self.assertTrue(spec.setup_text.startswith("Setup: "), row_id)
+            self.assertTrue(spec.setup_text.isascii(), row_id)
+            self.assertIsNone(SHAPED.search(spec.setup_text), row_id)
+            self.assertEqual(pattern.findall(spec.setup_text), [], row_id)
+            self.assertEqual(spec.seed, "pc_rowseeds:seed_" + row_id.split("-", 1)[0], row_id)
+            for relative, kind in spec.sources:
+                full = os.path.join(ROOT, *relative.split("/"))
+                self.assertTrue(os.path.isdir(full) if kind == "dir" else os.path.isfile(full), relative)
+            if row_id != ROW2:
+                self.assertEqual((spec.hooks, spec.analyses, spec.expected_changes), ((), (), ()), row_id)
+
+    def test_the_local_fixture_of_row_4b_is_a_source_and_no_other_row_names_one(self) -> None:
+        for row_id in HELPER_ROWS:
+            named = [relative for relative, _kind in spec_of(row_id).sources if relative.endswith("fixture-CLAUDE.local.md")]
+            self.assertEqual(len(named), 1 if row_id == ROW4B else 0, row_id)
+
+    def test_list_marks_the_five_helper_rows_implemented_with_two_stages_and_one_session(self) -> None:
+        lines = matrix().list_lines(rows().build_registry())
+        cells = dict((line.split()[1], line.split()) for line in lines[1:])
+        for row_id in HELPER_ROWS:
+            self.assertEqual(cells[row_id][2:], ["2", "1", "yes"], row_id)
+
+    def test_the_setup_texts_state_each_committed_difference(self) -> None:
+        self.assertIn("missing-checkpoint", spec_of(ROW3A).setup_text)
+        self.assertIn("update", spec_of(ROW3B).setup_text)
+        self.assertIn("never bound", spec_of(ROW3C).setup_text)
+        self.assertIn("CLAUDE.local.md", spec_of(ROW4B).setup_text)
+        self.assertIn("second session", spec_of(ROW2).setup_text)
+
+
+class HelperChainTests(unittest.TestCase):
+    """A scripted two-stage chain of each of the four rows runs through the engine and files its folder."""
+
+    def chain(self, row_id: str) -> Registered:
+        run = Registered(row_id)
+        self.assertEqual(run.outcome.code, pc_exitcodes.OK, "\n".join(run.outcome.lines))
+        return run
+
+    def test_each_row_is_filed_with_its_readme_checks_and_the_pending_verdict_line(self) -> None:
+        for row_id in (ROW3A, ROW3B, ROW3C, ROW4B):
+            run = self.chain(row_id)
+            names = tree_names(run.row_dir)
+            for name in ("README.md", "mechanical-checks.md", "tools.txt", "wrapper-calls.log", "s1.exit", "s2-preclear.exit"):
+                self.assertIn(name, names, row_id + " " + name)
+            self.assertNotIn("wrapper-injection.log", names, row_id)
+            readme = read_text(os.path.join(run.row_dir, "README.md"))
+            self.assertTrue(readme.rstrip("\n").endswith("Reviewer verdict: PENDING"), row_id)
+            self.assertIn(spec_of(row_id).setup_text, readme, row_id)
+
+    def test_the_filed_allowlist_has_the_row_size_and_row_3b_names_only_the_read_verbs(self) -> None:
+        for row_id in (ROW3A, ROW3B, ROW3C, ROW4B):
+            run = self.chain(row_id)
+            rules = read_text(os.path.join(run.row_dir, "tools.txt")).strip().split(",")
+            self.assertEqual(len(rules), ALLOWLIST_SIZE[row_id], row_id)
+            wrapper_rules = [rule for rule in rules if "/wrapper/checkpoint " in rule]
+            verbs = sorted(re.findall(r"checkpoint ([a-z]+):\*\)", "\n".join(wrapper_rules)))
+            if row_id == ROW3B:
+                self.assertEqual(verbs, ["lint", "show", "status", "validate"])
+            else:
+                self.assertEqual(verbs, ["handoff", "lint", "note", "show", "status", "update", "validate"], row_id)
+
+    def test_the_run_records_name_the_binding_and_the_status_question_follows_it(self) -> None:
+        expected = {ROW3A: ("A", "status-names-ledger-a"), ROW3B: ("A", "status-names-ledger-a"),
+                    ROW3C: ("none", "status-names-ledger-b"), ROW4B: ("A", "status-names-ledger-a")}
+        for row_id, (bound, key) in expected.items():
+            run = self.chain(row_id)
+            self.assertEqual(read_json(run.raw("run.json"))["bound_ledger"], bound, row_id)
+            text = read_text(os.path.join(run.row_dir, "mechanical-checks.md"))
+            self.assertIn(key + ": ", text, row_id)
+            if row_id == ROW3C:
+                self.assertIn("status-names-ledger-b: UNCONFIRMED", text)
+            else:
+                self.assertIn("status-names-ledger-a: yes", text, row_id)
+
+    def test_a_row_without_a_binding_has_no_bindings_folder_after_the_chain(self) -> None:
+        run = self.chain(ROW3C)
+        self.assertFalse(os.path.lexists(os.path.join(run.run_root, "ckpt", "bindings")), "nothing bound a session")
+        self.assertEqual(read_json(run.raw("run.json"))["expected_changes"], [])
+
+
+
 if __name__ == "__main__":
     unittest.main()

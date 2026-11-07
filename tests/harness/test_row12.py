@@ -232,7 +232,7 @@ class Row12RegistryTests(unittest.TestCase):
         self.assertEqual(cells[ROW11][2:], ["3", "2", "yes"])
 
     def test_dry_run_all_total_is_the_sum_of_the_worst_cases_and_each_entry_fits_the_row_cap_and_the_invocation_budget(self) -> None:
-        # Plan 04-15 adds row 2: 13 entries at 24.40 became 14 at 26.00. The sum of the worst cases is no longer under the
+        # Plan 04-15 adds row 2 and rows 3a, 3b, 3c and 4b at 1.60 each: 13 entries at 24.40 became 18 at 32.40. The sum of the worst cases is no longer under the
         # 25.00 invocation ceiling (pc_flags.INVOCATION_BUDGET_MAX); that ceiling is not raised. The driver does not refuse a
         # plan whose sum is above the budget: it stops before the row whose worst case would take the settled spend above it.
         import pc_flags
@@ -240,8 +240,8 @@ class Row12RegistryTests(unittest.TestCase):
         pc_rows = rows()
         implemented = [entry for entry in pc_rows.build_registry() if entry.implemented]
         total = sum((pc_rows.worst_case(entry) for entry in implemented), Decimal("0"))
-        self.assertEqual(total, Decimal("26.00"))
-        self.assertEqual(len(implemented), 14)
+        self.assertEqual(total, Decimal("32.40"))
+        self.assertEqual(len(implemented), 18)
         self.assertEqual(Decimal(pc_flags.format_invocation_budget("25.00")), Decimal("25.00"), "the ceiling is unchanged")
         for entry in implemented:
             self.assertLessEqual(pc_rows.worst_case(entry), pc_rows.ROW_CAP, entry.row_id)

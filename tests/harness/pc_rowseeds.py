@@ -21,6 +21,10 @@ seeds that call it:
                      or worktree (the repository in main-checkout, the project a linked worktree on a
                      feature branch); seed_row8a, seed_row8b, seed_row8c, seed_row9 call it with the committed fixtures
 
+  * seed_row2, seed_row3a, seed_row3b, seed_row3c, seed_row4b   the helper rows of plan 04-15: seed_helper_row with the committed
+                     difference of each (a second bound writer, a missing executable, row 1's configuration with one
+                     bound ledger, no binding and fallback none, a local instruction file)
+
   * seed_row11       the plain setup with a base commit that holds another task's notes file, plus the git wrapper
                      installed in ckpt/gitwrap with its configuration files and raw/gitwrap-digests.json (plan 04-12)
 
