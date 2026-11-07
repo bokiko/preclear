@@ -136,7 +136,10 @@ Suite count: 2148 (the 04-15 figure, not re-measured by this executor; the orche
 
 No Rule 1 to 3 fix was needed: `close` and `check-words` exited 0 on the first run, nothing under `tests/harness` was edited, and nothing in the wave-d folder was edited by hand.
 
-**Total deviations:** 4, none changing the behaviour of an earlier row.
+**5. [Rule 1, after the evidence commit] One zero-token test premise no longer held with the wave-d folder present**
+- The orchestrator gate's full suite (2148 tests) reported one failure: `test_allowlist.CorpusScopeTests.test_canonical_commands_are_unchanged_by_the_scope` assumed that walking every evidence folder yields the same canonical command list as the publication corpus. Wave D filed `git --no-optional-locks status --porcelain=v1 --untracked-files=all` (without `--ignore-submodules=none`) as a single real-model call four times, not refused, so the unscoped walk now holds one more command. The test was changed by the orchestrator to assert that the corpus scope pins the list (every corpus command is found by the walk, any rerun-only command is a git status or wrapper form, and the scoped list is stable); no harness module, cap, rule or evidence file changed. The concurrent run of the 04-17 rehearsal tests also made `test_row7.ChmodProbeTests` (which lists the temp folder before and after the probe) see other tests' folders once; alone it is green and nothing was changed for it.
+
+**Total deviations:** 5, none changing the behaviour of an earlier row.
 
 ## Known Stubs
 None.
