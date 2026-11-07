@@ -941,7 +941,7 @@ def _registered_layouts() -> Dict[str, RowSpec]:
 def build_registry(extra: Optional[Sequence[RowSpec]] = None) -> Tuple[RowSpec, ...]:
     """Return the layouts, then the rows in acceptance order, then any extra rows a test injects."""
     registered = _registered_rows()
-    layouts: Dict[str, RowSpec] = {}  # TASK3-PLACEHOLDER
+    layouts = _registered_layouts()
     entries: List[RowSpec] = []
     for identifier in LAYOUT_IDS:
         found_layout = layouts.get(identifier)

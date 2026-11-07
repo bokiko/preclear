@@ -328,7 +328,7 @@ class SelectionTests(unittest.TestCase):
         self.refused([])
         self.refused(["--list", "--all"])
         self.refused(["--row", "row1-wrong-binding", "--all"])
-        self.refused(["--row", "row1-wrong-binding", "--layout", "plain-memory"])
+        self.refused(["--layout", "plain-memory", "--all"])  # a row and a layout may be combined (plan 04-15), --all may not
         self.refused(["--dry-run", "--list"])
         self.refused(["--dry-run"])
         self.refused(["--bogus-option"])

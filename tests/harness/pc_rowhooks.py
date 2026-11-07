@@ -397,8 +397,9 @@ def lint_after_s2(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) -> No
 
     The interpreter and the stub are the two paths the seed wrote beside the wrapper, read after checking that they are
     regular files; the call is made as the seed makes its lint-before call, with the checkpoint state folder as CKPT_HOME,
-    in the project, with no input, a short time limit and the output capped. The file holds the output text and, when lint
-    exits non-zero, one more line naming the exit code. A lint that cannot be run is written as the fixed line `lint did not
+    in the project, with no input, a short time limit and the output capped. The file holds the standard output text (as the
+    committed lint-after-s2.txt does; the stub's brand line goes to standard error and is left out) and, when lint exits
+    non-zero, one more line naming the exit code. A lint that cannot be run is written as the fixed line `lint did not
     run`; the hook never stops a row for what lint says.
     """
     folder = _wrapper_folder_of(paths)
@@ -417,7 +418,7 @@ def lint_after_s2(ctx: Any, paths: Mapping[str, Optional[str]], spec: Any) -> No
                 cwd=str(paths["project"]),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.DEVNULL,
                 timeout=LINT_TIMEOUT_SECONDS,
                 shell=False,
             )

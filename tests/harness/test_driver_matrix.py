@@ -52,7 +52,7 @@ def fixed_clock():
 
 def spec_of(row_id: str):
     pc_rows = rows()
-    entry = pc_rows.find_entry(pc_rows.build_registry(), pc_rows.KIND_ROW, row_id)
+    entry = pc_rows.find_runnable(pc_rows.build_registry(), row_id)  # a row or a layout (plan 04-15)
     assert entry is not None, row_id
     return entry
 
@@ -105,9 +105,9 @@ def rig_for(*row_ids, repeat=1):
 
 
 def implemented_ids() -> list:
-    """The ids of every implemented row in registry order: what --all runs."""
+    """The ids of every implemented entry in registry order, the layouts first: what --all runs (plan 04-15)."""
     pc_rows = rows()
-    return [e.row_id for e in pc_rows.build_registry() if e.kind == pc_rows.KIND_ROW and e.implemented]
+    return [e.row_id for e in pc_rows.build_registry() if e.implemented]
 
 
 def ledger_of(rig):

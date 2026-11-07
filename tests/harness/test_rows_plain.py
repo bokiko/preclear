@@ -914,7 +914,8 @@ class Row6RegistryTests(unittest.TestCase):
         self.assertEqual(built.hooks, ())
         named = [entry.row_id for entry in pc_rows.build_registry() if entry.hooks]
         # row 7 names the project-folder hook (plan 04-06); row 12 names the plan-note hook (plan 04-13); row 2 the arm hook (04-15)
-        self.assertEqual(named, ["row2-double-conflict", ROW6, "row7-all-destinations-denied", "row12-frozen-handoff"])
+        # the bound-ledger layout names the lint hook (plan 04-15)
+        self.assertEqual(named, ["bound-ledger", "row2-double-conflict", ROW6, "row7-all-destinations-denied", "row12-frozen-handoff"])
 
     def test_row6_every_hook_of_the_registry_is_known_names_a_stage_of_its_row_and_has_a_snapshot_and_a_finalizer(self) -> None:
         hooks = rowhooks()
@@ -923,6 +924,10 @@ class Row6RegistryTests(unittest.TestCase):
             for stage_name, hook in entry.hooks:
                 self.assertIn(stage_name, stage_names)
                 self.assertIn(hook, hooks.HOOKS)
+                if hook in hooks.NO_BOUNDARY:  # the lint hook takes no snapshot and names no target (plan 04-15)
+                    self.assertIn(hook, hooks.NO_FINALIZER)
+                    self.assertNotIn(hook, hooks.FINALIZER_OF)
+                    continue
                 self.assertIn(hook, hooks.HOOK_SNAPSHOTS)
                 if hook in hooks.NO_FINALIZER:  # a hook that appends content has nothing to restore (plan 04-13)
                     self.assertNotIn(hook, hooks.FINALIZER_OF)

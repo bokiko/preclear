@@ -508,6 +508,8 @@ class ScriptedChainTests(unittest.TestCase):
                 self.assertEqual(entry.analyses, ("frozen-copy",))
             elif entry.row_id == "row2-double-conflict":
                 self.assertEqual(entry.analyses, ("wrapper-injection",))
+            elif entry.kind == pc_rows.KIND_LAYOUT:
+                self.assertEqual(entry.analyses, ("layout-facts",))
             elif entry.row_id != ROW7:
                 self.assertEqual(entry.analyses, (), entry.row_id)
         built = pc_rows.RowSpec("row0-x", "row", "x", (), False, None, None, ())
@@ -1064,7 +1066,7 @@ class StatusFormTests(unittest.TestCase):
         self.assertIn("status-form", review().ANALYSES)
         self.assertEqual(review().STATUS_FORM_SECTION, "Row 10 status form")
         for entry in pc_rows.build_registry():
-            if entry.row_id not in (ROW7, "row10-large-status", "row11-concurrent-change", "row12-frozen-handoff", "row2-double-conflict"):
+            if entry.row_id not in (ROW7, "row10-large-status", "row11-concurrent-change", "row12-frozen-handoff", "row2-double-conflict") and entry.kind == pc_rows.KIND_ROW:
                 self.assertEqual(entry.analyses, (), entry.row_id)
 
 

@@ -458,6 +458,38 @@ in every snapshot that holds it, as yes or no. It reads filed snapshot files onl
 was frozen correctly; whether the real model's refresh keeps the frozen copy as it is, whether the fourth stage's cap and
 turn limit are enough, and what the model does when the plan changed under it are unobserved until a paid run.
 
+The helper rows 2, 3a, 3b, 3c and 4b use row 1's stub setup with one ledger, the configured one, and the committed
+difference of each row: row 2 binds a second session as another writer, row 3a names an executable that does not exist
+beside the working wrapper, row 3b has an allowlist with the four read verbs of the wrapper only (the read-only
+profile, 37 rules, no rule for `update`, `note` or `handoff`), row 3c binds no session and has `none` as its fallback
+directory, and row 4b adds a `CLAUDE.local.md` with a second configuration block. Each seeded `CLAUDE.md` differs from the
+committed fixture only in the values of the four configuration keys. Row 2 runs two stages, and the hook
+`arm-wrapper-conflict` writes the count 2 into `wrapper/armed` after the work turn, so the wrapper has the second writer
+change the model's first section before each of its first two `update` calls and the stub itself returns a genuine exit 3.
+The wrapper creates five files beside itself while armed (`armed`, `target-section`, `injection.log`, `writer2-body-1.md`
+and `writer2-body-2.md`); the seed records exactly those names as expected changes in `raw/run.json`, the write-boundary
+check skips them by exact name and no other name under `wrapper/`, so a model write to any other name there is still a
+write outside the approved roots. The wrapper's injection log is filed as `wrapper-injection.log`. The status questions of
+the session facts name the ledger the session is bound to: `status-names-ledger-a` for a row bound to ledger A,
+`status-names-ledger-b` as before for row 1, and the old key with UNCONFIRMED for a row with no binding. How the real model
+behaves under the injected conflicts, a missing executable, a denied helper write and conflicting blocks is unobserved
+until a paid run.
+
+The three layouts (`plain-memory`, `hub-memory` and `bound-ledger`) run one core chain each: a work turn, the `/preclear`
+turn in the same session and a fresh resume from the printed resume line. The two memory layouts copy the frozen fixture
+project in place (instruction file, plan and every memory file, byte for byte), make one commit, and pin the auto-memory
+directory to the `memory` folder inside the project, so a memory write lands in the project, which is under watch in every
+snapshot; the seed records that place in `raw/run.json` and the checks and `--refile` read it from there. They have no
+helper, no wrapper and the 33-rule baseline allowlist. `bound-ledger` is row 1's seed with ledger A only, bound to the
+session, and the harness runs the stub's lint itself after the `/preclear` turn and files its text as `lint-after-s2.txt`.
+The work-turn prompts of the two memory layouts are new text in `data/layout-s1-prompts.md` (the committed layout runs did
+not keep theirs), so these runs are a new baseline and not a replication. The `Layout facts` section prints counts, names
+and digests only: the files created under the project and the memory folder, the hub-style files among them, the memory
+file list with digests before and after and the `MEMORY.md` digest for the memory layouts, and the ledger digest change,
+the number of `update` calls in the wrapper log and the lint text for `bound-ledger`. The identity collision, blocked
+instruction, freshness edit, tamper and repeat `/preclear` checks of the committed layout runs are not exercised by the
+harness and stay manual.
+
 Which boundaries a row takes is recorded, not assumed: `raw/boundaries.json` is created at setup, before the setup
 guard, and lists the planned boundaries in order (setup, each stage, each hook boundary) with their snapshot names.
 The checks read the snapshots, stage records, git states and guards through that list. The boundaries on disk must be
@@ -887,9 +919,9 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_promote.py` - gate-first, exclusive-creation copy of a stage into the evidence folder
 - `pc_rows.py` - the row and layout registry: ids in acceptance order, stages, caps, records
 - `pc_row1.py` - row 1 and the engine every row runs through: the seed, the snapshots, the stage chain (resume line or printed checkpoint), the probe call and the init and instruction-audit assertions
-- `pc_rowhooks.py` - the between-stage hooks and their finalizers (the plan-file and project-folder restrictions, and the row 12 plan-note append), the live chmod probe, the boundary plan of a row and the mode-only `perms.txt`
-- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups, the git shapes and the row 8a to 10 setups, and the row 11 and row 12 setups
-- `pc_review.py` - the Do-not-redo review: the entries of a printed checkpoint, the mechanical candidates for each, the row 7 facts, the candidate file and the side-by-side review table; the row 10 status-form counts, the join of git wrapper log lines to tool_use ids and the row 12 frozen-copy digests across the filed snapshots
+- `pc_rowhooks.py` - the between-stage hooks and their finalizers (the plan-file and project-folder restrictions, the row 12 plan-note append, the row 2 wrapper arming and the bound-ledger lint text), the live chmod probe, the boundary plan of a row and the mode-only `perms.txt`
+- `pc_rowseeds.py` - the seeds of registered rows: the parameterised helper-backed seed, the row 1 and row 4a setups, the plain-row seed and the row 5a to 7 setups, the git shapes and the row 8a to 10 setups, the row 11 and row 12 setups, the helper rows 2 to 4b and the three layouts
+- `pc_review.py` - the Do-not-redo review: the entries of a printed checkpoint, the mechanical candidates for each, the row 7 facts, the candidate file and the side-by-side review table; the row 10 status-form counts, the join of git wrapper log lines to tool_use ids the row 12 frozen-copy digests across the filed snapshots, the row 2 injection log and the layout facts
 - `pc_runroot.py` - exclusive run-root allocation and exclusive file creation
 - `pc_spend.py` - the matrix spend ledger: file-locked reservation, retry authorization, per-call delta cost
 - `pc_sanitize.py` - runtime-built deny-list sanitizer
@@ -929,7 +961,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_row7.py` - tests for row 7: the live chmod probe and the SKIPPED label, the 555 restriction and its restore, the printed-checkpoint chain and its fence scanner, including the committed replies
 - `test_rows_git.py` - tests for the git-shaped rows 8a, 8b, 8c, 9 and 10: the git shape seeds and their byte-tie, the no-git and worktree git states, the main-checkout exclusion, the row 10 hostile tree and status form, the static allowlist scan and a scripted chain of each
 - `test_git_wrapper.py` - tests for the row 11 git wrapper (transparency, exact argument lists, ordinal and race, no-op session, safety) and for row 11 on the scripted claude
-- `test_rows_helper.py` - tests for the helper-backed rows 2, 3a, 3b, 3c and 4b: the row 2 double conflict through the real wrapper and stub, the expected-change names, the arm hook, the bound-ledger status questions, the seeds and their byte-tie, the allowlists and a scripted chain of each
+- `test_rows_helper.py` - tests for the helper-backed rows 2, 3a, 3b, 3c and 4b and the three layouts: the row 2 double conflict through the real wrapper and stub, the expected-change names, the arm and lint hooks, the bound-ledger status questions, the seeds and their byte-tie, the allowlists, the layout prompts and facts and a scripted chain of each
 - `test_row12.py` - tests for row 12 (frozen handoff): the seed byte-tie, the plan-note hook and its safety, the four-stage chain with s4 resuming the third session, and the ledger bound on the fourth stage
 - `test_review.py` - tests for the Do-not-redo review: the entry parser, the token and candidate rules, the row 7 facts, the candidate file, the review table, hostile text and the caps
 - `test_runroot.py` - tests for run roots
@@ -954,6 +986,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `data/row1-plan.md` - the row 1 plan text, whose digest equals the committed setup digest
 - `data/plain-plan.md` - the plan text of every plain row, whose digest equals the committed setup digest of rows 5a and 5b
 - `data/plain-s1-prompt.md` - the plain work-turn prompt: the row 1 prompt with the ledger clause replaced
+- `data/layout-s1-prompts.md` - the work-turn prompts of the plain-memory and hub-memory layouts, one section each, pinned by digest
 
 ## Limits
 
