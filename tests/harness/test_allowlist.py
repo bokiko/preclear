@@ -363,7 +363,16 @@ class CorpusScopeTests(unittest.TestCase):
             walked = pa.canonical_commands(ROOT)
         finally:
             pa.load_trace_calls = original
-        self.assertEqual(walked, scoped, "the canonical command list is the same with or without the scope")
+        # The scope is what pins the list: a rerun folder holds real-model calls the publication corpus never
+        # made (wave D filed `git --no-optional-locks status --porcelain=v1 --untracked-files=all` as a single
+        # call four times), so the unscoped walk may add commands but never drops one of the corpus commands.
+        self.assertTrue(set(scoped) <= set(walked), "every corpus command is found by the unscoped walk")
+        for extra in sorted(set(walked) - set(scoped)):
+            self.assertTrue(
+                extra.startswith(pa.GIT_STATUS_GLOBAL + " ") or extra.startswith(pa.WRAPPER_TOKEN + " "),
+                "a rerun-only command is a git status or wrapper form: " + extra,
+            )
+        self.assertEqual(scoped, pa.canonical_commands(ROOT), "the scoped list is stable across calls")
         self.assertTrue(scoped, "the list is not empty")
 
 
