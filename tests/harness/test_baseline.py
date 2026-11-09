@@ -818,5 +818,416 @@ class CheckWordsTests(unittest.TestCase):
         self.assertEqual(tree_snapshot(folder), before)
 
 
+FACTS_NAME = "clone-facts.json"
+FINAL_NAMES = ["README.md", "comparison-vs-publication-2026-10-20.txt", "digest-table.md", "review-brief.md", "usage-by-row.txt"]
+FACTS_LINE = "REFUSED: the clone-facts file does not match its schema; nothing was filed"
+HEAD40 = "0123456789abcdef0123456789abcdef01234567"
+
+
+def good_facts(**changes):
+    facts = {
+        "env_names": ["HOME", "PATH", "TERM"],
+        "path_checkpoint_binaries": 0,
+        "helper_files_in_clone": 1,
+        "helper_calls": 7,
+        "helper_calls_stub": 6,
+        "helper_calls_other": 1,
+        "clone_head": HEAD40,
+        "source_kind": "url",
+        "home_kind": "throwaway",
+    }
+    facts.update(changes)
+    return facts
+
+
+def write_facts(rig, facts=None, raw=None, name=FACTS_NAME):
+    """The clone-facts file in the scratch base, outside the repository; raw text wins over the dict."""
+    path = os.path.join(rig.base, name)
+    text = raw if raw is not None else json.dumps(good_facts() if facts is None else facts)
+    with open(path, "xb") as handle:
+        handle.write(text.encode("utf-8"))
+    return path
+
+
+def unquoted(text):
+    return [line for line in text.splitlines() if not line.startswith("> ")]
+
+
+class FinalizeTests(unittest.TestCase):
+    """finalize files the baseline form of a dated folder through promote_into (plan 04-18, Task 1)."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+
+    def finalize(self, *extra):
+        return run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative()] + list(extra))
+
+    def test_finalize_files_the_five_top_level_files_with_the_baseline_label_and_the_row_counts(self) -> None:
+        before = tree_snapshot(self.w.dated)
+        code, out, err = self.finalize()
+        self.assertEqual(code, 0, out + err)
+        after = tree_snapshot(self.w.dated)
+        self.assertEqual(sorted(set(after) - set(before)), FINAL_NAMES)
+        for name, data in before.items():
+            self.assertEqual(after[name], data, name + " is untouched")
+        self.assertIn("finalized: %s, 5 file(s)" % DATED, out)
+        self.assertNotIn(self.w.rig.base, out + err)
+        readme = self.w.read("README.md")
+        self.assertTrue(readme.startswith("# %s\n" % DATED))
+        self.assertIn("new baseline on the pinned model and the Claude Code build its rows record (model claude-sonnet-5-5, Claude Code 2.1.310)", readme)
+        self.assertIn("not a replication of the committed publication folder", readme)
+        self.assertIn("Row folders present when this file was written: 4 (2 filed, 1 STOPPED, 1 SKIPPED, 0 unrecognised).", readme)
+        self.assertIn("Entries by outcome, the latest attempt of each: 1 filed, 0 STOPPED, 1 SKIPPED.", readme)
+        self.assertNotIn("Reviewer verdict", readme, "the folder README holds no reviewer line")
+        self.assertNotIn("Clean-clone run facts", readme, "no facts without a clone-facts file")
+        self.assertNotIn("environment-names.txt", sorted(after))
+        self.assertEqual(self.w.read("digest-table.md").splitlines()[0], "# Digest table, part 1")
+
+    def test_the_closing_line_of_each_row_readme_is_left_alone_and_the_folder_has_no_verdict_line(self) -> None:
+        self.assertEqual(self.finalize()[0], 0)
+        for name in sorted(os.listdir(self.w.dated)):
+            path = os.path.join(self.w.dated, name)
+            if os.path.isdir(path):
+                self.assertTrue(read_text(os.path.join(path, "README.md")).endswith("\n" + VERDICT_LINE + "\n"), name)
+
+    def test_with_clone_facts_the_readme_states_them_and_the_names_file_lists_the_names_one_per_line(self) -> None:
+        path = write_facts(self.w.rig)
+        code, out, err = self.finalize("--clone-facts", path)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("finalized: %s, 6 file(s)" % DATED, out)
+        self.assertEqual(self.w.read("environment-names.txt"), "HOME\nPATH\nTERM\n")
+        readme = self.w.read("README.md")
+        self.assertIn("environment variable names the run was started with (3, also in `environment-names.txt`): HOME, PATH, TERM", readme)
+        self.assertIn("before the run: 0 checkpoint binaries on the search path of the child, 1 helper files in the clone", readme)
+        self.assertIn("after the run: 7 helper calls, 6 to the stub, 1 to anything else", readme)
+        self.assertIn("clone head: " + HEAD40, readme)
+        self.assertIn("source of the clone: the public address", readme)
+        self.assertIn("home folder of the child: a throwaway folder", readme)
+        self.assertNotIn(self.w.rig.base, readme)
+
+    def test_the_other_source_and_home_kinds_read_as_a_local_path_and_the_real_home_folder(self) -> None:
+        path = write_facts(self.w.rig, good_facts(source_kind="local", home_kind="real", env_names=[]))
+        self.assertEqual(self.finalize("--clone-facts", path)[0], 0)
+        readme = self.w.read("README.md")
+        self.assertIn("source of the clone: a local path", readme)
+        self.assertIn("home folder of the child: the real home folder", readme)
+        self.assertIn("(0, also in `environment-names.txt`): none", readme)
+
+    def test_every_entry_present_reads_complete_and_a_missing_entry_reads_partial_with_a_not_run_line(self) -> None:
+        import pc_rows as rows_module
+
+        folder = self.w.dated
+        done = baseline().finalize_folder(folder, self.w.rig.repo, dict(self.w.rig.env), fixed_clock, io.StringIO(), io.StringIO(),
+                                          entries=[ROW1, ROW4A])
+        self.assertEqual(done, 0)
+        readme = self.w.read("README.md")
+        self.assertIn("\nRun state: complete\n", readme)
+        self.assertIn("Entries with an outcome folder: 2 of 2", readme)
+        self.assertNotIn("Not run:", readme)
+        self.assertNotIn("partial baseline", readme)
+        other = fresh_copy_of_world()
+        out = io.StringIO()
+        code = baseline().finalize_folder(other.dated, other.rig.repo, dict(other.rig.env), fixed_clock, out, io.StringIO(),
+                                          entries=[ROW1, ROW4A, "row2-double-conflict"])
+        self.assertEqual(code, 0)
+        readme = other.read("README.md")
+        self.assertIn("\nRun state: partial\n", readme)
+        self.assertIn("Entries with an outcome folder: 2 of 3", readme)
+        self.assertIn("\nEntries not run: 1\n", readme)
+        self.assertEqual([line for line in readme.splitlines() if line.startswith("Not run:")], ["Not run: row2-double-conflict"])
+        self.assertIn("This is a partial baseline", readme)
+        self.assertIn("Not run: row2-double-conflict", other.read("review-brief.md"))
+        self.assertIn("Run state: partial", out.getvalue())
+        self.assertIn("Not run: row2-double-conflict", out.getvalue())
+        self.assertEqual(rows_module.ROW_IDS.count("row2-double-conflict"), 1)
+
+    def test_the_command_line_default_expects_every_layout_and_row_so_this_small_folder_is_partial(self) -> None:
+        code, out, err = self.finalize()
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("Run state: partial", out)
+        self.assertIn("Entries not run: 19", out)
+        self.assertEqual(sum(1 for line in out.splitlines() if line.startswith("Not run: ")), 19)
+        self.assertNotIn("Not run: " + ROW1, out)
+        self.assertNotIn("Not run: " + ROW4A, out)
+        self.assertIn("Not run: plain-memory", out)
+
+    def test_the_entry_counts_follow_the_latest_attempt_of_each_id_and_the_folder_counts_follow_the_folders(self) -> None:
+        os.makedirs(os.path.join(self.w.dated, "STOPPED-row2-double-conflict"))
+        with open(os.path.join(self.w.dated, "STOPPED-row2-double-conflict", "README.md"), "xb") as handle:
+            handle.write(b"# STOPPED: row2-double-conflict\n\nRow: row2-double-conflict\nReason: turns\nStage: s2\n\n" + VERDICT_LINE.encode() + b"\n")
+        self.assertEqual(self.finalize()[0], 0)
+        readme = self.w.read("README.md")
+        self.assertIn("Row folders present when this file was written: 5 (2 filed, 2 STOPPED, 1 SKIPPED, 0 unrecognised).", readme)
+        self.assertIn("Entries by outcome, the latest attempt of each: 1 filed, 1 STOPPED, 1 SKIPPED.", readme)
+
+    def test_a_second_finalize_is_refused_with_17_and_changes_nothing(self) -> None:
+        self.assertEqual(self.finalize()[0], 0)
+        first = tree_snapshot(self.w.dated)
+        code, out, err = self.finalize()
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(self.w.dated), first)
+        self.assertNotIn(self.w.rig.base, out + err)
+
+    def test_a_folder_that_already_holds_one_closing_file_is_refused_with_17_and_nothing_is_added(self) -> None:
+        self.assertEqual(run_baseline(self.w.rig, ["close", "--folder", self.w.relative()])[0], 0)
+        before = tree_snapshot(self.w.dated)
+        code, out, err = self.finalize()
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(self.w.dated), before)
+
+    def test_a_frozen_folder_is_refused_with_2_and_nothing_is_written(self) -> None:
+        names = sorted(baseline().FROZEN_FOLDERS)
+        self.assertIn("publication-2026-10-20", names)
+        self.assertIn("rerun-2026-10-29-claude-sonnet-5-5", names)
+        self.assertIn("rerun-2026-11-09-claude-sonnet-5-5-triple", names)
+        self.assertIn("bound-ledger-2026-10-19-rerun", names)
+        for name in names:
+            folder = os.path.join(self.w.rig.repo, "tests", "evidence", name)
+            os.makedirs(os.path.join(folder, ROW1), exist_ok=True)
+            before = tree_snapshot(folder)
+            code, out, err = run_baseline(self.w.rig, ["finalize", "--folder", os.path.join("tests", "evidence", name)])
+            self.assertEqual(code, pc_exitcodes.USAGE, name + out + err)
+            self.assertEqual(tree_snapshot(folder), before, name + " was not written")
+            self.assertEqual(sorted(set(os.listdir(folder)) & set(FINAL_NAMES)), [], name + " holds no filed name")
+
+    def test_the_real_first_baseline_is_refused_with_2_and_stays_as_it_is(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        folder = os.path.join(root, "tests", "evidence", "rerun-2026-10-29-claude-sonnet-5-5")
+        before = tree_snapshot(folder)
+        out = io.StringIO()
+        err = io.StringIO()
+        code = baseline().main(["finalize", "--folder", folder], repo_root=root, out=out, err=err)
+        self.assertEqual(code, pc_exitcodes.USAGE)
+        self.assertEqual(tree_snapshot(folder), before)
+
+    def test_a_leak_shaped_reason_is_refused_with_14_and_nothing_is_filed(self) -> None:
+        seeded = pc_seeds.home_path("pcsynthhome") + "/data"
+        folder = os.path.join(self.w.dated, "SKIPPED-row2-double-conflict")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "README.md"), "xb") as handle:
+            handle.write(("# SKIPPED: row2-double-conflict\n\nThis row was skipped on this machine: the folder %s is missing. "
+                          "No session was run.\n" % seeded).encode("utf-8"))
+        before = tree_snapshot(self.w.dated)
+        code, out, err = self.finalize()
+        self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(self.w.dated), before)
+        self.assertNotIn(seeded, out + err)
+
+    def test_everything_finalize_files_is_clean_for_the_leak_gate_and_the_vocabulary_scan(self) -> None:
+        import pc_leakgate
+
+        path = write_facts(self.w.rig)
+        self.assertEqual(self.finalize("--clone-facts", path)[0], 0)
+        report = pc_leakgate.scan_entries(pc_leakgate.collect_tree(self.w.dated), [])
+        self.assertEqual(list(report.findings), [])
+        code, out, err = run_baseline(self.w.rig, ["check-words", "--folder", self.w.relative()])
+        self.assertEqual(code, 0, out + err)
+        for name in ("README.md", "review-brief.md", "comparison-vs-publication-2026-10-20.txt", "digest-table.md", "usage-by-row.txt"):
+            self.assertEqual(verdict_pattern().findall("\n".join(unquoted(self.w.read(name)))), [], name)
+
+    def test_the_vocabulary_scan_covers_the_brief_and_the_readme_in_full_and_reads_a_review_line_as_closing(self) -> None:
+        self.assertEqual(self.finalize()[0], 0)
+        word = "fa" + "iled"
+        for name in ("review-brief.md", "README.md", "comparison-vs-publication-2026-10-20.txt"):
+            copy = fresh_copy_of_world()
+            self.assertEqual(run_baseline(copy.rig, ["finalize", "--folder", copy.relative()])[0], 0)
+            with open(os.path.join(copy.dated, name), "ab") as handle:
+                handle.write(("\nthe run %s here\n" % word).encode("utf-8"))
+            code, out, err = run_baseline(copy.rig, ["check-words", "--folder", copy.relative()])
+            self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL, name + out + err)
+        quoted = fresh_copy_of_world()
+        self.assertEqual(run_baseline(quoted.rig, ["finalize", "--folder", quoted.relative()])[0], 0)
+        with open(os.path.join(quoted.dated, "comparison-vs-publication-2026-10-20.txt"), "ab") as handle:
+            handle.write(("  content: the committed text said %s\n" % word).encode("utf-8"))
+        with open(os.path.join(quoted.dated, "review-brief.md"), "ab") as handle:
+            handle.write(("> the quoted line said %s\n" % word).encode("utf-8"))
+        self.assertEqual(run_baseline(quoted.rig, ["check-words", "--folder", quoted.relative()])[0], 0)
+
+
+class CloneFactsTests(unittest.TestCase):
+    """The clone-facts file has one fixed schema, read strictly: any other shape is refused with exit 2 and a fixed line."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+
+    def refused(self, facts=None, raw=None, name=FACTS_NAME):
+        path = write_facts(self.w.rig, facts, raw, name)
+        before = tree_snapshot(self.w.dated)
+        code, out, err = run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative(), "--clone-facts", path])
+        self.assertEqual(code, pc_exitcodes.USAGE, out + err)
+        self.assertEqual(err.strip(), FACTS_LINE)
+        self.assertEqual(out, "")
+        self.assertEqual(tree_snapshot(self.w.dated), before, "nothing was filed")
+        self.assertNotIn(self.w.rig.base, out + err)
+        self.assertEqual(baseline().read_clone_facts(path), None)
+
+    def test_a_good_file_is_read_back_as_the_same_dict(self) -> None:
+        path = write_facts(self.w.rig)
+        self.assertEqual(baseline().read_clone_facts(path), good_facts())
+        self.assertEqual(sorted(good_facts()), sorted(baseline().CLONE_FACTS_KEYS))
+
+    def test_an_unknown_or_a_missing_key_is_refused(self) -> None:
+        facts = good_facts()
+        facts["extra"] = 1
+        self.refused(facts)
+
+    def test_a_missing_key_is_refused(self) -> None:
+        facts = good_facts()
+        del facts["home_kind"]
+        self.refused(facts)
+
+    def test_a_negative_count_a_float_a_boolean_and_a_text_count_are_refused(self) -> None:
+        for index, value in enumerate((-1, 1.5, True, "3", None, 10 ** 12)):
+            self.setUp()
+            self.refused(good_facts(helper_calls=value), name="f%d.json" % index)
+
+    def test_a_name_with_a_lower_case_letter_a_dash_a_space_or_a_non_text_is_refused(self) -> None:
+        for index, name in enumerate(("Path", "A-B", "A B", "", "A" * 65, 5, None, "$HOME")):
+            self.setUp()
+            self.refused(good_facts(env_names=["HOME", name]), name="n%d.json" % index)
+
+    def test_a_forty_first_name_is_refused_and_forty_are_read(self) -> None:
+        forty = ["NAME_%d" % number for number in range(40)]
+        self.assertEqual(baseline().read_clone_facts(write_facts(self.w.rig, good_facts(env_names=forty), name="forty.json"))["env_names"], forty)
+        self.refused(good_facts(env_names=forty + ["NAME_40"]), name="forty-one.json")
+
+    def test_a_repeated_name_and_a_non_list_are_refused(self) -> None:
+        self.refused(good_facts(env_names=["A", "A"]))
+        self.setUp()
+        self.refused(good_facts(env_names="HOME"), name="b.json")
+
+    def test_a_head_of_the_wrong_length_case_or_alphabet_is_refused(self) -> None:
+        for index, head in enumerate((HEAD40[:39], HEAD40 + "0", HEAD40.upper(), "g" * 40, 12, "")):
+            self.setUp()
+            self.refused(good_facts(clone_head=head), name="h%d.json" % index)
+
+    def test_a_source_kind_other_than_url_or_local_and_a_home_kind_other_than_throwaway_or_real_are_refused(self) -> None:
+        self.refused(good_facts(source_kind="path"))
+        self.setUp()
+        self.refused(good_facts(home_kind="home"), name="b.json")
+
+    def test_a_file_that_is_not_one_json_object_is_refused(self) -> None:
+        for index, raw in enumerate(("", "[]", "null", "{", '{"a": 1} {"b": 2}', "\xff", json.dumps(good_facts()).replace("}", ", \"home_kind\": \"real\"}"),
+                                     json.dumps(good_facts()).replace("7", "NaN", 1))):
+            self.setUp()
+            self.refused(raw=raw, name="r%d.json" % index)
+
+    def test_a_missing_file_a_folder_and_a_symlink_are_refused_with_the_same_fixed_line(self) -> None:
+        missing = os.path.join(self.w.rig.base, "missing.json")
+        for path in (missing, self.w.rig.base, ""):
+            before = tree_snapshot(self.w.dated)
+            code, out, err = run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative(), "--clone-facts", path])
+            self.assertEqual(code, pc_exitcodes.USAGE)
+            self.assertEqual(err.strip(), FACTS_LINE)
+            self.assertEqual(tree_snapshot(self.w.dated), before)
+        real = write_facts(self.w.rig)
+        link = os.path.join(self.w.rig.base, "link.json")
+        os.symlink(real, link)
+        code, out, err = run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative(), "--clone-facts", link])
+        self.assertEqual(code, pc_exitcodes.USAGE)
+        self.assertEqual(err.strip(), FACTS_LINE)
+
+    def test_an_oversized_file_is_refused(self) -> None:
+        self.refused(raw=json.dumps(good_facts()) + " " * 70000)
+
+    def test_the_schema_holds_no_key_that_could_carry_a_path_or_a_login(self) -> None:
+        for key in baseline().CLONE_FACTS_KEYS:
+            self.assertNotRegex(key, r"path$|dir$|login|user|host|home$", key)
+
+
+class BriefTests(unittest.TestCase):
+    """review-brief.md is built from filed files and asks for conclusions without a vocabulary word."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+        self.assertEqual(run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative()])[0], 0)
+        self.brief = self.w.read("review-brief.md")
+
+    def test_it_names_the_folder_the_model_and_build_and_the_digest_table(self) -> None:
+        self.assertTrue(self.brief.startswith("# Review brief: %s\n" % DATED))
+        self.assertIn("- model: claude-sonnet-5-5", self.brief)
+        self.assertIn("- Claude Code build: 2.1.310", self.brief)
+        self.assertIn("- Run state: partial", self.brief)
+        self.assertIn("> # Digest table, part 1", self.brief)
+        self.assertIn("> | %s | filed | 1 |" % ROW1, self.brief)
+
+    def test_it_quotes_the_checklist_lines_of_each_row_and_the_stop_and_skip_lines_with_the_prefix(self) -> None:
+        readme = self.w.read(ROW1, "README.md")
+        checklist = [line for line in readme.splitlines() if line.startswith("- [ ]")]
+        self.assertGreaterEqual(len(checklist), 6)
+        for line in checklist:
+            self.assertIn("> " + line + "\n", self.brief)
+        self.assertIn("### %s (filed)" % ROW1, self.brief)
+        self.assertIn("### STOPPED-row4a-unknown-backend (STOPPED)", self.brief)
+        self.assertIn("> Row: row4a-unknown-backend\n", self.brief)
+        self.assertIn("> Stage: ", self.brief)
+        self.assertIn("### SKIPPED-row4a-unknown-backend-attempt-3 (SKIPPED)", self.brief)
+        self.assertIn("> This row was skipped on this machine: the fixture of this test row is absent", self.brief)
+        self.assertNotIn("Reviewer verdict", self.brief, "the closing lines are not quoted")
+
+    def test_it_asks_for_one_line_per_row_and_layout_and_a_plain_statement_where_a_row_cannot_be_judged(self) -> None:
+        self.assertIn("## What to return", self.brief)
+        self.assertIn("Give one line for each row and layout", self.brief)
+        self.assertIn("names a conclusion in a few words and gives the reason", self.brief)
+        self.assertIn("write a plain statement saying so", self.brief)
+
+    def test_it_holds_no_vocabulary_word_on_an_unquoted_line(self) -> None:
+        self.assertEqual(verdict_pattern().findall("\n".join(unquoted(self.brief))), [])
+        for line in unquoted(self.brief):
+            self.assertNotIn(self.w.rig.base, line)
+
+    def test_the_row_7_pointer_says_none_is_present_in_a_clone_without_a_triple_folder(self) -> None:
+        self.assertIn("- no row 7 triple folder is present in this clone", self.brief)
+        self.assertIn("- row 7 review table of this folder: none is filed in this folder", self.brief)
+
+    def test_the_row_7_pointer_names_a_triple_folder_when_the_clone_holds_one(self) -> None:
+        other = fresh_copy_of_world()
+        triple = "rerun-2026-11-09-claude-sonnet-5-5-triple"
+        os.makedirs(os.path.join(other.rig.repo, "tests", "evidence", triple, "row7-all-destinations-denied"))
+        os.makedirs(os.path.join(other.rig.repo, "tests", "evidence", "rerun-2026-11-10-claude-sonnet-5-5-wave-z"))
+        self.assertEqual(run_baseline(other.rig, ["finalize", "--folder", other.relative()])[0], 0)
+        brief = other.read("review-brief.md")
+        self.assertIn("- row 7 review table of the committed triple folder: %s (its row7-review.md)" % triple, brief)
+        self.assertNotIn("wave-z", brief)
+        self.assertNotIn("no row 7 triple folder", brief)
+
+    def test_a_row_7_table_filed_in_the_folder_itself_is_pointed_to(self) -> None:
+        other = fresh_copy_of_world()
+        with open(os.path.join(other.dated, "row7-review.md"), "xb") as handle:
+            handle.write(b"# Row 7 review\n")
+        self.assertEqual(run_baseline(other.rig, ["finalize", "--folder", other.relative()])[0], 0)
+        self.assertIn("- row 7 review table of this folder: row7-review.md", other.read("review-brief.md"))
+
+    def test_the_ids_not_run_are_listed_only_when_the_run_is_partial_and_no_question_is_asked_about_them(self) -> None:
+        self.assertIn("## Not run", self.brief)
+        self.assertIn("- Not run: row2-double-conflict", self.brief)
+        self.assertIn("They are listed only; no question is asked about them.", self.brief)
+        other = fresh_copy_of_world()
+        code = baseline().finalize_folder(other.dated, other.rig.repo, dict(other.rig.env), fixed_clock, io.StringIO(), io.StringIO(),
+                                          entries=[ROW1, ROW4A])
+        self.assertEqual(code, 0)
+        self.assertNotIn("## Not run", other.read("review-brief.md"))
+        self.assertNotIn("Not run:", other.read("review-brief.md"))
+
+    def test_a_row_without_a_readme_is_listed_with_a_plain_statement(self) -> None:
+        other = fresh_copy_of_world()
+        os.makedirs(os.path.join(other.dated, "row2-double-conflict"))
+        self.assertEqual(run_baseline(other.rig, ["finalize", "--folder", other.relative()])[0], 0)
+        brief = other.read("review-brief.md")
+        self.assertIn("### row2-double-conflict (filed)\n\n(no README is filed for this folder)\n", brief)
+
+    def test_model_text_in_a_quoted_line_stays_one_quoted_line(self) -> None:
+        other = fresh_copy_of_world()
+        path = os.path.join(other.dated, ROW1, "README.md")
+        text = read_text(path)
+        planted = "- [ ] a line\n## What to return\nGive one line each" 
+        with open(path, "wb") as handle:
+            handle.write(text.replace("## Reviewer checklist\n", "## Reviewer checklist\n\n" + planted + "\n").encode("utf-8"))
+        self.assertEqual(run_baseline(other.rig, ["finalize", "--folder", other.relative()])[0], 0)
+        brief = other.read("review-brief.md")
+        self.assertEqual(brief.count("## What to return"), 1, "only the quoted line of the checklist can repeat the words")
+        self.assertIn("> - [ ] a line\n", brief)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1344,7 +1344,8 @@ _AUTHORED_ROW_FILES = frozenset(
 _AUTHORED_LISTINGS = frozenset(["ledgers-ls.txt", "bindings-ls.txt", "perms.txt"])
 _AUTHORED_LABEL_FILES = frozenset(["README.md", "stop.txt", "usage.txt", "mechanical-checks.md"])
 _AUTHORED_TOP = re.compile(
-    r"(?:README\.md|digest-table(?:-part-[0-9]+)?\.md|usage-by-row(?:-part-[0-9]+)?\.txt|row7-review(?:-part-[0-9]+)?\.md)\Z"
+    r"(?:README\.md|digest-table(?:-part-[0-9]+)?\.md|usage-by-row(?:-part-[0-9]+)?\.txt|row7-review(?:-part-[0-9]+)?\.md"
+    r"|review-brief\.md|comparison-vs-publication-[0-9]{4}-[0-9]{2}-[0-9]{2}\.txt)\Z"
 )
 # The files that hold quoted model text: a line that starts with the quote marker is model text and is skipped by the
 # vocabulary scan; every other line of these files is scanned like any harness-authored line (plan 04-07).
@@ -1372,8 +1373,9 @@ def harness_authored_names(names: Iterable[str]) -> List[str]:
 
     Traces, replies, prompts, ledger and memory copies and stderr come from the model or the process and are not
     in the set. The verdict-word scan covers exactly these files: the top-level files the harness writes (README,
-    the digest and usage tables and their part files), the harness-written files of a row folder (any registered
-    row id, with or without -attempt-N) and of a STOPPED or SKIPPED label folder.
+    the digest and usage tables and their part files, the review brief and the comparison file), the
+    harness-written files of a row folder (any registered row id, with or without -attempt-N) and of a STOPPED or
+    SKIPPED label folder.
     """
     ids = frozenset(entry.row_id for entry in pc_rows.build_registry())
     picked: List[str] = []
