@@ -26,7 +26,15 @@ empty folder or a symlink target changes. File modes and timestamps are not part
 The committed token <repo>/<run> and the newer token <run> are read as equal before any text-dependent
 comparison. A file that is absent or malformed is reported as such for that side and the run goes on.
 
+All rows (plan 04-18; RERUN-03, D-15): `--all-rows --new DIR [--old DIR]` maps every row id of the registry to the committed
+folder of the reference tree (the -rerun folder when it exists, else the bare folder) and compares the highest filed
+attempt of each row with it. A STOPPED- or SKIPPED- folder is listed and never compared, a registry id with no outcome
+folder at all is listed as not run, the committed older attempts (the other folders a reference tree holds for a row id)
+are listed as older attempts not compared, and each layout is printed with the words no structural reference. --old
+defaults to DEFAULT_REFERENCE, the one value the later swap commit changes.
+
 CLI: python3 -E -s -B pc_compare.py --old DIR --new DIR [--row ID]
+     python3 -E -s -B pc_compare.py --all-rows --new DIR [--old DIR]
   DIR is a folder that holds the row folder (a committed publication folder or a rerun folder).
   Exit 0 whenever both trees were readable, whatever they differ in; exit 2 for bad usage or a tree that cannot
   be read. Error text is fixed and never echoes a path or an argument.
@@ -46,8 +54,12 @@ import pc_measure
 import pc_mine
 
 PROG = "pc_compare.py"
-USAGE_LINE = "usage: pc_compare.py --old DIR --new DIR [--row ID]"
+USAGE_LINE = "usage: pc_compare.py --old DIR --new DIR [--row ID] | --all-rows --new DIR [--old DIR]"
 DEFAULT_ROW = "row1-wrong-binding"
+# The reference tree of --all-rows when --old is not given: repo-relative, resolved against the repository of this script.
+# Plan 04-21 changes this one value in its swap commit.
+DEFAULT_REFERENCE = "tests/evidence/publication-2026-10-20"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 MESSAGE_USAGE = "invalid command line"
 MESSAGE_UNREADABLE = "a tree could not be read"
@@ -72,6 +84,7 @@ TRACES = (
     ("s1-work", "s1-work-full-trace.md"),
     ("s2-preclear", "s2-preclear-full-trace.md"),
     ("s3-resume", "s3-resume-full-trace.md"),
+    ("s4-preclear-refresh", "s4-preclear-refresh-full-trace.md"),
 )
 BLOCK_FILES = ("digests.txt", "claude-version.txt", "usage.txt")
 
@@ -395,9 +408,12 @@ def _block(folder, name):
 # ---------------------------------------------------------------------------------------------
 
 
-def compare_rows(old_tree, new_tree, row):
-    """Read both row folders and return the structured differences (a dict). Only reads."""
-    old_folder = _row_folder(old_tree, row)
+def compare_rows(old_tree, new_tree, row, old_row=None):
+    """Read both row folders and return the structured differences (a dict). Only reads.
+
+    row names the folder in the new tree; old_row names the folder in the old tree when it differs (the all-rows mapping).
+    """
+    old_folder = _row_folder(old_tree, row if old_row is None else old_row)
     new_folder = _row_folder(new_tree, row)
     old_labels = _entry_labels(old_folder)
     new_labels = _entry_labels(new_folder)
@@ -558,6 +574,157 @@ def report_lines(result):
     return lines
 
 
+# ---------------------------------------------------------------------------------------------
+# All rows: the mapping of the new tree onto the reference tree (plan 04-18)
+# ---------------------------------------------------------------------------------------------
+
+STOPPED_PREFIX = "STOPPED-"
+SKIPPED_PREFIX = "SKIPPED-"
+RERUN_SUFFIX = "-rerun"
+FIRST_PASS_SUFFIX = "-first-pass"
+KIND_LAYOUT = "layout"
+NO_STRUCTURAL_REFERENCE = "no structural reference"
+_ATTEMPT_SUFFIX = re.compile(r"(.+)-attempt-([2-9])\Z")
+
+
+class _Outcome(object):
+    """One folder of the new tree that belongs to a registry id: its state, its attempt and its name."""
+
+    def __init__(self, name, state, attempt):
+        self.name = name
+        self.state = state
+        self.attempt = attempt
+
+
+def _real_folder_names(tree):
+    names = []
+    for name in sorted(os.listdir(tree)):
+        path = os.path.join(tree, name)
+        if os.path.isdir(path) and not os.path.islink(path):
+            names.append(name)
+    return names
+
+
+def _outcomes(new_tree, ids):
+    """{registry id: [_Outcome, ...]} for every folder of the new tree whose name is an id, a STOPPED- or SKIPPED- label of one."""
+    found = {}
+    for name in _real_folder_names(new_tree):
+        state = "filed"
+        rest = name
+        for prefix, label in ((STOPPED_PREFIX, "STOPPED"), (SKIPPED_PREFIX, "SKIPPED")):
+            if name.startswith(prefix):
+                state, rest = label, name[len(prefix):]
+                break
+        attempt = 1
+        parsed = _ATTEMPT_SUFFIX.match(rest)
+        if parsed is not None:
+            rest, attempt = parsed.group(1), int(parsed.group(2))
+        if rest in ids:
+            found.setdefault(rest, []).append(_Outcome(name, state, attempt))
+    return found
+
+
+def map_rows(reference_tree, new_tree, registry):
+    """Map the new tree onto the reference tree; reads folder names only.
+
+    registry is a sequence of entries with row_id and kind (the layouts and the rows of pc_rows). Returns a dict:
+      rows          one dict per compared row, in registry order: id, old (the reference folder: the -rerun folder when it
+                    exists, else the bare folder), new (the highest filed attempt of the row) and attempt
+      no_reference  ids of rows with a filed folder and no committed folder to compare it with
+      stopped       names of STOPPED- folders, listed and never compared
+      skipped       names of SKIPPED- folders, listed and never compared
+      not_run       ids with no outcome folder at all, rows and layouts
+      older         committed folders of a row id that are not the mapped one (the bare folder beside a -rerun folder, the
+                    -first-pass folders), listed and never compared
+      layouts       (id, states present in the new tree) for each layout; a layout has no structural reference
+    """
+    ids = dict((entry.row_id, entry.kind) for entry in registry)
+    reference_names = set(_real_folder_names(reference_tree))
+    outcomes = _outcomes(new_tree, ids)
+    result = {"rows": [], "no_reference": [], "stopped": [], "skipped": [], "not_run": [], "older": [], "layouts": []}
+    for entry in registry:
+        found = outcomes.get(entry.row_id, [])
+        if not found:
+            result["not_run"].append(entry.row_id)
+        if entry.kind == KIND_LAYOUT:
+            states = sorted(set(item.state for item in found)) or ["not run"]
+            result["layouts"].append((entry.row_id, states))
+            continue
+        for item in found:
+            if item.state == "STOPPED":
+                result["stopped"].append(item.name)
+            elif item.state == "SKIPPED":
+                result["skipped"].append(item.name)
+        mapped = None
+        for candidate in (entry.row_id + RERUN_SUFFIX, entry.row_id):
+            if candidate in reference_names:
+                mapped = candidate
+                break
+        for candidate in (entry.row_id, entry.row_id + FIRST_PASS_SUFFIX):
+            if candidate in reference_names and candidate != mapped:
+                result["older"].append(candidate)
+        filed = [item for item in found if item.state == "filed"]
+        if not filed:
+            continue
+        best = max(filed, key=lambda item: item.attempt)
+        if mapped is None:
+            result["no_reference"].append(entry.row_id)
+        else:
+            result["rows"].append({"id": entry.row_id, "old": mapped, "new": best.name, "attempt": best.attempt})
+    return result
+
+
+def default_reference_path():
+    """DEFAULT_REFERENCE resolved against the repository root of this script."""
+    return os.path.join(_REPO_ROOT, *DEFAULT_REFERENCE.split("/"))
+
+
+def _list_lines(title, items):
+    lines = ["%s: %d" % (title, len(items))]
+    lines.extend("  " + _printable(item) for item in items)
+    return lines
+
+
+def all_rows_lines(old_tree, new_tree, registry):
+    """The whole all-rows report as text lines, with both tree digests before and after. Only reads.
+
+    Raises CompareError, OSError or pc_manifest.ManifestError when a tree cannot be read.
+    """
+    before = (tree_digest(old_tree), tree_digest(new_tree))
+    mapping = map_rows(old_tree, new_tree, registry)
+    lines = [
+        "compare all rows: old %s, new %s"
+        % (_printable(os.path.basename(old_tree.rstrip(os.sep))), _printable(os.path.basename(new_tree.rstrip(os.sep)))),
+        "tree digest before: old %s, new %s" % before,
+        "rows compared: %d" % len(mapping["rows"]),
+    ]
+    for item in mapping["rows"]:
+        result = compare_rows(old_tree, new_tree, item["new"], item["old"])
+        lines.append("")
+        lines.append(
+            "compare row %s: old folder %s, new folder %s, attempt %d"
+            % (_printable(item["id"]), _printable(item["old"]), _printable(item["new"]), item["attempt"])
+        )
+        lines.extend(report_lines(result))
+    lines.append("")
+    # Committed folder names, listed as content: a name such as the first-pass folders is committed text, not the comparer's word.
+    lines.append("older attempts not compared: %d" % len(mapping["older"]))
+    lines.extend(_content(_printable(name) for name in mapping["older"]))
+    lines.extend(_list_lines("stopped, not compared", mapping["stopped"]))
+    lines.extend(_list_lines("skipped, not compared", mapping["skipped"]))
+    lines.extend(_list_lines("filed with no committed folder to compare", mapping["no_reference"]))
+    lines.extend(_list_lines("not run", mapping["not_run"]))
+    lines.append("layouts: %d" % len(mapping["layouts"]))
+    for identifier, states in mapping["layouts"]:
+        lines.append("  layout %s: %s (new tree: %s)" % (_printable(identifier), NO_STRUCTURAL_REFERENCE, ", ".join(states)))
+    after = (tree_digest(old_tree), tree_digest(new_tree))
+    lines.append("tree digest after: old %s, new %s" % after)
+    lines.append("old unchanged: %s" % ("yes" if before[0] == after[0] else "no"))
+    lines.append("new unchanged: %s" % ("yes" if before[1] == after[1] else "no"))
+    lines.append(MODES_SENTENCE)
+    return lines
+
+
 class _Parser(argparse.ArgumentParser):
     """An argument parser whose errors print fixed lines and exit 2, never echoing a value."""
 
@@ -576,22 +743,47 @@ def _refuse(err, message):
     return pc_exitcodes.USAGE
 
 
+def _main_all_rows(args, out, err):
+    """--all-rows --new DIR [--old DIR]; --row with it is refused with the usage text."""
+    if args.row is not None or args.new is None:
+        err.write(USAGE_LINE + "\n")
+        err.write("%s: error: %s\n" % (PROG, MESSAGE_USAGE))
+        return pc_exitcodes.USAGE
+    old_tree = args.old if args.old is not None else default_reference_path()
+    new_tree = args.new
+    if not (_is_real_folder(old_tree) and _is_real_folder(new_tree)):
+        return _refuse(err, MESSAGE_UNREADABLE)
+    try:
+        import pc_rows
+
+        lines = all_rows_lines(old_tree, new_tree, pc_rows.build_registry())
+    except (OSError, pc_manifest.ManifestError, CompareError):
+        return _refuse(err, MESSAGE_UNREADABLE)
+    out.write("\n".join(lines) + "\n")
+    out.flush()
+    return pc_exitcodes.OK
+
+
 def main(argv, out=None, err=None):
     out = sys.stdout if out is None else out
     err = sys.stderr if err is None else err
     parser = _Parser(err)
     parser.add_argument("--old", default=None)
     parser.add_argument("--new", default=None)
-    parser.add_argument("--row", default=DEFAULT_ROW)
+    parser.add_argument("--row", default=None)
+    parser.add_argument("--all-rows", action="store_true", dest="all_rows")
     try:
         args = parser.parse_args(list(argv))
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else pc_exitcodes.USAGE
-    if args.old is None or args.new is None or not _ROW_ID.match(args.row):
+    if args.all_rows:
+        return _main_all_rows(args, out, err)
+    row = DEFAULT_ROW if args.row is None else args.row
+    if args.old is None or args.new is None or not _ROW_ID.match(row):
         err.write(USAGE_LINE + "\n")
         err.write("%s: error: %s\n" % (PROG, MESSAGE_USAGE))
         return pc_exitcodes.USAGE
-    old_tree, new_tree, row = args.old, args.new, args.row
+    old_tree, new_tree = args.old, args.new
     if not (_is_real_folder(old_tree) and _is_real_folder(new_tree)):
         return _refuse(err, MESSAGE_UNREADABLE)
     if not (_is_real_folder(_row_folder(old_tree, row)) and _is_real_folder(_row_folder(new_tree, row))):

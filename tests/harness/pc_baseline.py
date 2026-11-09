@@ -50,6 +50,7 @@ import pc_compare
 import pc_evidence
 import pc_exitcodes
 import pc_leakgate
+import pc_manifest
 import pc_promote
 import pc_review
 import pc_rows
@@ -1010,12 +1011,20 @@ def render_review_brief(
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-INTERIM_COMPARISON = "The comparer report is not part of this file.\n"
+def comparison_text(folder: str, reference: Optional[str] = None) -> Optional[str]:
+    """The all-rows comparison of the folder against the reference tree, or None when a tree cannot be read.
 
-
-def comparison_text(folder: str) -> Optional[str]:
-    """The text filed as the comparison file, or None when the reference tree cannot be read."""
-    return INTERIM_COMPARISON
+    reference defaults to pc_compare.DEFAULT_REFERENCE resolved against the repository of this script. Both trees are
+    only read; the text is the comparer's own report.
+    """
+    old_tree = reference if reference is not None else pc_compare.default_reference_path()
+    try:
+        if not os.path.isdir(old_tree) or os.path.islink(old_tree):
+            return None
+        lines = pc_compare.all_rows_lines(old_tree, folder, pc_rows.build_registry())
+    except (OSError, pc_manifest.ManifestError, pc_compare.CompareError):
+        return None
+    return "\n".join(lines) + "\n"
 
 
 def finalize_folder(
@@ -1027,6 +1036,7 @@ def finalize_folder(
     err: TextIO,
     facts_path: Optional[str] = None,
     entries: Optional[Sequence[str]] = None,
+    reference: Optional[str] = None,
 ) -> int:
     """File the baseline form of a dated folder: README, both tables, the comparison, the brief, the environment names.
 
@@ -1046,7 +1056,7 @@ def finalize_folder(
             return pc_exitcodes.PROMOTE_REFUSED
     expected = tuple(entries) if entries is not None else default_entry_ids()
     items = read_items(folder)
-    comparison = comparison_text(folder)
+    comparison = comparison_text(folder, reference)
     if comparison is None:
         _write(err, MESSAGE_REFERENCE + "\n")
         return pc_exitcodes.USAGE

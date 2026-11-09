@@ -1023,7 +1023,8 @@ class FinalizeTests(unittest.TestCase):
         code, out, err = run_baseline(self.w.rig, ["check-words", "--folder", self.w.relative()])
         self.assertEqual(code, 0, out + err)
         for name in ("README.md", "review-brief.md", "comparison-vs-publication-2026-10-20.txt", "digest-table.md", "usage-by-row.txt"):
-            self.assertEqual(verdict_pattern().findall("\n".join(unquoted(self.w.read(name)))), [], name)
+            plain = [line for line in unquoted(self.w.read(name)) if not line.startswith("  content: ")]
+            self.assertEqual(verdict_pattern().findall("\n".join(plain)), [], name)
 
     def test_the_vocabulary_scan_covers_the_brief_and_the_readme_in_full_and_reads_a_review_line_as_closing(self) -> None:
         self.assertEqual(self.finalize()[0], 0)
@@ -1042,6 +1043,54 @@ class FinalizeTests(unittest.TestCase):
         with open(os.path.join(quoted.dated, "review-brief.md"), "ab") as handle:
             handle.write(("> the quoted line said %s\n" % word).encode("utf-8"))
         self.assertEqual(run_baseline(quoted.rig, ["check-words", "--folder", quoted.relative()])[0], 0)
+
+
+class FinalizeComparisonTests(unittest.TestCase):
+    """finalize files the all-rows comparison against the default reference in place of the interim text (plan 04-18, Task 2)."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+
+    def test_the_comparison_file_is_the_all_rows_report_against_the_publication_folder(self) -> None:
+        import pc_compare
+
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        reference = os.path.join(root, "tests", "evidence", "publication-2026-10-20")
+        before = pc_compare.tree_digest(reference)
+        code, out, err = run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative()])
+        self.assertEqual(code, 0, out + err)
+        text = self.w.read("comparison-vs-publication-2026-10-20.txt")
+        self.assertEqual(pc_compare.tree_digest(reference), before, "the reference was only read")
+        self.assertIn("compare all rows: old publication-2026-10-20, new %s\n" % DATED, text)
+        self.assertIn("old unchanged: yes\n", text)
+        self.assertIn("new unchanged: yes\n", text)
+        self.assertNotIn("not part of this file", text, "the interim line is gone")
+        self.assertIn("compare row %s: old folder %s, new folder %s, attempt 1\n" % (ROW1, ROW1, ROW1), text)
+        self.assertIn("compare row %s: old folder %s, new folder %s, attempt 2\n" % (ROW4A, ROW4A, ROW4A + "-attempt-2"), text)
+        self.assertIn("stopped, not compared: 1\n  STOPPED-%s\n" % ROW4A, text)
+        self.assertIn("skipped, not compared: 1\n  SKIPPED-%s-attempt-3\n" % ROW4A, text)
+        self.assertIn("  row2-double-conflict\n", text, "an id with no outcome folder is listed as not run")
+        self.assertIn("  layout plain-memory: no structural reference (new tree: not run)\n", text)
+        self.assertNotIn(self.w.rig.base, text)
+
+    def test_the_comparison_is_part_of_the_vocabulary_scan_apart_from_the_content_lines(self) -> None:
+        self.assertEqual(run_baseline(self.w.rig, ["finalize", "--folder", self.w.relative()])[0], 0)
+        code, out, err = run_baseline(self.w.rig, ["check-words", "--folder", self.w.relative()])
+        self.assertEqual(code, 0, out + err)
+        text = self.w.read("comparison-vs-publication-2026-10-20.txt")
+        pattern = verdict_pattern()
+        self.assertTrue(any(pattern.search(line) for line in text.splitlines() if line.startswith("  content: ")),
+                        "the committed text quoted on content lines does hold such words")
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("  content: ") and pattern.search(line)], [])
+
+    def test_a_reference_that_cannot_be_read_is_refused_with_2_and_nothing_is_filed(self) -> None:
+        before = tree_snapshot(self.w.dated)
+        err = io.StringIO()
+        code = baseline().finalize_folder(self.w.dated, self.w.rig.repo, dict(self.w.rig.env), fixed_clock, io.StringIO(), err,
+                                          reference=os.path.join(self.w.rig.base, "no-such-reference"))
+        self.assertEqual(code, pc_exitcodes.USAGE)
+        self.assertEqual(err.getvalue().strip(), "REFUSED: the reference tree could not be read; nothing was filed")
+        self.assertEqual(tree_snapshot(self.w.dated), before)
 
 
 class CloneFactsTests(unittest.TestCase):

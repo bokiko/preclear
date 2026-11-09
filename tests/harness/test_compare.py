@@ -813,5 +813,172 @@ class VocabularyTests(unittest.TestCase):
         self.assertFalse(has_verdict_word(own_words("  content: row 1 " + verdict_words()[2])), "the check skips quoted content")
 
 
+
+def scratch_tree(folders):
+    """A new scratch tree: each name maps to a dict of file name to text. Never deleted by a test."""
+    base = tempfile.mkdtemp(prefix="pc-all-rows-")
+    tree = os.path.join(base, "rerun-2026-11-20-claude-sonnet-5-5")
+    os.makedirs(tree)
+    for name, files in folders.items():
+        os.makedirs(os.path.join(tree, name))
+        for file_name, text in files.items():
+            with open(os.path.join(tree, name, file_name), "xb") as handle:
+                handle.write(text.encode("utf-8"))
+    return tree
+
+
+def registry():
+    import pc_rows
+
+    return pc_rows.build_registry()
+
+
+class AllRowsTests(unittest.TestCase):
+    """--all-rows maps a new tree onto the reference tree and compares the highest filed attempt of each row (plan 04-18)."""
+
+    FOLDERS = {
+        "row3a-missing-executable": {"README.md": "# Row 3a\n"},
+        "row10-large-status": {"README.md": "# Row 10 first\n"},
+        "row10-large-status-attempt-2": {"README.md": "# Row 10 second\n"},
+        "STOPPED-row11-concurrent-change": {"README.md": "# STOPPED: row11-concurrent-change\n"},
+        "SKIPPED-row9-linked-worktree": {"README.md": "# SKIPPED: row9-linked-worktree\n"},
+        "plain-memory": {"README.md": "# Layout\n"},
+    }
+
+    def setUp(self):
+        self.tree = scratch_tree(self.FOLDERS)
+
+    def test_the_mapping_uses_the_rerun_folder_the_highest_attempt_and_lists_the_rest(self):
+        found = compare().map_rows(PUBLICATION, self.tree, registry())
+        self.assertEqual(
+            [(item["id"], item["old"], item["new"], item["attempt"]) for item in found["rows"]],
+            [
+                ("row3a-missing-executable", "row3a-missing-executable-rerun", "row3a-missing-executable", 1),
+                ("row10-large-status", "row10-large-status-rerun", "row10-large-status-attempt-2", 2),
+            ],
+        )
+        self.assertEqual(found["stopped"], ["STOPPED-row11-concurrent-change"])
+        self.assertEqual(found["skipped"], ["SKIPPED-row9-linked-worktree"])
+        self.assertEqual(
+            found["older"],
+            ["row3a-missing-executable", "row3b-denied-helper-write", "row10-large-status-first-pass", "row11-concurrent-change-first-pass"],
+        )
+        self.assertEqual(found["no_reference"], [])
+        self.assertEqual(found["layouts"], [("plain-memory", ["filed"]), ("hub-memory", ["not run"]), ("bound-ledger", ["not run"])])
+
+    def test_a_registry_id_with_no_outcome_folder_is_not_run_and_a_stopped_or_skipped_one_is_not(self):
+        found = compare().map_rows(PUBLICATION, self.tree, registry())
+        self.assertIn("row1-wrong-binding", found["not_run"])
+        self.assertIn("hub-memory", found["not_run"])
+        for identifier in ("row11-concurrent-change", "row9-linked-worktree", "plain-memory", "row3a-missing-executable"):
+            self.assertNotIn(identifier, found["not_run"])
+        compared = [item["id"] for item in found["rows"]]
+        self.assertEqual(sorted(set(found["not_run"]) & set(compared)), [])
+
+    def test_a_filed_row_with_no_committed_folder_is_listed_and_not_compared(self):
+        import collections
+
+        entry = collections.namedtuple("Entry", "row_id kind")
+        tree = scratch_tree({"rowx-new-case": {"README.md": "# x\n"}})
+        found = compare().map_rows(PUBLICATION, tree, [entry("rowx-new-case", "row")])
+        self.assertEqual(found["rows"], [])
+        self.assertEqual(found["no_reference"], ["rowx-new-case"])
+
+    def test_with_no_old_the_default_reference_is_used_and_both_trees_stay_unchanged(self):
+        before = (compare().tree_digest(PUBLICATION), compare().tree_digest(self.tree))
+        code, out, err = run_compare("--all-rows", "--new", self.tree)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(compare().DEFAULT_REFERENCE, "tests/evidence/publication-2026-10-20")
+        self.assertEqual(compare().default_reference_path(), PUBLICATION)
+        self.assertIn("compare all rows: old publication-2026-10-20, new rerun-2026-11-20-claude-sonnet-5-5", out)
+        self.assertIn("tree digest before: old %s, new %s" % before, out)
+        self.assertIn("tree digest after: old %s, new %s" % before, out)
+        self.assertIn("old unchanged: yes", out)
+        self.assertIn("new unchanged: yes", out)
+        self.assertEqual((compare().tree_digest(PUBLICATION), compare().tree_digest(self.tree)), before)
+        self.assertEqual(sum(1 for line in out.splitlines() if line.startswith("compare row ")), 2)
+        self.assertIn("compare row row10-large-status: old folder row10-large-status-rerun, new folder row10-large-status-attempt-2, attempt 2", out)
+
+    def test_with_old_the_named_tree_is_used(self):
+        other = scratch_tree({"row3a-missing-executable": {"README.md": "# old side\n"}})
+        code, out, err = run_compare("--all-rows", "--old", other, "--new", self.tree)
+        self.assertEqual(code, 0, err)
+        self.assertIn("compare all rows: old rerun-2026-11-20-claude-sonnet-5-5, new rerun-2026-11-20-claude-sonnet-5-5", out)
+        self.assertEqual(sum(1 for line in out.splitlines() if line.startswith("compare row ")), 1)
+        self.assertIn("compare row row3a-missing-executable: old folder row3a-missing-executable, new folder row3a-missing-executable, attempt 1", out)
+
+    def test_the_lists_the_layouts_and_the_not_run_ids_are_printed(self):
+        code, out, err = run_compare("--all-rows", "--new", self.tree)
+        self.assertEqual(code, 0, err)
+        lines = out.splitlines()
+        self.assertIn("older attempts not compared: 4", lines)
+        self.assertIn("  content: row10-large-status-first-pass", lines)
+        self.assertIn("stopped, not compared: 1", lines)
+        self.assertIn("  STOPPED-row11-concurrent-change", lines)
+        self.assertIn("skipped, not compared: 1", lines)
+        self.assertIn("filed with no committed folder to compare: 0", lines)
+        self.assertIn("  row1-wrong-binding", lines)
+        self.assertIn("layouts: 3", lines)
+        self.assertIn("  layout plain-memory: no structural reference (new tree: filed)", lines)
+        self.assertIn("  layout hub-memory: no structural reference (new tree: not run)", lines)
+        self.assertIn("  layout bound-ledger: no structural reference (new tree: not run)", lines)
+
+    def test_row_and_all_rows_together_exit_2_with_the_fixed_text(self):
+        code, out, err = run_compare("--all-rows", "--new", self.tree, "--row", ROW1)
+        self.assertEqual(code, pc_exitcodes.USAGE)
+        self.assertEqual(out, "")
+        self.assertIn("invalid command line", err)
+        self.assertNotIn(self.tree, err)
+
+    def test_all_rows_without_new_or_with_a_bad_tree_exits_2(self):
+        for args in (["--all-rows"], ["--all-rows", "--new", os.path.join(self.tree, "missing")], ["--all-rows", "--new", self.tree, "--old", self.tree + "-none"]):
+            code, out, err = run_compare(*args)
+            self.assertEqual(code, pc_exitcodes.USAGE, args)
+            self.assertEqual(out, "")
+            self.assertNotIn(self.tree, err)
+
+    def test_the_single_row_call_is_unchanged_and_still_needs_old_and_new(self):
+        code, out, err = run_compare("--old", PUBLICATION, "--new", shared_fake().destination)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("compare row %s: old publication-2026-10-20, new %s\n" % (ROW1, DEST_NAME)))
+        self.assertEqual(run_compare("--new", self.tree)[0], pc_exitcodes.USAGE)
+        self.assertEqual(run_compare("--old", PUBLICATION)[0], pc_exitcodes.USAGE)
+
+    def test_the_traces_have_a_fourth_entry_for_the_row_12_refresh(self):
+        self.assertEqual(
+            list(compare().TRACES)[3], ("s4-preclear-refresh", "s4-preclear-refresh-full-trace.md")
+        )
+        self.assertEqual(len(compare().TRACES), 4)
+        with open(os.path.join(PUBLICATION, "row12-frozen-handoff", "s4-preclear-refresh-full-trace.md"), "rb") as handle:
+            data = handle.read()
+        tree = scratch_tree({"row12-frozen-handoff": {}})
+        with open(os.path.join(tree, "row12-frozen-handoff", "s4-preclear-refresh-full-trace.md"), "xb") as handle:
+            handle.write(data)
+        tools = compare().compare_rows(PUBLICATION, tree, "row12-frozen-handoff")["tools"]["s4-preclear-refresh"]
+        self.assertEqual(tools["old"]["state"], "ok")
+        self.assertEqual(tools["new"], tools["old"], "the fourth trace is lined up against the committed one")
+        self.assertGreater(tools["old"]["calls"], 0)
+
+    def test_a_row_7_folder_without_a_third_trace_is_compared_with_that_trace_absent(self):
+        tree = scratch_tree({"row7-all-destinations-denied": {"s1-work-full-trace.md": "", "README.md": "# Row 7\n"}})
+        result = compare().compare_rows(PUBLICATION, tree, "row7-all-destinations-denied")
+        self.assertEqual(result["tools"]["s3-resume"]["new"]["state"], "absent")
+        code, out, err = run_compare("--all-rows", "--new", tree)
+        self.assertEqual(code, 0, err)
+
+    def test_every_line_that_is_not_quoted_content_is_free_of_the_vocabulary(self):
+        import pc_evidence
+
+        code, out, err = run_compare("--all-rows", "--new", self.tree)
+        self.assertEqual(code, 0, err)
+        plain = [line for line in out.splitlines() if not line.startswith("  content: ")]
+        self.assertEqual(pc_evidence.verdict_pattern().findall("\n".join(plain)), [])
+        self.assertNotIn(self.tree, out)
+
+    def test_the_folder_names_the_comparer_prints_hold_no_path(self):
+        code, out, err = run_compare("--all-rows", "--new", self.tree)
+        self.assertNotIn(os.path.dirname(self.tree), out)
+
+
 if __name__ == "__main__":
     unittest.main()
