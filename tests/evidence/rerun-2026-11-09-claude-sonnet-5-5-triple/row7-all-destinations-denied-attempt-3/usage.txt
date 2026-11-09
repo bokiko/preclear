@@ -1,0 +1,8 @@
+usage for row7-all-destinations-denied
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 81023b26-ffc3-4062-bcf6-c3e2cb6bfe90, subtype success, turns 4, input 6, cache creation 8258, cache read 53121, output 736, cost 0.045716099999999996, cumulative 0.045716099999999996, wall 7.6 seconds
+stage s2: session 81023b26-ffc3-4062-bcf6-c3e2cb6bfe90, subtype success, turns 11, input 12, cache creation 12643, cache read 172048, output 6004, cost 0.1278408, cumulative 0.1735569, wall 44.0 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.1735569
+run total: 0.1735569

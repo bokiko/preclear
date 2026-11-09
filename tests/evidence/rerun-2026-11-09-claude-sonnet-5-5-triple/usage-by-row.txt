@@ -1,0 +1,22 @@
+usage by row, part 1
+every row folder present at the moment this part was written is listed; costs are in US dollars, kept as text
+rows: 3
+
+row7-all-destinations-denied (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.046481999999999996, cumulative 0.046481999999999996
+  stage s2: subtype success, turns 13, cost 0.1274452, cumulative 0.1739272
+  stage s3: subtype success, turns 4, cost 0.0555672, cumulative 0.0555672
+  row total: 0.2294944
+
+row7-all-destinations-denied-attempt-2 (filed, attempt 2)
+  stage s1: subtype success, turns 4, cost 0.0455158, cumulative 0.0455158
+  stage s2: subtype success, turns 13, cost 0.1444707, cumulative 0.1899865
+  stage s3: subtype success, turns 4, cost 0.054545, cumulative 0.054545
+  row total: 0.2445315
+
+row7-all-destinations-denied-attempt-3 (filed, attempt 3)
+  stage s1: subtype success, turns 4, cost 0.045716099999999996, cumulative 0.045716099999999996
+  stage s2: subtype success, turns 11, cost 0.1278408, cumulative 0.1735569
+  row total: 0.1735569
+
+total: 0.6475828 USD from 3 cost value(s); 0 UNCONFIRMED

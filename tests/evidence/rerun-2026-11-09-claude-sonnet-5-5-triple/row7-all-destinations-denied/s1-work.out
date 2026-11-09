@@ -1,0 +1,3 @@
+Step 2 is done: I added `src/widget-export.js`, a CSV-only exporter with small pure functions (`escapeField`, `toRow`, `exportWidgetsCsv`). It writes a header and rows for the `id` and `name` columns, and quotes fields that contain commas, quotes or newlines.
+The plan had no language or layout, so I chose plain CommonJS JavaScript under `src/`. I left JSON out, per the plan's decision.
+I didn't run tests, commit, start step 3, or touch the plan checkbox.

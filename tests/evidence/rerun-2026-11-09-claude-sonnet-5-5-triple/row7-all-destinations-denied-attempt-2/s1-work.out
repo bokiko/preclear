@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `src/widget-export.js`. It has three small pure functions (`escapeField`, `toRow`, `exportWidgetsCsv`) and writes a header plus `id,name` rows, with quoting for commas, quotes and newlines.
+The repo had no existing code, so I picked CommonJS JavaScript. Say so if you want another language.
+I didn't run tests, commit or start step 3, and the plan checkbox is still unchecked.

@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `src/widget_export.py`, with `export_csv`, `widget_row` and `escape_field` as small pure functions. It writes an `id,name` header and RFC 4180 quoting, per the CSV-first decision, with no JSON.
+The repo had no existing source or language convention, so I picked Python.
+I did not run tests, commit or start step 3, and I left the plan checkbox for checkpointing.

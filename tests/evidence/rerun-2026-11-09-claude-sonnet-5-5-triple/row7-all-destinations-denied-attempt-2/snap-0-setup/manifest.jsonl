@@ -1,0 +1,17 @@
+{"kind": "d", "path": "auto-memory", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "ckpt", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "ckpt/ledgers", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/.claude", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/.claude/skills", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/.claude/skills/preclear", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/SKILL.md", "sha256": "86e5b14e64b17397e3876768de398f15ddb40d6e31a3e605227dafed984c5a06", "size": 11994, "target": null}
+{"kind": "d", "path": "project/.claude/skills/preclear/references", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/references/checkpoint-v1.md", "sha256": "eca134a3defce9f67f7ed05a60b7da32d589df5f5cdaacbbf97682c5ebdbe132", "size": 7360, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/references/configuration.md", "sha256": "1a85939bbef834f9d7f7f8ffaf6197e2404929d0d0d6c523209fcb7458bfbe74", "size": 3678, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/references/status-sidecar.md", "sha256": "8107f83c02382c7e0803fd93b824d5ed442051a78e89b72b0820f49f46afc0e3", "size": 1388, "target": null}
+{"kind": "f", "path": "project/CLAUDE.md", "sha256": "ed03447e9df43888b81861f9904690a7e23ea715f339f382aef3194511997cf1", "size": 103, "target": null}
+{"kind": "d", "path": "project/thoughts", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/thoughts/plans", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/thoughts/plans/2026-10-15-widget-export.md", "sha256": "a4d70690252f755ea6b44d3c3362b345d5126962bb5b4bb40e99ed14a11adf0c", "size": 222, "target": null}
+{"kind": "f", "path": "settings.json", "sha256": "588d543901e0aae054dfa94718c0b060faae3fa8463cc9b36af6571f8e118c4c", "size": 614, "target": null}
