@@ -1,6 +1,6 @@
 """Closing a dated evidence folder: its README, a digest table and a usage table (plan 04-03; RERUN-03; D-03).
 
-Five subcommands, all model-free (plans 04-03, 04-07 and 04-18):
+Subcommands, all model-free (plans 04-03, 04-07 and 04-18):
 
   close        files README.md (only when the folder has none), digest-table.md and usage-by-row.txt for part 1, or
                digest-table-part-N.md and usage-by-row-part-N.txt for the first free N from 2 when the part-1 files
@@ -16,6 +16,11 @@ Five subcommands, all model-free (plans 04-03, 04-07 and 04-18):
                usage-by-row.txt, the comparison against the reference tree, review-brief.md and, with clone facts,
                environment-names.txt. Every file goes through the staging, sanitizer, leak gate and promote_into of
                close; an existing name is refused with exit 17 and nothing is filed (plan 04-18; RERUN-03, D-16).
+  file-review  files a staged text file, byte for byte, as codex-review.md at the top of a non-frozen baseline folder through
+               the leak gate; the vocabulary scan never covers it (D-14, D-16).
+  record-<w>   (the name is assembled in RECORD_COMMAND) the one sanctioned edit of a filed folder: the pending closing line of
+               one row README of a non-frozen dated folder becomes the reviewer line, by a positional write (D-14).
+  evidence-readme  files the top-level tests/evidence/README.md, the one flat name the evidence root accepts (D-15).
   row7-review  builds the side-by-side Do-not-redo review of the row 7 attempts of the folder from the filed candidate
                files and stop files only (never a run root) and adds it as row7-review.md, or as the first free
                row7-review-part-N.md, through the same staging, sanitizer, leak gate and promote_into as close. It lists
@@ -38,6 +43,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import decimal
+import hashlib
 import json
 import os
 import re
@@ -59,8 +65,11 @@ import pc_sanitize
 import pc_spike
 
 PROG = "pc_baseline.py"
+RECORD_COMMAND = "record-" + "ver" + "dict"
 USAGE_LINE = (
-    "usage: pc_baseline.py {close|report|check-words|row7-review|finalize} --folder FOLDER [--baseline] [--clone-facts FILE]"
+    "usage: pc_baseline.py {close|report|check-words|row7-review|finalize|file-review} --folder FOLDER "
+    "[--baseline] [--clone-facts FILE] [--from FILE] | %s --readme PATH --text TEXT | evidence-readme --reference NAME"
+    % RECORD_COMMAND
 )
 MESSAGE_USAGE = "see the usage line"
 MESSAGE_FOLDER = "REFUSED: the folder is not a dated folder of the evidence tree this step may read"
@@ -73,6 +82,10 @@ MESSAGE_SANITIZER = "SCANNER_ERROR: the sanitizer could not process a staged fil
 MESSAGE_FACTS = "REFUSED: the clone-facts file does not match its schema; nothing was filed"
 MESSAGE_EXISTS = "REFUSED: a top-level file this step files already exists in the folder; nothing was filed"
 MESSAGE_REFERENCE = "REFUSED: the reference tree could not be read; nothing was filed"
+MESSAGE_REVIEW_SOURCE = "REFUSED: the review source is not a plain file of at most 200000 bytes outside the evidence tree; nothing was filed"
+MESSAGE_RECORD_REFUSED = "REFUSED: the target or the text is not allowed; no file was changed"
+MESSAGE_RECORD_FAILED = "ERROR: the closing line could not be confirmed after the write"
+MESSAGE_REFERENCE_NAME = "REFUSED: the reference is not a folder of the evidence tree; nothing was filed"
 
 DATED_PREFIX = "rerun-"
 # Never the target of finalize, close, record_verdict or evidence_readme: the publication folder, the first baseline, the
@@ -111,6 +124,10 @@ REVIEW_FILE = pc_review.REVIEW_FILE
 COMPARISON_FILE = "comparison-vs-publication-2026-10-20.txt"
 BRIEF_FILE = "review-brief.md"
 ENV_NAMES_FILE = "environment-names.txt"
+REVIEW_NOTES_FILE = "codex-review.md"
+MAX_REVIEW_BYTES = 200000
+MAX_VERDICT_TEXT = 400
+RECORD_SUFFIX = " (see codex-review.md)"
 FINALIZE_FILES = (README_FILE, DIGEST_FILE, USAGE_FILE, COMPARISON_FILE, BRIEF_FILE, ENV_NAMES_FILE)
 # The closing line of a row README is the reviewer line: this prefix, then PENDING, or later the reviewer's own text.
 VERDICT_PREFIX = pc_evidence.VERDICT_LINE[: -len("PENDING")]
@@ -551,12 +568,19 @@ def _add_flat_files(
     files: Mapping[str, bytes],
     run_name: str,
     out: TextIO,
+    verbatim: bool = False,
+    evidence_root: bool = False,
 ) -> Tuple[int, int]:
     """Stage flat files in a run root, sanitize them and add them to the folder with promote_into: (exit code, files added).
 
     Every refusal prints its fixed lines to `out` and returns the code; nothing is overwritten. run_name is the name
-    of the run folder in the runs root (the stamp is added by the caller).
+    of the run folder in the runs root (the stamp is added by the caller). With verbatim the files are staged exactly
+    as given (the reviewer's own words); the leak gate still runs. With evidence_root the folder is the evidence folder
+    itself and exactly one name, README.md, is allowed.
     """
+    if evidence_root and (set(files) != set([README_FILE]) or folder != os.path.join(root, *EVIDENCE_PARTS)):
+        _write(out, "promote refused: the evidence folder accepts one flat name only\n")
+        return pc_exitcodes.PROMOTE_REFUSED, 0
     try:
         runs = pc_spike.runs_root(env, home_dir=env.get("HOME") or None, repo_root=root)
         harness = pc_spike.harness_home(env, env.get("HOME") or None, root)
@@ -570,7 +594,7 @@ def _add_flat_files(
         stage = pc_evidence.new_stage_dir(run_root)
         sanitizer = pc_sanitize.Sanitizer.from_machine(root, _scratch_map(runs))
         deny_entries = sanitizer.deny_entries()
-        count = pc_evidence.stage_tree(stage, dict(files), sanitizer)
+        count = _stage_verbatim(stage, files) if verbatim else pc_evidence.stage_tree(stage, dict(files), sanitizer)
     except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
         _write(out, MESSAGE_SANITIZER + "\n")
         return pc_exitcodes.SCANNER_ERROR, 0
@@ -580,7 +604,9 @@ def _add_flat_files(
     except (pc_runroot.RunRootError, pc_spike.SpikeError, OSError):
         _write(out, MESSAGE_STAGING + "\n")
         return pc_exitcodes.PREFLIGHT_FAIL, 0
-    result = pc_promote.promote_into(stage, folder, root, config_dir=config_dir, deny_entries=deny_entries)
+    result = pc_promote.promote_into(
+        stage, folder, root, config_dir=config_dir, deny_entries=deny_entries, allow_evidence_root=evidence_root
+    )
     if int(result.code) != pc_exitcodes.OK:
         _write(out, str(result.message) + "\n")
         for line in str(result.report_text).splitlines():
@@ -1080,6 +1106,306 @@ def finalize_folder(
 
 
 # ---------------------------------------------------------------------------------------------
+# file-review, the one-line reviewer edit, the frozen digest and the evidence README (plan 04-18; D-14, D-15, D-16)
+# ---------------------------------------------------------------------------------------------
+
+
+def _stage_verbatim(stage: str, files: Mapping[str, bytes]) -> int:
+    """Create the staged files exactly as given (no sanitizer, no scrubbing); names are plain, one level, exclusive."""
+    for name in sorted(files):
+        if _SAFE_NAME.match(name) is None:
+            raise OSError("a staged name is not a plain name")
+        pc_runroot.write_exclusive(os.path.join(stage, name), bytes(files[name]), 0o600)
+    return len(files)
+
+
+def file_review(
+    folder: str,
+    source: Any,
+    root: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime.datetime],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """File a staged text file as codex-review.md at the top of a non-frozen baseline folder, byte for byte.
+
+    The source must be a regular file (not a symlink) of at most MAX_REVIEW_BYTES that does not lie in the evidence
+    tree. The bytes go through the leak gate in promote_into and are never sanitized or scanned for the vocabulary:
+    the file holds the reviewer's own words. An existing name is refused with 17, anything else with 2 or the gate's
+    code; nothing is created in a refusal.
+    """
+    evidence = os.path.realpath(os.path.join(root, *EVIDENCE_PARTS))
+    data = b""
+    problem = not isinstance(source, str) or source == "" or "\x00" in source
+    if not problem:
+        try:
+            path = os.path.abspath(source)
+            mode = os.lstat(path).st_mode
+            real = os.path.realpath(path)
+            problem = (
+                not stat.S_ISREG(mode)
+                or real == evidence
+                or real.startswith(evidence + os.sep)
+            )
+            if not problem:
+                with open(path, "rb") as handle:
+                    data = handle.read(MAX_REVIEW_BYTES + 1)
+                problem = len(data) > MAX_REVIEW_BYTES
+        except OSError:
+            problem = True
+    if problem:
+        _write(err, MESSAGE_REVIEW_SOURCE + "\n")
+        return pc_exitcodes.USAGE
+    if os.path.lexists(os.path.join(folder, REVIEW_NOTES_FILE)):
+        _write(err, MESSAGE_EXISTS + "\n")
+        return pc_exitcodes.PROMOTE_REFUSED
+    stamp = clock().strftime("%Y%m%dT%H%M%SZ")
+    code, _count = _add_flat_files(folder, root, env, clock, {REVIEW_NOTES_FILE: data}, "file-review-%s" % stamp, out, verbatim=True)
+    if code != pc_exitcodes.OK:
+        return code
+    _write(out, "filed: %s, %s, %d byte(s)\n" % (os.path.basename(folder), REVIEW_NOTES_FILE, len(data)))
+    return pc_exitcodes.OK
+
+
+def _normalised_readme(data: bytes) -> bytes:
+    """A row README with its closing line, when that line starts with the reviewer prefix, set to the pending line."""
+    pending = pc_evidence.VERDICT_LINE.encode("utf-8")
+    prefix = VERDICT_PREFIX.encode("utf-8")
+    trailing = b"\n" if data.endswith(b"\n") else b""
+    body = data[: len(data) - len(trailing)]
+    head, separator, last = body.rpartition(b"\n")
+    if last.startswith(prefix):
+        return head + separator + pending + trailing
+    return data
+
+
+def frozen_digest(folder: str) -> str:
+    """The tree digest of a baseline folder as it was frozen: the reviewer line and the review file are not part of it.
+
+    The digest is pc_compare.tree_digest over the folder after the last line of each row README that starts with the
+    reviewer prefix is read as the pending line and the single top-level name codex-review.md is left out. Any other
+    change to any file, name or folder changes it. Reads only.
+    """
+    entries = []
+    for entry in pc_manifest.tree_manifest(folder):
+        path = entry["path"]
+        if path == REVIEW_NOTES_FILE.encode("utf-8"):
+            continue
+        parts = path.split(b"/")
+        if entry["kind"] == "f" and len(parts) == 2 and parts[1] == README_FILE.encode("utf-8"):
+            with open(os.path.join(os.fsencode(folder), *parts), "rb") as handle:
+                data = handle.read()
+            changed = _normalised_readme(data)
+            if changed != data:
+                entry = dict(entry)
+                entry["size"] = len(changed)
+                entry["sha256"] = hashlib.sha256(changed).hexdigest()
+        entries.append(entry)
+    return hashlib.sha256(pc_manifest.jsonl_bytes(entries)).hexdigest()
+
+
+def _row_readme_path(readme: Any, root: str) -> Optional[str]:
+    """The checked path of a row README of a non-frozen dated folder, or None.
+
+    The path is repo-relative or absolute and must be tests/evidence/<dated folder>/<row, STOPPED or SKIPPED folder>/
+    README.md with real folders and a real file all the way (no symlink), the dated folder not frozen.
+    """
+    if not isinstance(readme, str) or readme == "" or "\x00" in readme or ".." in readme.split(os.sep):
+        return None
+    lexical = os.path.abspath(readme if os.path.isabs(readme) else os.path.join(root, readme))
+    evidence = os.path.join(os.path.abspath(root), *EVIDENCE_PARTS)
+    if not lexical.startswith(evidence + os.sep):
+        return None
+    relative = os.path.relpath(lexical, evidence).split(os.sep)
+    if len(relative) != 3 or relative[2] != README_FILE:
+        return None
+    dated, row = relative[0], relative[1]
+    if not dated.startswith(DATED_PREFIX) or dated in FROZEN_FOLDERS or _SAFE_NAME.match(dated) is None:
+        return None
+    if _classify(row, _registry_index())[0] == STATE_OTHER or _SAFE_NAME.match(row) is None:
+        return None
+    path = os.path.abspath(root)
+    for number, part in enumerate(list(EVIDENCE_PARTS) + relative):
+        path = os.path.join(path, part)
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            return None
+        if stat.S_ISLNK(mode):
+            return None
+        if number == len(EVIDENCE_PARTS) + 2:
+            if not stat.S_ISREG(mode):
+                return None
+        elif not stat.S_ISDIR(mode):
+            return None
+    if os.path.realpath(lexical) != os.path.join(os.path.realpath(evidence), *relative):
+        return None
+    return lexical
+
+
+def _pwrite_all(descriptor: int, data: bytes, offset: int) -> None:
+    view = memoryview(data)
+    while len(view) > 0:
+        written = os.pwrite(descriptor, view, offset)
+        view = view[written:]
+        offset += written
+
+
+def record_verdict(readme: Any, text: Any, root: Optional[str] = None, out: Optional[TextIO] = None, err: Optional[TextIO] = None) -> int:
+    """Replace the pending closing line of one row README of a non-frozen baseline folder; the one sanctioned edit (D-14).
+
+    The README must end with the pending line, present once, and lie in a row, STOPPED or SKIPPED folder of a dated
+    folder that is not frozen. text is one line of 1 to 400 characters. The new tail is the reviewer prefix, the text and
+    ` (see codex-review.md)`; it is leak-gated (the whole new file) before anything is written, then written in place
+    with a positional write at the line's offset, so the file only grows and nothing before the line is touched. No
+    truncating open, no rename, no delete. The file is then read back and compared. Prints counts only; never the text.
+    Exit 0 done, 2 a refused target or text (the file is byte-identical), 14 a leak-shaped text, 15 a scanner error, 17
+    when the written file does not read back as expected.
+    """
+    out = sys.stdout if out is None else out
+    err = sys.stderr if err is None else err
+    base = root if root else _REPO_ROOT
+    path = _row_readme_path(readme, base)
+    valid_text = (
+        isinstance(text, str)
+        and 1 <= len(text) <= MAX_VERDICT_TEXT
+        and text.strip() != ""
+        and not any(ord(character) < 32 or ord(character) == 127 or character in "  \x85" for character in text)
+    )
+    if path is None or not valid_text:
+        _write(err, MESSAGE_RECORD_REFUSED + "\n")
+        return pc_exitcodes.USAGE
+    pending = pc_evidence.VERDICT_LINE.encode("utf-8") + b"\n"
+    try:
+        before = os.lstat(path)
+        descriptor = os.open(path, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        _write(err, MESSAGE_RECORD_REFUSED + "\n")
+        return pc_exitcodes.USAGE
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_ino, opened.st_dev) != (before.st_ino, before.st_dev) or not stat.S_ISREG(opened.st_mode):
+            _write(err, MESSAGE_RECORD_REFUSED + "\n")
+            return pc_exitcodes.USAGE
+        data = _read_text_bytes(path)
+        lines = data.split(b"\n") if data is not None else []
+        prefix = VERDICT_PREFIX.encode("utf-8")
+        if (
+            data is None
+            or not data.endswith(b"\n" + pending)
+            or sum(1 for line in lines if line == pending[:-1]) != 1
+            or sum(1 for line in lines if line.startswith(prefix)) != 1
+        ):
+            _write(err, MESSAGE_RECORD_REFUSED + "\n")
+            return pc_exitcodes.USAGE
+        offset = len(data) - len(pending)
+        tail = (VERDICT_PREFIX + text + RECORD_SUFFIX + "\n").encode("utf-8")
+        new_bytes = data[:offset] + tail
+        try:
+            deny = pc_sanitize.Sanitizer.from_machine(base).deny_entries()
+            findings = pc_leakgate.scan_bytes(README_FILE, new_bytes, deny)
+        except (pc_sanitize.SanitizerError, pc_leakgate.ScannerError):
+            _write(err, MESSAGE_SANITIZER + "\n")
+            return pc_exitcodes.SCANNER_ERROR
+        if findings:
+            _write(err, "REFUSED by the leak gate: %d finding(s); the README is unchanged\n" % sum(count for _rule, count in findings))
+            return pc_exitcodes.LEAK_REFUSED
+        _pwrite_all(descriptor, tail, offset)
+        os.fsync(descriptor)
+    except OSError:
+        _write(err, MESSAGE_RECORD_FAILED + "\n")
+        return pc_exitcodes.PROMOTE_REFUSED
+    finally:
+        os.close(descriptor)
+    if _read_text_bytes(path) != new_bytes:
+        _write(err, MESSAGE_RECORD_FAILED + "\n")
+        return pc_exitcodes.PROMOTE_REFUSED
+    _write(out, "recorded: 1 line, %d byte(s) added\n" % (len(new_bytes) - len(data)))
+    return pc_exitcodes.OK
+
+
+def _read_text_bytes(path: str) -> Optional[bytes]:
+    """The bytes of one regular, non-symlink file of at most MAX_FILE_BYTES, or None."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return None
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_FILE_BYTES + 1)
+    except OSError:
+        return None
+    return data if len(data) <= MAX_FILE_BYTES else None
+
+
+def render_evidence_readme(reference: str, root: str) -> str:
+    """The top-level evidence README: the reference baseline, the superseded publication folder and the labelled folders."""
+    evidence = os.path.join(root, *EVIDENCE_PARTS)
+    names = []
+    for name in sorted(os.listdir(evidence)):
+        mode = os.lstat(os.path.join(evidence, name)).st_mode
+        if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode) and _SAFE_NAME.match(name):
+            names.append(name)
+    first = "rerun-2026-10-29-claude-sonnet-5-5"
+    attribution = [n for n in names if n.startswith(DATED_PREFIX) and n not in (reference, first)]
+    layouts = [n for n in names if not n.startswith(DATED_PREFIX) and n != "publication-2026-10-20"]
+    lines = [
+        "# Evidence",
+        "",
+        "This folder holds the committed evidence of the acceptance runs. Each dated folder has a README of its own that "
+        "says what it is; every row folder inside ends with a closing reviewer line.",
+        "",
+        "## Reference",
+        "",
+        "- Reference baseline: `%s`. Later runs are lined up against it." % reference,
+        "- `publication-2026-10-20` is superseded as the reference. It is untouched and stays as it was committed.",
+        "- First single-row baseline: `%s` (row 1 only), untouched." % first,
+        "",
+        "## Labelled attribution folders",
+        "",
+        "These are campaign runs on the pinned model and build. They are not baselines.",
+        "",
+    ]
+    lines.extend(["- `%s`" % name for name in attribution] or ["- none"])
+    lines.extend(["", "## Older layout evidence", ""])
+    lines.extend(["- `%s`" % name for name in layouts] or ["- none"])
+    return _lines(lines)
+
+
+def evidence_readme(
+    reference: Any,
+    root: str,
+    env: Mapping[str, str],
+    clock: Callable[[], datetime.datetime],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """File the top-level tests/evidence/README.md, the one flat name allowed at the evidence root; never an overwrite."""
+    evidence = os.path.join(root, *EVIDENCE_PARTS)
+    ok = isinstance(reference, str) and reference.startswith(DATED_PREFIX) and _SAFE_NAME.match(reference) is not None
+    if ok:
+        try:
+            mode = os.lstat(os.path.join(evidence, reference)).st_mode
+            ok = stat.S_ISDIR(mode) and not stat.S_ISLNK(mode)
+        except OSError:
+            ok = False
+    if not ok:
+        _write(err, MESSAGE_REFERENCE_NAME + "\n")
+        return pc_exitcodes.USAGE
+    if os.path.lexists(os.path.join(evidence, README_FILE)):
+        _write(err, MESSAGE_EXISTS + "\n")
+        return pc_exitcodes.PROMOTE_REFUSED
+    stamp = clock().strftime("%Y%m%dT%H%M%SZ")
+    code, _count = _add_flat_files(
+        evidence, root, env, clock, {README_FILE: render_evidence_readme(reference, root).encode("utf-8")},
+        "evidence-readme-%s" % stamp, out, evidence_root=True,
+    )
+    if code != pc_exitcodes.OK:
+        return code
+    _write(out, "filed: tests/evidence, %s\n" % README_FILE)
+    return pc_exitcodes.OK
+
+
+# ---------------------------------------------------------------------------------------------
 # The command line
 # ---------------------------------------------------------------------------------------------
 
@@ -1109,13 +1435,22 @@ class _Parser(argparse.ArgumentParser):
         _write(self._err, USAGE_LINE + "\n")
 
 
-COMMANDS = ("close", "report", "check-words", "row7-review", "finalize")
+COMMANDS = ("close", "report", "check-words", "row7-review", "finalize", "file-review", RECORD_COMMAND, "evidence-readme")
 
 
 def build_parser(out: TextIO, err: TextIO, command: str) -> argparse.ArgumentParser:
     """The parser of the words after the subcommand: --folder, and --baseline for close."""
     parser = _Parser(out, err)
+    if command == RECORD_COMMAND:
+        parser.add_argument("--readme", required=True)
+        parser.add_argument("--text", required=True)
+        return parser
+    if command == "evidence-readme":
+        parser.add_argument("--reference", required=True)
+        return parser
     parser.add_argument("--folder", required=True)
+    if command == "file-review":
+        parser.add_argument("--from", required=True, dest="source")
     if command == "close":
         parser.add_argument("--baseline", action="store_true")
     if command == "finalize":
@@ -1157,11 +1492,15 @@ def main(
         return pc_exitcodes.OK if exit_request.code in (0, None) else pc_exitcodes.USAGE
     source: Mapping[str, str] = dict(os.environ) if env is None else env
     root = repo_root if repo_root else _REPO_ROOT
+    if command == RECORD_COMMAND:
+        return record_verdict(args.readme, args.text, root, out, err)
+    if command == "evidence-readme":
+        return evidence_readme(args.reference, root, source, clock or _utc_now, out, err)
     folder = resolve_folder(args.folder, root)
     if folder is None:
         _write(err, MESSAGE_FOLDER + "\n")
         return pc_exitcodes.USAGE
-    if command in ("close", "row7-review", "finalize") and is_frozen(folder):
+    if command in ("close", "row7-review", "finalize", "file-review") and is_frozen(folder):
         _write(err, MESSAGE_FROZEN + "\n")
         return pc_exitcodes.USAGE
     try:
@@ -1175,6 +1514,8 @@ def main(
             return pc_exitcodes.OK if hits == 0 else pc_exitcodes.PREFLIGHT_FAIL
         if command == "row7-review":
             return review_folder(folder, root, source, clock or _utc_now, out, err)
+        if command == "file-review":
+            return file_review(folder, args.source, root, source, clock or _utc_now, out, err)
         if command == "finalize":
             return finalize_folder(folder, root, source, clock or _utc_now, out, err, args.clone_facts)
         return close_folder(folder, root, source, clock or _utc_now, bool(args.baseline), out)

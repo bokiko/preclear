@@ -853,6 +853,62 @@ that is absent or damaged is listed as such. The table is staged, sanitized, gat
 no row 7 attempt, and the two frozen folders, are refused with exit 2. Each row 7 README points to `row7-review.md` at
 the top of the dated folder.
 
+#### Finalizing a baseline folder
+
+`python3 -E -s -B tests/harness/pc_baseline.py finalize --folder FOLDER [--clone-facts FILE]` is the one step that gives
+a baseline folder its top-level files, in place of `close --baseline`. It files, through the same staging, sanitizer and
+leak gate as `close`, a `README.md`, `digest-table.md`, `usage-by-row.txt`,
+`comparison-vs-publication-2026-10-20.txt` and `review-brief.md`, and with a clone-facts file also
+`environment-names.txt`. A name that already exists is refused with exit 17 and nothing is created; a frozen folder (the
+publication folder, the first baseline, the older layout folders and every committed rerun folder) and any folder that
+is not a dated folder of the evidence tree are refused with exit 2.
+
+The README labels the folder a new baseline on the pinned model and Claude Code build its rows record, not a replication
+of the committed publication folder, and states the folder counts and the counts by entry (the latest attempt of each id).
+It then holds the run state: `Run state: complete` when every layout and row id of the registry has an outcome folder
+(the row folder, `STOPPED-<id>` or `SKIPPED-<id>`), and otherwise `Run state: partial` with the number of entries that
+have an outcome folder, `Entries not run: N` and one `Not run: <id>` line for each id with none, so the rows measured
+before a budget stop read as a partial baseline and never as a full one. The state is read from the folder itself. The
+folder README holds no reviewer line.
+
+The clone-facts file is written by the clean-clone bootstrap and read strictly. It is one JSON object with exactly these
+keys: `env_names` (at most 40 distinct names of upper-case letters, digits and underscores), the counts
+`path_checkpoint_binaries`, `helper_files_in_clone`, `helper_calls`, `helper_calls_stub` and `helper_calls_other`
+(non-negative integers), `clone_head` (40 lower-case hex characters), `source_kind` (`url` or `local`) and `home_kind`
+(`throwaway` or `real`). Any other key, type or value is refused with exit 2 and one fixed line, and no value is a path or
+a login. The README states the names, the counts before and after the run, the head, whether the source was the public
+address or a local path, and whether the child ran with a throwaway or the real home folder.
+
+`review-brief.md` is the text bokiko pastes into the visible review tab. It is built from filed files only: the folder
+name, the model and build, the run state and the ids not run (listed, with no question about them), the digest table, a
+pointer to the row 7 review table (the name of a committed `-triple` folder when the clone holds one), and for every row,
+layout, STOPPED and SKIPPED folder the lines of its checklist quoted with the `> ` prefix. It asks for one line per row
+and layout that names a conclusion in a few words and the reason, and for a plain statement where a row cannot be judged
+from the files. Because it is filed through the leak gate, it is scanned before it can be pasted anywhere. The review
+itself, in the reviewer's own words, is outside the harness.
+
+`pc_baseline.py file-review --folder FOLDER --from FILE` files a text file staged outside the repository, of at most
+200,000 bytes, as `codex-review.md` at the top of a non-frozen baseline folder, byte for byte, through the leak gate; an
+existing name is refused with exit 17, a frozen folder or an unusable source with exit 2, and the vocabulary scan never
+covers the file because it holds the reviewer's words.
+
+The reviewer line of a row README is changed by one function only. `record_verdict` (the command `record-` followed by
+`verdict`, with `--readme PATH --text TEXT`) replaces the closing line `Reviewer verdict: PENDING` of one row, STOPPED or
+SKIPPED README of a non-frozen dated folder by the same prefix, the text and ` (see codex-review.md)`. The README must
+end with the pending line, present once; the text is one line of 1 to 400 characters; the whole new file is leak-gated
+before any write; the write is positional at the line's offset, so the file only grows and no byte before the line is
+touched; the file is read back and compared. Everything else is refused with exit 2 and the file byte-identical, and the
+output holds counts only. A run, a wave or a test of a real folder never calls it: only bokiko's word in the conversation
+triggers it. `frozen_digest` is the tree digest of a baseline folder after the last line of each row README that starts
+with the reviewer prefix is read as the pending line and the single top-level name `codex-review.md` is left out, so it
+allows exactly those two changes; the first baseline's digest is pinned through both digest functions in
+`test_frozen_baseline.py`, and the new baseline's digest joins that table after its lines are recorded.
+
+`pc_baseline.py evidence-readme --reference NAME` files the top-level `tests/evidence/README.md` (the one flat name the
+evidence root accepts): it names the reference baseline, labels the publication folder superseded and untouched, and names
+the first single-row baseline, the labelled attribution folders and the older layout folders it finds. An existing file is
+refused with exit 17 and a reference that is not a dated folder of the tree with exit 2.
+
 ### Comparing a rerun with the committed row
 
 `python3 -E -s -B tests/harness/pc_compare.py --old tests/evidence/publication-2026-10-20 --new tests/evidence/<the new folder>`
@@ -871,6 +927,14 @@ counts, the digest lines, the Claude Code version and the usage file. Content di
 and are only listed. The committed token `<repo>/<run>` and the newer token `<run>` are read as equal before any
 count that depends on text. A file that is missing or cannot be parsed is reported as such for that side and the
 run goes on.
+
+`--all-rows --new DIR [--old DIR]` compares a whole baseline. It maps every row id to the committed folder of the reference
+tree (the `-rerun` folder when there is one, else the bare folder), compares only the highest filed attempt of each row,
+lists STOPPED and SKIPPED folders without comparing them, lists the ids with no outcome folder as not run, lists the other
+committed folders of a row id as older attempts not compared (on content lines, as committed names), and prints the words
+no structural reference for each layout. `--old` defaults to the constant `DEFAULT_REFERENCE`, the one value the later
+swap commit changes; `--row` and `--all-rows` together exit 2. The full traces now include row 12's fourth stage, and a
+trace missing on one side is reported as absent on that side. The tree digests are printed before and after as for one row.
 
 It opens everything for reading only and writes nothing but its report. To show that, it prints a digest of each
 whole tree before the comparison and again after it, and says for each side whether the two are equal. The digest
@@ -904,9 +968,9 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `git-wrapper` - the row 11 git wrapper: delegates every call to the real git, logs one line per call, injects one concurrent change on the n-th exact status call
 - `checkpoint_stub.py` - the single-file STUB-BACKED checkpoint helper
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
-- `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report, check-words and the row 7 review table
+- `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report, check-words and the row 7 review table; finalize for a baseline, the review brief, file-review, the one-line reviewer edit, the frozen digest and the evidence README
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
-- `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after
+- `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after; the all-rows mapping
 - `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED and STOPPED labels
 - `pc_exitcodes.py` - the named exit codes
 - `pc_flags.py` - the pinned `claude -p` contract: flag table, argv builder, environment scrub, version gate
@@ -942,6 +1006,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_evidence.py` - tests for filing: the deny entries, the file set, provenance, usage, vocabulary, the checklist, SKIPPED, refile and a race
 - `test_exitcode_agreement.py` - exit literals outside `pc_exitcodes.py` agree with its constants
 - `test_flags.py` - tests for the pinned contract
+- `test_frozen_baseline.py` - the pinned baseline digests, the frozen digest and its mutation tests, the one-line reviewer edit and its refusals
 - `test_frozen_reference.py` - the frozen reference is what the evidence ran on
 - `test_frozen_tree.py` - SKILL.md size cap and pinned digests of the skill, references, fixtures and committed evidence
 - `test_imports.py` - standard library only, 3.9 syntax, no shadowing, naming rule

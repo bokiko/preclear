@@ -1278,5 +1278,207 @@ class BriefTests(unittest.TestCase):
         self.assertIn("> - [ ] a line\n", brief)
 
 
+RECORD = "record-" + "ver" + "dict"
+
+
+def staged_text(rig, data, name="review.txt"):
+    """A text file staged outside the repository, as bokiko's pasted review would be."""
+    path = os.path.join(rig.base, name)
+    with open(path, "xb") as handle:
+        handle.write(data)
+    return path
+
+
+class RecordVerdictTests(unittest.TestCase):
+    """The record command line: one line of one row README, counts only (plan 04-18, Task 3; D-14)."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+        self.readme = os.path.join(self.w.relative(), ROW1, "README.md")
+
+    def test_the_command_replaces_the_pending_line_and_prints_counts_only(self) -> None:
+        before = read_text(os.path.join(self.w.rig.repo, self.readme))
+        code, out, err = run_baseline(self.w.rig, [RECORD, "--readme", self.readme, "--text", "a conclusion in a few words"])
+        self.assertEqual(code, 0, out + err)
+        after = read_text(os.path.join(self.w.rig.repo, self.readme))
+        self.assertTrue(before.endswith("\n" + VERDICT_LINE + "\n"))
+        self.assertEqual(after, before[: -len(VERDICT_LINE) - 1] + "Reviewer verdict: a conclusion in a few words (see codex-review.md)\n")
+        self.assertRegex(out, r"^recorded: 1 line, [0-9]+ byte\(s\) added\n$")
+        self.assertNotIn("conclusion", out + err)
+        self.assertNotIn(self.w.rig.base, out + err)
+
+    def test_the_vocabulary_scan_reads_a_recorded_closing_line_as_the_reviewers_own_and_still_counts_a_second_one(self) -> None:
+        word = "fa" + "iled"
+        self.assertEqual(run_baseline(self.w.rig, [RECORD, "--readme", self.readme, "--text", "the row %s on the helper" % word])[0], 0)
+        code, out, err = run_baseline(self.w.rig, ["check-words", "--folder", self.w.relative()])
+        self.assertEqual(code, 0, out + err)
+        path = os.path.join(self.w.rig.repo, self.readme)
+        with open(path, "ab") as handle:
+            handle.write(("Reviewer verdict: a second line %s\n" % word).encode("utf-8"))
+        self.assertEqual(run_baseline(self.w.rig, ["check-words", "--folder", self.w.relative()])[0], pc_exitcodes.PREFLIGHT_FAIL)
+
+    def test_a_missing_option_and_an_unknown_option_exit_2(self) -> None:
+        for args in ([RECORD], [RECORD, "--readme", self.readme], [RECORD, "--text", "x"],
+                     [RECORD, "--readme", self.readme, "--text", "x", "--folder", "y"]):
+            code, out, err = run_baseline(self.w.rig, args)
+            self.assertEqual(code, pc_exitcodes.USAGE, " ".join(args))
+
+    def test_a_row_readme_of_the_first_baseline_is_refused_with_2_and_stays_as_it_is(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        path = os.path.join(root, "tests", "evidence", "rerun-2026-10-29-claude-sonnet-5-5", "row1-wrong-binding", "README.md")
+        with open(path, "rb") as handle:
+            before = handle.read()
+        out = io.StringIO()
+        err = io.StringIO()
+        code = baseline().main([RECORD, "--readme", path, "--text", "x"], repo_root=root, out=out, err=err)
+        self.assertEqual(code, pc_exitcodes.USAGE)
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        self.assertEqual(err.getvalue().strip(), "REFUSED: the target or the text is not allowed; no file was changed")
+
+    def test_the_usage_line_names_the_command_and_a_second_use_on_the_same_readme_is_refused(self) -> None:
+        self.assertIn(RECORD, baseline().USAGE_LINE)
+        args = [RECORD, "--readme", self.readme, "--text", "one"]
+        self.assertEqual(run_baseline(self.w.rig, args)[0], 0)
+        self.assertEqual(run_baseline(self.w.rig, args)[0], pc_exitcodes.USAGE)
+
+
+class FileReviewTests(unittest.TestCase):
+    """file-review files a staged text file as codex-review.md, byte for byte, through the leak gate (D-14, D-16)."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+
+    def file(self, source, folder=None):
+        return run_baseline(self.w.rig, ["file-review", "--folder", folder or self.w.relative(), "--from", source])
+
+    def refused(self, source, code, folder=None):
+        before = tree_snapshot(self.w.dated)
+        result, out, err = self.file(source, folder)
+        self.assertEqual(result, code, out + err)
+        self.assertEqual(tree_snapshot(self.w.dated), before, "nothing was created")
+        self.assertNotIn(self.w.rig.base, out + err)
+        return out + err
+
+    def test_the_file_is_filed_byte_for_byte_and_the_vocabulary_scan_does_not_cover_it(self) -> None:
+        word = "fa" + "iled"
+        data = ("Codex wrote: row 1 %s, row 2 ok.\r\n\u00e9\u4e2d\n> quoted\n\n" % word).encode("utf-8")
+        source = staged_text(self.w.rig, data)
+        before = tree_snapshot(self.w.dated)
+        code, out, err = self.file(source)
+        self.assertEqual(code, 0, out + err)
+        after = tree_snapshot(self.w.dated)
+        self.assertEqual(sorted(set(after) - set(before)), ["codex-review.md"])
+        self.assertEqual(after["codex-review.md"], data)
+        self.assertEqual(out, "filed: %s, codex-review.md, %d byte(s)\n" % (DATED, len(data)))
+        self.assertEqual(run_baseline(self.w.rig, ["check-words", "--folder", self.w.relative()])[0], 0)
+
+    def test_an_existing_codex_review_md_is_refused_with_17(self) -> None:
+        self.assertEqual(self.file(staged_text(self.w.rig, b"one\n"))[0], 0)
+        first = tree_snapshot(self.w.dated)
+        code, out, err = self.file(staged_text(self.w.rig, b"two\n", "second.txt"))
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(self.w.dated), first)
+
+    def test_a_frozen_folder_and_a_folder_that_is_not_a_dated_folder_are_refused_with_2(self) -> None:
+        source = staged_text(self.w.rig, b"x\n")
+        frozen = os.path.join("tests", "evidence", "rerun-2026-11-03-claude-sonnet-5-5-wave-a")
+        os.makedirs(os.path.join(self.w.rig.repo, frozen))
+        self.assertEqual(run_baseline(self.w.rig, ["file-review", "--folder", frozen, "--from", source])[0], pc_exitcodes.USAGE)
+        self.assertEqual(os.listdir(os.path.join(self.w.rig.repo, frozen)), [])
+        for folder in (os.path.join("tests", "evidence"), os.path.join(self.w.relative(), ROW1), "..", "rerun-missing"):
+            self.assertEqual(run_baseline(self.w.rig, ["file-review", "--folder", folder, "--from", source])[0], pc_exitcodes.USAGE, folder)
+
+    def test_a_missing_source_a_folder_a_symlink_and_a_source_in_the_evidence_tree_are_refused_with_2(self) -> None:
+        self.refused(os.path.join(self.w.rig.base, "missing.txt"), pc_exitcodes.USAGE)
+        self.refused(self.w.rig.base, pc_exitcodes.USAGE)
+        real = staged_text(self.w.rig, b"x\n")
+        link = os.path.join(self.w.rig.base, "link.txt")
+        os.symlink(real, link)
+        self.refused(link, pc_exitcodes.USAGE)
+        inside = os.path.join(self.w.dated, ROW1, "README.md")
+        self.refused(inside, pc_exitcodes.USAGE)
+        self.refused("", pc_exitcodes.USAGE)
+
+    def test_a_source_of_200000_bytes_is_filed_and_one_byte_more_is_refused_with_2(self) -> None:
+        big = ("a" * 79 + "\n") * 2500
+        self.assertEqual(len(big), 200000)
+        self.refused(staged_text(self.w.rig, (big + "x").encode("utf-8"), "over.txt"), pc_exitcodes.USAGE)
+        code, out, err = self.file(staged_text(self.w.rig, big.encode("utf-8"), "exact.txt"))
+        self.assertEqual(code, 0, out + err)
+
+    def test_a_leak_shaped_line_is_refused_with_14_and_nothing_is_created(self) -> None:
+        seeded = pc_seeds.home_path("pcsynthhome") + "/data"
+        text = self.refused(staged_text(self.w.rig, ("a line\n%s\n" % seeded).encode("utf-8")), pc_exitcodes.LEAK_REFUSED)
+        self.assertNotIn(seeded, text)
+
+    def test_binary_content_is_refused_by_the_gate_with_14(self) -> None:
+        self.refused(staged_text(self.w.rig, b"a\x00b\n"), pc_exitcodes.LEAK_REFUSED)
+
+
+class EvidenceReadmeTests(unittest.TestCase):
+    """evidence-readme files the one top-level file with the evidence-root allowance and nothing else (D-15; T-04-89)."""
+
+    def setUp(self) -> None:
+        self.w = fresh_copy_of_world()
+        self.evidence = os.path.join(self.w.rig.repo, "tests", "evidence")
+        for name in ("rerun-2026-10-29-claude-sonnet-5-5", "rerun-2026-11-03-claude-sonnet-5-5-wave-a", "plain-memory-2026-10-19"):
+            os.makedirs(os.path.join(self.evidence, name), exist_ok=True)
+
+    def run_it(self, reference=DATED):
+        return run_baseline(self.w.rig, ["evidence-readme", "--reference", reference])
+
+    def test_it_files_the_readme_naming_the_reference_the_superseded_folder_and_the_labelled_folders(self) -> None:
+        before = tree_snapshot(self.evidence)
+        code, out, err = self.run_it()
+        self.assertEqual(code, 0, out + err)
+        after = tree_snapshot(self.evidence)
+        self.assertEqual(sorted(set(after) - set(before)), ["README.md"])
+        for name, data in before.items():
+            self.assertEqual(after[name], data, name)
+        text = read_text(os.path.join(self.evidence, "README.md"))
+        self.assertIn("- Reference baseline: `%s`." % DATED, text)
+        self.assertIn("`publication-2026-10-20` is superseded as the reference. It is untouched", text)
+        self.assertIn("First single-row baseline: `rerun-2026-10-29-claude-sonnet-5-5`", text)
+        self.assertIn("- `rerun-2026-11-03-claude-sonnet-5-5-wave-a`", text)
+        self.assertIn("- `plain-memory-2026-10-19`", text)
+        self.assertNotIn("`%s`\n- `rerun-2026-10-29" % DATED, text)
+        self.assertEqual(out, "filed: tests/evidence, README.md\n")
+        self.assertNotIn(self.w.rig.base, text)
+        self.assertNotIn("Reviewer verdict", text)
+
+    def test_an_existing_readme_is_refused_with_17_and_left_as_it_is(self) -> None:
+        self.assertEqual(self.run_it()[0], 0)
+        first = tree_snapshot(self.evidence)
+        code, out, err = self.run_it()
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(self.evidence), first)
+
+    def test_a_reference_that_is_not_a_folder_of_the_tree_is_refused_with_2_and_nothing_is_filed(self) -> None:
+        before = tree_snapshot(self.evidence)
+        for reference in ("missing-folder", "..", ".", "a/b", "", "a b", "README.md", "plain-memory-2026-10-19", "rerun-missing"):
+            self.assertEqual(self.run_it(reference)[0], pc_exitcodes.USAGE, reference)
+        link = os.path.join(self.evidence, "rerun-linked")
+        os.symlink(os.path.join(self.evidence, DATED), link)
+        self.assertEqual(self.run_it("rerun-linked")[0], pc_exitcodes.USAGE)
+        self.assertEqual(tree_snapshot(self.evidence), before)
+
+    def test_the_evidence_root_accepts_one_flat_name_only(self) -> None:
+        for files in ({"other.md": b"x\n"}, {"README.md": b"x\n", "second.md": b"y\n"}, {"sub/README.md": b"x\n"}):
+            before = tree_snapshot(self.evidence)
+            out = io.StringIO()
+            code, count = baseline()._add_flat_files(
+                self.evidence, self.w.rig.repo, dict(self.w.rig.env), fixed_clock, files, "guard-test", out, evidence_root=True
+            )
+            self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, sorted(files))
+            self.assertEqual(count, 0)
+            self.assertEqual(tree_snapshot(self.evidence), before)
+
+    def test_the_other_commands_still_refuse_the_evidence_folder_itself(self) -> None:
+        for command in ("close", "finalize"):
+            code, out, err = run_baseline(self.w.rig, [command, "--folder", os.path.join("tests", "evidence")])
+            self.assertEqual(code, pc_exitcodes.USAGE, command)
+
+
 if __name__ == "__main__":
     unittest.main()
