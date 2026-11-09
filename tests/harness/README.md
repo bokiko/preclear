@@ -970,6 +970,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `pc_allowlist.py` - bounded model of Bash permission-rule matching
 - `pc_baseline.py` - closing a dated folder: README, digest table and usage table as part files; report, check-words and the row 7 review table; finalize for a baseline, the review brief, file-review, the one-line reviewer edit, the frozen digest and the evidence README
 - `pc_checks.py` - the mechanical checks: write boundary, git read-only, helper-call counts, ledger digests, session facts
+- `pc_cleanclone.py` - the clean-clone bootstrap: a never-used folder with a clone, a runs folder and a throwaway home; a scrubbed child environment; the pre- and post-assertions about the private helper; the free preflight-only probe; the full run from the clone; the clone-facts file, finalize and the copy-back through the leak gate
 - `pc_compare.py` - the read-only comparer: file sets, headings, call counts, bytes against the cap, tree digests before and after; the all-rows mapping
 - `pc_evidence.py` - filing a finished run: staging, provenance and usage files, traces, the reviewer checklist, SKIPPED and STOPPED labels
 - `pc_exitcodes.py` - the named exit codes
@@ -1001,6 +1002,7 @@ Every file in this folder, once. `data/` is the only subfolder and holds non-cod
 - `test_boundaries.py` - tests for the recorded boundary list, its legacy fallback, the guard chain and the hook safety checks
 - `test_branch_table.py` - tests for the branch table
 - `test_checks.py` - tests for the mechanical checks, with seeded failing runs and a clean control
+- `test_cleanclone.py` - tests for the bootstrap against a scratch source repository and a fake claude: the folder layout, the child environment, the pre-assertions, preflight-only, the scripted full run, the post-assertions and the copy-back
 - `test_compare.py` - tests for the comparer: the tracer against the committed row, the read-only proofs, digests, exits and vocabulary
 - `test_driver_matrix.py` - tests for the campaign driver: labels, attempts, the date override, the multi-row loop, the exit code and the invocation budget
 - `test_evidence.py` - tests for filing: the deny entries, the file set, provenance, usage, vocabulary, the checklist, SKIPPED, refile and a race
