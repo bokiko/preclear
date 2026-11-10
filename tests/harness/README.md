@@ -943,6 +943,55 @@ whenever both trees were readable, whatever they differ in, and 2 when a folder 
 symlink, lacks the row folder, or the command line is wrong; its error text is fixed and never repeats a path. It
 never says that a row is accepted or rejected: that is the reviewer's decision.
 
+### The clean clone
+
+`python3 -E -s -B tests/harness/pc_cleanclone.py --claude PATH (--preflight-only | --budget AMOUNT [--selftest]) [--source SOURCE] [--real-home]`
+runs the matrix from a fresh clone of the repository, so a stranger's checkout is shown to be self-sufficient. Only code that
+has been pushed is in the clone; the bootstrap prints the clone's head, the main tree's head and whether they are equal, and it
+never commits, pushes, sets a git identity or runs a login. `--source` is an https address (no credentials) or an existing
+folder; by default it is the origin address of the main tree, read at run time and never printed or stored.
+
+The layout. One never-used folder D is created under the runs root, with a UTC-stamped name and three siblings: `repo` (the
+clone), `runs` (the clone's own runs root) and `home` (an empty throwaway home). `runs` neither holds nor lies inside `repo`.
+D, the clone and every folder the run makes are created exclusively; nothing is deleted, renamed, reused or overwritten, and a
+second start in the same second is refused with exit 16.
+
+The environment. Every child process is built from an empty environment holding exactly seven names: `HOME` (the throwaway
+folder), `PATH` (the fixed system folders plus the folder of the pinned build), `PRECLEAR_HARNESS_HOME` (the caller's harness
+home, so the logged-in config folder and the spend ledger are reused), `PRECLEAR_RUNS_ROOT` (the clone's runs folder),
+`DISABLE_AUTOUPDATER`, `TERM` and `LANG`. A cloud key, a git author, `CLAUDE_CONFIG_DIR` or an agent socket of the caller never
+arrives. Only the names are recorded, in `environment-names.txt` of the filed folder, never a value. The one wording difference
+from the first plan is that the harness home is handed over, not a config folder.
+
+The order. Free first, paid last: the optional `--selftest` runs the clone's own suite (no model calls), then the dry run of the
+whole matrix with the same budget, then the stub check and strict preflight, then the matrix. `--preflight-only` stops after the
+probe: it clones, asserts, runs the stub check and the strict preflight under the scrubbed environment, prints their state and fix
+line, exits with their code (0, 12 or 13), and starts no row and no model. It is also the free answer to whether the login
+survives an empty throwaway home. `--real-home` keeps the caller's real home for the child only; it is a deviation from the
+minimal environment that needs the owner's word, prints a fixed warning and is recorded as `home_kind` real.
+
+The assertions, printed as counts. Before any spend, each of these must be 0 or the run ends with exit 11: a runs folder or
+tracked runs path in the clone; executable files named `checkpoint` in the scrubbed `PATH` and a search of it finding one; files
+named `checkpoint` in the clone and under the throwaway home; identity or hook path keys in the clone's local configuration. The
+clone's own list must print at least one entry. After the run, for every run root with a wrapper the `stub` file must name the
+clone's own stub and the `py` file the interpreter; each filed row's stub digest must equal the clone stub's digest; the helper
+calls are counted from the wrapper logs as calls to the clone stub and calls to anything else (an empty or absent log counts 0).
+Any call to anything else is printed, written into the clone facts and ends the run with exit 11 after the copy-back.
+
+The finish. The counts go into the clone-facts file (names and counts only, in the schema `pc_baseline.py finalize` reads), finalize
+runs in the clone, and the finalized folder is copied back into the main tree's `tests/evidence` under the same name through the
+leak gate with the main tree's own deny entries, a clone having no local deny file. An existing destination is refused with exit
+17. The last line is `entries: N, folders: N`, one folder per entry of the list.
+
+A budget stop. The matrix is not resumable, so a stop before a row (exit 18 after at least one row) must not leave the measured
+rows in the clone. The bootstrap still runs the post-assertions, finalize and the copy-back, files the finished rows as a
+partial baseline whose README names each entry not run, prints `entries: N, folders: M, not run: K`, and exits 18 after the
+copy-back. A stopped, skipped or incomplete row (exit 10, 11 or 19) is filed and copied back the same way. A partial baseline
+is not a full baseline. A budget that is malformed or smaller than the largest single worst case is refused with exit 18 by the dry
+run before any model starts, with nothing filed.
+
+Linux is unverified for the bootstrap; it targets macOS.
+
 ## Replacement tokens
 
 Evidence that becomes public is sanitized with these tokens, always lower case in angle brackets:

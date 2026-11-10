@@ -1167,5 +1167,199 @@ class ListingTests(unittest.TestCase):
         self.assertEqual(pc_cleanclone.outcome_folders(None), 0)
 
 
+# ---------------------------------------------------------------------------------------------
+# Task 3: the real-home flag, usage errors and the no-path scans
+# ---------------------------------------------------------------------------------------------
+
+
+def login_name() -> str:
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError, OSError):
+        return os.environ.get("USER", "")
+
+
+def path_text_hits(text: str, world: "World") -> list:
+    """Names of the private things a printed text must never hold: every folder of the scratch world, the temp folder,
+    the real home, the login and any home-shaped or temp-shaped path."""
+    hits = []
+    secrets = {
+        "world base": world.base,
+        "main tree": world.main,
+        "source": world.source,
+        "caller home": world.home,
+        "harness home": world.harness,
+        "runs root": world.runs,
+        "build folder": world.bin,
+        "build path": world.claude,
+        "temp folder": tempfile.gettempdir(),
+        "real home": os.path.expanduser("~"),
+    }
+    for label, value in secrets.items():
+        if value and len(value) > 3 and value in text:
+            hits.append(label)
+    login = login_name()
+    if len(login) >= 4 and re.search(r"(?<![A-Za-z0-9])" + re.escape(login) + r"(?![A-Za-z0-9])", text):
+        hits.append("login")
+    if PATH_SHAPE.search(text):
+        hits.append("path shape")
+    return hits
+
+
+class RealHomeTests(unittest.TestCase):
+    def test_a_full_run_with_the_flag_records_home_kind_real_in_the_clone_facts(self) -> None:
+        run = Run(clean_stages(), ["--budget", "2.30", "--real-home"])
+        self.assertEqual(run.code, pc_exitcodes.BUDGET_REFUSED, run.out + run.err)
+        self.assertIn("home kind: real", run.out)
+        self.assertIn(pc_cleanclone.MESSAGE_REAL_HOME, run.out)
+        facts = facts_of(run)
+        self.assertEqual(facts["home_kind"], "real")
+        self.assertEqual(facts["env_names"], sorted(pc_cleanclone.ALLOWED_NAMES))
+        self.assertEqual(path_text_hits(run.out + run.err, run.world), [])
+
+    def test_a_full_run_without_the_flag_records_home_kind_throwaway(self) -> None:
+        self.assertEqual(facts_of(budget_run())["home_kind"], "throwaway")
+        self.assertIn("home kind: throwaway", budget_run().out)
+        self.assertNotIn(pc_cleanclone.MESSAGE_REAL_HOME, budget_run().out)
+
+    def test_the_throwaway_home_stays_empty_of_the_callers_files_and_the_flag_is_off_by_default(self) -> None:
+        parser = pc_cleanclone.build_parser(io.StringIO(), io.StringIO())
+        self.assertFalse(parser.parse_args(["--claude", "x"]).real_home)
+        self.assertTrue(parser.parse_args(["--claude", "x", "--real-home"]).real_home)
+
+
+class UsageTests(unittest.TestCase):
+    ODD = "an-odd-value-that-must-not-be-echoed"
+
+    def refused(self, world, args, expect=pc_exitcodes.USAGE):
+        code, out, err = world.run(args)
+        self.assertEqual(code, expect, out + err)
+        self.assertEqual(world.folders(), [], "nothing was created")
+        self.assertNotIn(self.ODD, out + err)
+        return out + err
+
+    def test_an_unknown_flag_exits_2_with_the_fixed_line(self) -> None:
+        world = World()
+        text = self.refused(world, ["--claude", world.claude, "--budget", "1.00", "--frobnicate", self.ODD])
+        self.assertIn(pc_cleanclone.MESSAGE_USAGE, text)
+
+    def test_a_missing_claude_exits_2(self) -> None:
+        world = World()
+        self.refused(world, ["--budget", "1.00"])
+        self.refused(world, ["--preflight-only"])
+
+    def test_a_relative_or_unusable_claude_exits_2_and_is_never_echoed(self) -> None:
+        world = World()
+        text = self.refused(world, ["--claude", self.ODD, "--budget", "1.00"])
+        self.assertIn(pc_cleanclone.MESSAGE_CLAUDE, text)
+        self.refused(world, ["--claude", os.path.join(world.base, "absent"), "--budget", "1.00"])
+        plain = os.path.join(world.base, "plain-file")
+        with open(plain, "w", encoding="utf-8") as handle:
+            handle.write("x\n")
+        text = self.refused(world, ["--claude", plain, "--budget", "1.00"])
+        self.assertNotIn(plain, text)
+
+    def test_a_full_run_without_a_budget_exits_2(self) -> None:
+        world = World()
+        self.refused(world, ["--claude", world.claude])
+        self.refused(world, ["--claude", world.claude, "--budget", ""])
+
+    def test_preflight_only_takes_neither_a_budget_nor_the_self_test(self) -> None:
+        world = World()
+        self.refused(world, ["--claude", world.claude, "--preflight-only", "--budget", "1.00"])
+        self.refused(world, ["--claude", world.claude, "--preflight-only", "--selftest"])
+
+    def test_a_source_that_is_neither_an_https_address_nor_a_folder_exits_2_and_is_never_echoed(self) -> None:
+        world = World()
+        for source in (self.ODD, "http://example.invalid/a/b", "ssh://example.invalid/a/b", os.path.join(world.base, "absent")):
+            text = self.refused(world, ["--claude", world.claude, "--preflight-only", "--source", source])
+            self.assertIn(pc_cleanclone.MESSAGE_SOURCE, text)
+            self.assertNotIn(source, text)
+
+    def test_help_prints_the_usage_line_and_exits_0(self) -> None:
+        world = World()
+        code, out, err = world.run(["--help"])
+        self.assertEqual(code, 0)
+        self.assertIn("--preflight-only", out)
+
+    def test_an_unusable_runs_root_or_harness_home_exits_12_with_a_fixed_line(self) -> None:
+        world = World()
+        env = dict(world.env, PRECLEAR_RUNS_ROOT=os.path.join(world.main, "scratch"))
+        code, out, err = world.run(["--claude", world.claude, "--preflight-only"], env=env)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_BLOCKED, out + err)
+        self.assertIn(pc_cleanclone.MESSAGE_RUNS_ROOT, err)
+        self.assertNotIn(world.main, out + err)
+        env = dict(world.env, PRECLEAR_HARNESS_HOME=os.path.join(world.main, "harness"))
+        code, out, err = world.run(["--claude", world.claude, "--preflight-only"], env=env)
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_BLOCKED, out + err)
+        self.assertIn(pc_cleanclone.MESSAGE_HARNESS_HOME, err)
+
+    def test_two_runs_started_in_the_same_second_never_reuse_a_folder(self) -> None:
+        world = World()
+        fixed = lambda: START
+        first = world.run(["--claude", world.claude, "--preflight-only"], clock=fixed)
+        second = world.run(["--claude", world.claude, "--preflight-only"], clock=fixed)
+        self.assertEqual(first[0], 0, first[1] + first[2])
+        self.assertEqual(second[0], pc_exitcodes.RUNROOT_COLLISION)
+        self.assertEqual(len(world.folders()), 1)
+        third = world.run(["--claude", world.claude, "--preflight-only"])
+        self.assertEqual(third[0], 0, third[1] + third[2])
+        self.assertEqual(len(world.folders()), 2)
+
+
+class NoLeakTests(unittest.TestCase):
+    def test_a_complete_run_prints_and_files_no_path_source_home_temp_folder_or_login(self) -> None:
+        run = complete_run()
+        self.assertEqual(path_text_hits(run.out + run.err, run.world), [])
+        facts = read_text(os.path.join(run.clone_folder, pc_cleanclone.CLONE_FACTS_NAME))
+        self.assertEqual(path_text_hits(facts, run.world), [])
+        for name in ("README.md", "environment-names.txt", "digest-table.md", "usage-by-row.txt", "review-brief.md"):
+            self.assertEqual(path_text_hits(read_text(os.path.join(run.dated(), name)), run.world), [], name)
+
+    def test_a_budget_stop_and_a_stopped_row_print_no_path_either(self) -> None:
+        for run in (budget_run(), stopped_run(), incomplete_run(), tampered_run()):
+            self.assertEqual(path_text_hits(run.out + run.err, run.world), [])
+
+    def test_preflight_only_prints_no_path_in_any_of_its_states(self) -> None:
+        for options in ({}, {"logged_in": False}, {"banner": "9.9.9 (Claude Code)"}):
+            world = World(**options)
+            code, out, err = world.run(["--claude", world.claude, "--preflight-only"])
+            self.assertEqual(path_text_hits(out + err, world), [], options)
+
+    def test_the_origin_address_is_read_at_run_time_and_written_nowhere(self) -> None:
+        world = World()
+        code, out, err = world.run(["--claude", world.claude, "--preflight-only"])
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(path_text_hits(out + err, world), [])
+        with open(pc_cleanclone.__file__, "r", encoding="utf-8") as handle:
+            module = handle.read()
+        self.assertNotIn("github", module.lower())
+        self.assertIsNone(PATH_SHAPE.search(module.replace("(?:Users|home|private|var|tmp|opt|Volumes|root|etc)", "")))
+
+    def test_the_scrubber_replaces_known_paths_first_and_any_other_home_or_temp_shaped_path_after(self) -> None:
+        world = World()
+        scrub = pc_cleanclone.Scrubber([(world.base, "<base>"), (world.home, "<home>")])
+        text = "saw %s and %s and %s and %s here" % (
+            world.home, os.path.join(world.base, "deep"), pc_seeds.home_path("someone") + "/else/file",
+            pc_seeds.mac_temp_root() + "/x")
+        cleaned = scrub(text)
+        self.assertEqual(path_text_hits(cleaned, world), [])
+        self.assertIn("<home>", cleaned)
+        self.assertIn("<base>/deep", cleaned)
+        self.assertEqual(cleaned.count("<path>"), 2)
+
+    def test_child_output_that_holds_a_path_is_scrubbed_before_it_is_printed(self) -> None:
+        world = World()
+        out = io.StringIO()
+        scrub = pc_cleanclone.Scrubber([(world.base, "<base>")])
+        code = pc_cleanclone.run_streaming(
+            ["/bin/sh", "-c", "echo %s/inside; echo %s >&2" % (world.base, pc_seeds.home_path("x") + "/y")], {"PATH": "/usr/bin:/bin"},
+            world.base, out, scrub)
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue().splitlines(), ["<base>/inside", "<path>"])
+
+
 if __name__ == "__main__":
     unittest.main()
