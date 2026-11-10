@@ -628,5 +628,544 @@ class PreflightOnlyTests(unittest.TestCase):
         self.assertEqual(code, 0, out + err)
 
 
+# ---------------------------------------------------------------------------------------------
+# Task 2: the scripted full run, the post-assertions and the copy-back
+# ---------------------------------------------------------------------------------------------
+
+PATH_SHAPE = re.compile(r"(?<![\w.-])/(?:Users|home|private|var|tmp|opt|Volumes)/")
+
+
+def registry_specs() -> list:
+    import pc_rows
+
+    return [entry for entry in pc_rows.build_registry() if entry.implemented]
+
+
+def clean_stages(first=None) -> list:
+    """The scripted stages of every implemented entry in registry order; first may reshape the first entry's stages."""
+    stages = []
+    for index, spec in enumerate(registry_specs()):
+        part = pc_testutil.default_row_stages(spec)
+        if index == 0 and first is not None:
+            part = first(part)
+        stages += part
+    return stages
+
+
+def stopped_first(part: list) -> list:
+    return pc_testutil.stages_with(part, 0, exit=1)[:1]
+
+
+def incomplete_first(part: list) -> list:
+    return pc_testutil.stages_with(part, 0, no_result=True)[:1]
+
+
+class Run(object):
+    """One bootstrap run against a scratch world, kept for the assertions of several tests."""
+
+    def __init__(self, stages, args, source=None, patch=None, **world_options) -> None:
+        self.world = World(source=source, stages=stages, **world_options)
+        argv = ["--claude", self.world.claude] + list(args)
+        if patch is None:
+            self.code, self.out, self.err = self.world.run(argv)
+        else:
+            with patch(self.world):
+                self.code, self.out, self.err = self.world.run(argv)
+
+    @property
+    def clone_folder(self) -> str:
+        (name,) = self.world.folders()
+        return os.path.join(self.world.runs, name)
+
+    def main_evidence(self) -> list:
+        return sorted(os.listdir(os.path.join(self.world.main, "tests", "evidence")))
+
+    def dated(self) -> str:
+        (name,) = [entry for entry in self.main_evidence() if entry.startswith("rerun-") and "wave" not in entry
+                   and not entry.endswith("claude-sonnet-5-5-triple")
+                   and entry not in COMMITTED_RERUNS]
+        return os.path.join(self.world.main, "tests", "evidence", name)
+
+
+COMMITTED_RERUNS = frozenset(
+    name for name in os.listdir(os.path.join(ROOT, "tests", "evidence")) if name.startswith("rerun-")
+)
+_RUNS = {}
+
+
+def cached_run(key, stages_of, args, patch=None) -> "Run":
+    if key not in _RUNS:
+        _RUNS[key] = Run(stages_of(), args, patch=patch)
+    return _RUNS[key]
+
+
+def complete_run() -> "Run":
+    return cached_run("complete", clean_stages, ["--budget", "25.00"])
+
+
+def budget_run() -> "Run":
+    return cached_run("budget", clean_stages, ["--budget", "2.30"])
+
+
+def stopped_run() -> "Run":
+    return cached_run("stopped", lambda: clean_stages(stopped_first), ["--budget", "25.00"])
+
+
+def incomplete_run() -> "Run":
+    return cached_run("incomplete", lambda: clean_stages(incomplete_first), ["--budget", "25.00"])
+
+
+def tamper(world):
+    """Patch post_assertions so one wrapper's stub file names another file just before the counts are read."""
+    original = pc_cleanclone.post_assertions
+
+    def changed(folder, evidence_folder, out, interpreter=None):
+        runs = os.path.join(folder, "runs")
+        for name in sorted(os.listdir(runs)):
+            stub = os.path.join(runs, name, "wrapper", "stub")
+            if os.path.isfile(stub):
+                with open(stub, "w", encoding="utf-8") as handle:
+                    handle.write(os.path.join(folder, "repo", "tests", "harness", "pc_matrix.py"))
+                break
+        return original(folder, evidence_folder, out, interpreter)
+
+    return mock.patch.object(pc_cleanclone, "post_assertions", changed)
+
+
+def tampered_run() -> "Run":
+    return cached_run("tampered", lambda: clean_stages(incomplete_first), ["--budget", "25.00"], patch=tamper)
+
+
+def facts_of(run: "Run") -> dict:
+    import pc_baseline
+
+    facts = pc_baseline.read_clone_facts(os.path.join(run.clone_folder, pc_cleanclone.CLONE_FACTS_NAME))
+    assert facts is not None
+    return facts
+
+
+class ScriptedFullRunTests(unittest.TestCase):
+    def test_a_complete_run_exits_0_and_files_one_folder_per_list_entry_in_the_main_tree(self) -> None:
+        run = complete_run()
+        self.assertEqual(run.code, 0, run.out + run.err)
+        ids = pc_cleanclone.list_entries(run.clone_folder, pc_cleanclone.build_child_env(
+            run.clone_folder, run.world.harness, run.world.bin, run.world.env), sys.executable)
+        self.assertEqual(len(ids), 21)
+        names = [n for n in os.listdir(run.dated()) if os.path.isdir(os.path.join(run.dated(), n))]
+        self.assertEqual(sorted(names), sorted(ids))
+        self.assertIn("entries: 21, folders: 21\n", run.out)
+        self.assertNotIn("not run", run.out.split("entries: 21")[-1])
+
+    def test_the_steps_run_in_the_order_of_the_plan(self) -> None:
+        run = complete_run()
+        order = [
+            "pre: entries in the clone's list: 21",
+            "step: dry run of the whole matrix with the same budget",
+            "step: stub check and strict preflight",
+            "step: the matrix, from the clone",
+            "matrix exit code: 0",
+            "post: helper calls:",
+            "step: finalize in the clone",
+            "step: copy-back through the leak gate",
+            "entries: 21, folders: 21",
+        ]
+        positions = [run.out.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("self-test", run.out, "the self-test runs only on request")
+
+    def test_the_baseline_names_the_run_state_and_the_environment_names_one_per_line(self) -> None:
+        run = complete_run()
+        readme = read_text(os.path.join(run.dated(), "README.md"))
+        self.assertIn("Run state: complete", readme)
+        self.assertEqual(
+            read_text(os.path.join(run.dated(), "environment-names.txt")).split(),
+            sorted(pc_cleanclone.ALLOWED_NAMES),
+        )
+
+    def test_the_clone_facts_file_is_valid_and_holds_names_and_counts_only(self) -> None:
+        run = complete_run()
+        facts = facts_of(run)
+        self.assertEqual(facts["env_names"], sorted(pc_cleanclone.ALLOWED_NAMES))
+        self.assertEqual(facts["helper_calls_other"], 0)
+        self.assertEqual(facts["helper_calls"], facts["helper_calls_stub"])
+        self.assertGreater(facts["helper_calls"], 0)
+        self.assertEqual((facts["path_checkpoint_binaries"], facts["helper_files_in_clone"]), (0, 0))
+        self.assertEqual((facts["source_kind"], facts["home_kind"]), ("local", "throwaway"))
+        self.assertEqual(facts["clone_head"], git_in(run.world.source, "rev-parse", "HEAD").strip())
+        text = read_text(os.path.join(run.clone_folder, pc_cleanclone.CLONE_FACTS_NAME))
+        self.assertIsNone(PATH_SHAPE.search(text))
+        self.assertLessEqual(os.path.getsize(os.path.join(run.clone_folder, pc_cleanclone.CLONE_FACTS_NAME)), 65536)
+
+    def test_the_facts_file_stays_outside_the_evidence_tree_and_the_copy(self) -> None:
+        run = complete_run()
+        self.assertNotIn(pc_cleanclone.CLONE_FACTS_NAME, os.listdir(run.dated()))
+        self.assertTrue(os.path.isfile(os.path.join(run.clone_folder, pc_cleanclone.CLONE_FACTS_NAME)))
+
+    def test_no_model_call_saw_a_variable_of_the_callers_noisy_environment(self) -> None:
+        run = complete_run()
+        calls = [json.loads(line) for line in read_text(os.path.join(run.world.bin, "calls.log")).splitlines()]
+        self.assertGreater(len(calls), 50)
+        for record in calls:
+            for noisy in run.world.noise:
+                if noisy != "CLAUDE_CONFIG_DIR":
+                    self.assertNotIn(noisy, record["names"])
+            self.assertTrue(record["env"]["CLAUDE_CONFIG_DIR"].startswith(os.path.realpath(run.world.harness)))
+        self.assertEqual(pc_testutil.read_tripwire(run.world.bin), [])
+
+    def test_the_clone_was_never_committed_pushed_or_given_an_identity(self) -> None:
+        run = complete_run()
+        repo = os.path.join(run.clone_folder, "repo")
+        self.assertEqual(git_in(repo, "rev-list", "--count", "HEAD").strip(), git_in(run.world.source, "rev-list", "--count", "HEAD").strip())
+        keys = [line.split("=", 1)[0].lower() for line in git_in(repo, "config", "--local", "--list").splitlines()]
+        self.assertEqual([key for key in keys if key.startswith("user.") or key == "preclear.pinnedidentity"], [])
+
+    def test_the_run_roots_and_the_clone_stay_in_place_after_the_run(self) -> None:
+        run = complete_run()
+        self.assertEqual(sorted(os.listdir(run.clone_folder)), ["clone-facts.json", "home", "repo", "runs"])
+        self.assertGreater(len(os.listdir(os.path.join(run.clone_folder, "runs"))), 20)
+
+    def test_a_budget_stop_files_the_finished_rows_as_a_partial_baseline_and_exits_18_after_the_copy_back(self) -> None:
+        run = budget_run()
+        self.assertEqual(run.code, pc_exitcodes.BUDGET_REFUSED, run.out + run.err)
+        self.assertIn("matrix exit code: 18", run.out)
+        self.assertIn("entries: 21, folders: 3, not run: 18\n", run.out)
+        readme = read_text(os.path.join(run.dated(), "README.md"))
+        self.assertIn("Run state: partial", readme)
+        self.assertEqual(len([l for l in readme.splitlines() if l.startswith("Not run: ")]), 18)
+        folders = sorted(n for n in os.listdir(run.dated()) if os.path.isdir(os.path.join(run.dated(), n)))
+        self.assertEqual(folders, ["bound-ledger", "hub-memory", "plain-memory"])
+        for line in readme.splitlines():
+            if line.startswith("Not run: "):
+                self.assertNotIn(line[len("Not run: "):], folders)
+        self.assertLess(run.out.index("step: finalize"), run.out.index("step: copy-back"))
+
+    def test_a_budget_too_small_for_any_row_is_refused_with_18_by_the_dry_run_and_nothing_is_filed(self) -> None:
+        for budget in ("1.00", "abc"):
+            world = World(stages=clean_stages())
+            before = sorted(os.listdir(os.path.join(world.main, "tests", "evidence")))
+            code, out, err = world.run(["--claude", world.claude, "--budget", budget])
+            self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+            self.assertNotIn("step: the matrix", out)
+            self.assertNotIn("copy-back", out)
+            self.assertEqual(sorted(os.listdir(os.path.join(world.main, "tests", "evidence"))), before)
+            self.assertFalse(os.path.exists(os.path.join(world.bin, "calls.log")), "no model call was made")
+            (name,) = world.folders()
+            self.assertFalse(os.path.exists(os.path.join(world.runs, name, pc_cleanclone.CLONE_FACTS_NAME)))
+
+    def test_a_stopped_row_exits_11_and_is_still_finalized_and_copied_back_as_a_stopped_folder(self) -> None:
+        run = stopped_run()
+        self.assertEqual(run.code, pc_exitcodes.PREFLIGHT_FAIL, run.out + run.err)
+        self.assertIn("matrix exit code: 11", run.out)
+        self.assertIn("entries: 21, folders: 21\n", run.out)
+        self.assertTrue(os.path.isdir(os.path.join(run.dated(), "STOPPED-plain-memory")))
+        self.assertTrue(os.path.isfile(os.path.join(run.dated(), "README.md")))
+
+    def test_an_incomplete_stream_exits_19_and_is_still_finalized_and_copied_back(self) -> None:
+        run = incomplete_run()
+        self.assertEqual(run.code, pc_exitcodes.DENIAL_FOUND, run.out + run.err)
+        self.assertIn("entries: 21, folders: 21\n", run.out)
+        self.assertTrue(os.path.isdir(os.path.join(run.dated(), "STOPPED-plain-memory")))
+
+    def test_a_call_that_hit_anything_but_the_clone_stub_ends_with_11_after_the_copy_back_and_takes_precedence(self) -> None:
+        run = tampered_run()
+        self.assertEqual(run.code, pc_exitcodes.PREFLIGHT_FAIL, run.out + run.err)
+        self.assertIn("matrix exit code: 19", run.out)
+        self.assertIn("post: run roots whose wrapper names anything else: 1", run.out)
+        self.assertIn("entries: 21, folders: 21", run.out)
+        self.assertLess(run.out.index("copy-back: promoted"), run.out.index("exit 11 after the copy-back"))
+        facts = facts_of(run)
+        self.assertEqual(facts["helper_calls"], facts["helper_calls_stub"] + facts["helper_calls_other"])
+        self.assertTrue(os.path.isdir(run.dated()))
+
+    def test_a_logged_out_claude_stops_at_the_probe_with_12_before_the_matrix(self) -> None:
+        world = World(stages=clean_stages(), logged_in=False)
+        # the scripted claude reads logged_in from its fake.json
+        pc_testutil.write_scripted_config(world.bin, {"stages": clean_stages(), "logged_in": False})
+        code, out, err = world.run(["--claude", world.claude, "--budget", "25.00"])
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_BLOCKED, out + err)
+        self.assertIn("step: dry run", out)
+        self.assertNotIn("step: the matrix", out)
+        self.assertFalse(os.path.exists(os.path.join(world.bin, "calls.log")))
+
+    def test_the_self_test_step_runs_first_and_a_failing_one_stops_the_run(self) -> None:
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pc-ccsrc-"))
+        good = build_source(base, "#!/bin/sh\necho 'preclear harness self-test: 0 model calls'\nexit 0\n")
+        world = World(source=good, stages=clean_stages())
+        code, out, err = world.run(["--claude", world.claude, "--budget", "1.00", "--selftest"])
+        self.assertEqual(code, pc_exitcodes.BUDGET_REFUSED, out + err)
+        self.assertLess(out.index("0 model calls"), out.index("step: dry run"))
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pc-ccsrc-"))
+        bad = build_source(base, "#!/bin/sh\necho 'one test did not run'\nexit 1\n")
+        world = World(source=bad, stages=clean_stages())
+        code, out, err = world.run(["--claude", world.claude, "--budget", "25.00", "--selftest"])
+        self.assertEqual(code, 1, out + err)
+        self.assertNotIn("step: dry run", out)
+        self.assertFalse(os.path.exists(os.path.join(world.bin, "calls.log")))
+
+    def test_the_decision_about_filing_follows_the_matrix_code_and_the_folders_filed(self) -> None:
+        for code in (0, 10, 11, 18, 19):
+            self.assertTrue(pc_cleanclone.reaches_filing(code, 1), code)
+            self.assertFalse(pc_cleanclone.reaches_filing(code, 0), code)
+        for code in (2, 12, 13, 14, 15, 16, 17):
+            self.assertFalse(pc_cleanclone.reaches_filing(code, 5), code)
+
+    def test_a_usage_error_in_the_full_run_starts_nothing(self) -> None:
+        world = World(stages=clean_stages())
+        code, out, err = world.run(["--claude", world.claude])
+        self.assertEqual(code, pc_exitcodes.USAGE, out + err)
+        self.assertEqual(world.folders(), [])
+
+
+class PostAssertionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.world = World()
+        self.cloned = Cloned(self.world)
+        self.runs = os.path.join(self.cloned.folder, "runs")
+        self.stub = os.path.join(self.cloned.repo, "tests", "harness", "checkpoint_stub.py")
+
+    def root(self, name, stub="clone", py="interpreter", calls=None, wrapper=True):
+        folder = os.path.join(self.runs, name)
+        os.makedirs(folder)
+        if not wrapper:
+            return folder
+        os.makedirs(os.path.join(folder, "wrapper"))
+        if stub is not None:
+            with open(os.path.join(folder, "wrapper", "stub"), "w", encoding="utf-8") as handle:
+                handle.write(self.stub if stub == "clone" else stub)
+        if py is not None:
+            with open(os.path.join(folder, "wrapper", "py"), "w", encoding="utf-8") as handle:
+                handle.write(os.path.realpath(sys.executable) if py == "interpreter" else py)
+        if calls is not None:
+            with open(os.path.join(folder, "wrapper", "calls.log"), "w", encoding="utf-8") as handle:
+                for index in range(calls):
+                    handle.write("2026-11-20T08:00:0%dZ CALL status\n2026-11-20T08:00:0%dZ EXIT 0\n" % (index, index))
+        return folder
+
+    def post(self, evidence=None):
+        out = io.StringIO()
+        return pc_cleanclone.post_assertions(self.cloned.folder, evidence, out), out.getvalue()
+
+    def test_calls_to_the_clone_stub_are_counted_as_stub_calls(self) -> None:
+        self.root("a", calls=3)
+        self.root("b", calls=2)
+        result, text = self.post()
+        self.assertEqual((result.helper_calls, result.helper_calls_stub, result.helper_calls_other), (5, 5, 0))
+        self.assertEqual((result.run_roots, result.stub_roots, result.other_roots), (2, 2, 0))
+        self.assertFalse(pc_cleanclone.post_refused(result))
+        self.assertIn("post: helper calls to anything else: 0", text)
+
+    def test_a_wrapper_that_names_another_stub_counts_its_calls_as_other(self) -> None:
+        self.root("a", calls=1)
+        self.root("b", stub=os.path.join(self.cloned.folder, "repo", "tests", "harness", "pc_matrix.py"), calls=4)
+        result, text = self.post()
+        self.assertEqual((result.helper_calls, result.helper_calls_stub, result.helper_calls_other), (5, 1, 4))
+        self.assertEqual(result.other_roots, 1)
+        self.assertTrue(pc_cleanclone.post_refused(result))
+
+    def test_a_wrapper_that_names_another_interpreter_counts_as_other(self) -> None:
+        self.root("a", py=os.path.join(self.cloned.folder, "repo", "tests", "harness", "pc_matrix.py"), calls=2)
+        result, _text = self.post()
+        self.assertEqual((result.helper_calls_stub, result.helper_calls_other), (0, 2))
+
+    def test_a_missing_stub_or_py_file_counts_as_other_and_never_raises(self) -> None:
+        self.root("a", stub=None, calls=1)
+        self.root("b", py=None, calls=1)
+        result, _text = self.post()
+        self.assertEqual((result.stub_roots, result.other_roots, result.helper_calls_other), (0, 2, 2))
+
+    def test_a_symlinked_stub_file_is_not_followed(self) -> None:
+        folder = self.root("a", stub=None, calls=1)
+        os.symlink(self.stub, os.path.join(folder, "wrapper", "stub"))
+        result, _text = self.post()
+        self.assertEqual((result.stub_roots, result.other_roots), (0, 1))
+
+    def test_an_empty_or_absent_log_counts_zero_and_is_not_an_error(self) -> None:
+        folder = self.root("a", calls=None)
+        self.root("b", calls=0)
+        with open(os.path.join(folder, "wrapper", "calls.log"), "x"):
+            pass
+        result, _text = self.post()
+        self.assertEqual((result.helper_calls, result.other_roots), (0, 0))
+        self.assertFalse(pc_cleanclone.post_refused(result))
+
+    def test_a_run_root_without_a_wrapper_folder_is_not_a_wrapper_run_root(self) -> None:
+        self.root("plain", wrapper=False)
+        result, _text = self.post()
+        self.assertEqual(result.run_roots, 0)
+
+    def test_only_call_lines_are_counted(self) -> None:
+        folder = self.root("a", calls=None)
+        with open(os.path.join(folder, "wrapper", "calls.log"), "w", encoding="utf-8") as handle:
+            handle.write("t CALL one\nt EXIT 0\nt CALLER notacall\n\nt CALL\nCALL two\n")
+        result, _text = self.post()
+        self.assertEqual(result.helper_calls, 2)
+
+    def test_the_stub_digest_of_each_filed_row_must_equal_the_clone_stub_digest(self) -> None:
+        import hashlib
+
+        with open(self.stub, "rb") as handle:
+            right = hashlib.sha256(handle.read()).hexdigest()
+        evidence = os.path.join(self.cloned.folder, "evidence-copy")
+        os.makedirs(evidence)
+        for name, line in (
+            ("ok", "%s  tests/harness/checkpoint_stub.py\n" % right),
+            ("wrong", "%s  tests/harness/checkpoint_stub.py\n" % ("0" * 64)),
+            ("unconfirmed", "UNCONFIRMED  tests/harness/checkpoint_stub.py\n"),
+            ("plain", "%s  some/other/file\n" % right),
+        ):
+            os.makedirs(os.path.join(evidence, name))
+            with open(os.path.join(evidence, name, "digests.txt"), "w", encoding="utf-8") as handle:
+                handle.write(line)
+        os.makedirs(os.path.join(evidence, "nofile"))
+        result, text = self.post(evidence)
+        self.assertEqual((result.digests_checked, result.digest_mismatches), (3, 2))
+        self.assertTrue(pc_cleanclone.post_refused(result))
+        self.assertIn("post: stub digest lines that differ from the clone stub: 2", text)
+
+    def test_the_counts_are_printed_as_fixed_lines_without_a_path(self) -> None:
+        self.root("a", calls=2)
+        _result, text = self.post()
+        self.assertEqual(len(text.splitlines()), 8)
+        self.assertIsNone(PATH_SHAPE.search(text))
+
+
+class FactsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.world = World()
+        self.cloned = Cloned(self.world)
+        self.pre = pc_cleanclone.Pre(0, 0, 0, ("a",))
+        self.post = pc_cleanclone.Post(2, 2, 0, 2, 0, 5, 5, 0)
+
+    def write(self, head=None, folder=None):
+        return pc_cleanclone.write_clone_facts(
+            folder or self.cloned.folder, sorted(pc_cleanclone.ALLOWED_NAMES), self.pre, self.post,
+            head or self.cloned.head, "local", "throwaway",
+        )
+
+    def test_the_file_has_exactly_the_schema_keys_and_the_reader_accepts_it(self) -> None:
+        import pc_baseline
+
+        path = self.write()
+        facts = pc_baseline.read_clone_facts(path)
+        self.assertEqual(sorted(facts), sorted(pc_baseline.CLONE_FACTS_KEYS))
+        self.assertEqual((facts["helper_calls"], facts["helper_calls_stub"], facts["helper_calls_other"]), (5, 5, 0))
+
+    def test_an_existing_file_is_never_overwritten(self) -> None:
+        path = self.write()
+        before = read_text(path)
+        self.assertIsNone(self.write())
+        self.assertEqual(read_text(path), before)
+
+    def test_a_head_that_is_not_forty_hex_characters_is_not_written_as_valid(self) -> None:
+        self.assertIsNone(self.write(head="not-a-head"))
+
+
+class CopyBackTests(unittest.TestCase):
+    NAME = "rerun-2026-11-20-claude-sonnet-5-5"
+
+    def setUp(self) -> None:
+        self.world = World()
+        self.stage = os.path.join(self.world.base, "stage", self.NAME)
+        os.makedirs(os.path.join(self.stage, "row-a"))
+        with open(os.path.join(self.stage, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write("a plain readme\n")
+        with open(os.path.join(self.stage, "row-a", "usage.txt"), "w", encoding="utf-8") as handle:
+            handle.write("row total: 0.10\n")
+        self.evidence = os.path.join(self.world.main, "tests", "evidence")
+
+    def copy(self):
+        out = io.StringIO()
+        code = pc_cleanclone.copy_back(self.stage, self.world.main, self.world.harness, out)
+        return code, out.getvalue()
+
+    def test_the_folder_is_promoted_under_the_same_name(self) -> None:
+        code, text = self.copy()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(read_text(os.path.join(self.evidence, self.NAME, "README.md")), "a plain readme\n")
+        self.assertEqual(read_text(os.path.join(self.evidence, self.NAME, "row-a", "usage.txt")), "row total: 0.10\n")
+        self.assertIn("promoted 2 file(s)", text)
+
+    def test_an_existing_destination_is_refused_with_17_and_left_unchanged(self) -> None:
+        self.assertEqual(self.copy()[0], 0)
+        with open(os.path.join(self.stage, "README.md"), "a", encoding="utf-8") as handle:
+            handle.write("a later line\n")
+        code, text = self.copy()
+        self.assertEqual(code, pc_exitcodes.PROMOTE_REFUSED, text)
+        self.assertEqual(read_text(os.path.join(self.evidence, self.NAME, "README.md")), "a plain readme\n")
+
+    def test_a_leak_shaped_string_in_a_clone_file_is_refused_and_nothing_is_created(self) -> None:
+        with open(os.path.join(self.stage, "row-a", "note.txt"), "w", encoding="utf-8") as handle:
+            handle.write("line %s\n" % pc_seeds.anthropic_key())
+        before = sorted(os.listdir(self.evidence))
+        code, text = self.copy()
+        self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, text)
+        self.assertEqual(sorted(os.listdir(self.evidence)), before)
+        self.assertNotIn(pc_seeds.anthropic_key(), text)
+
+    def test_the_main_trees_local_deny_entries_apply_at_the_copy_back(self) -> None:
+        entry = "a-local-only-entry-for-this-test"
+        info = os.path.join(self.world.main, ".git", "info")
+        os.makedirs(info, exist_ok=True)
+        with open(os.path.join(info, "preclear-deny.txt"), "x", encoding="utf-8") as handle:
+            handle.write(entry + "\n")
+        with open(os.path.join(self.stage, "row-a", "note.txt"), "w", encoding="utf-8") as handle:
+            handle.write("text with %s inside\n" % entry)
+        before = sorted(os.listdir(self.evidence))
+        code, text = self.copy()
+        self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, text)
+        self.assertEqual(sorted(os.listdir(self.evidence)), before)
+        self.assertNotIn(entry, text)
+
+
+class ListingTests(unittest.TestCase):
+    def folder(self, names, readme="a readme\n"):
+        base = os.path.realpath(tempfile.mkdtemp(prefix="pc-list-"))
+        for name in names:
+            os.makedirs(os.path.join(base, name))
+        with open(os.path.join(base, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write(readme)
+        return base
+
+    def listing(self, base, ids):
+        out = io.StringIO()
+        code = pc_cleanclone.final_listing(base, ids, out)
+        return code, out.getvalue()
+
+    def test_every_id_as_a_folder_a_stopped_folder_or_a_skipped_folder_gives_the_short_line(self) -> None:
+        base = self.folder(["row-a", "STOPPED-row-b", "SKIPPED-row-c", "row-d-attempt-2"])
+        code, text = self.listing(base, ["row-a", "row-b", "row-c", "row-d"])
+        self.assertEqual((code, text), (0, "entries: 4, folders: 4\n"))
+
+    def test_a_partial_baseline_prints_the_not_run_count_and_the_parts_add_up(self) -> None:
+        base = self.folder(["row-a"], "Run state: partial\nNot run: row-b\nNot run: row-c\n")
+        code, text = self.listing(base, ["row-a", "row-b", "row-c"])
+        self.assertEqual((code, text), (0, "entries: 3, folders: 1, not run: 2\n"))
+
+    def test_an_id_with_neither_a_folder_nor_a_not_run_line_ends_with_11(self) -> None:
+        base = self.folder(["row-a"], "Run state: partial\nNot run: row-b\n")
+        code, text = self.listing(base, ["row-a", "row-b", "row-c"])
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+        self.assertIn("entries: 3, folders: 1, not run: 1", text)
+
+    def test_a_folder_that_only_resembles_an_id_is_not_counted(self) -> None:
+        base = self.folder(["row-a-extra", "xSTOPPED-row-a"])
+        code, text = self.listing(base, ["row-a"])
+        self.assertEqual(code, pc_exitcodes.PREFLIGHT_FAIL)
+
+    def test_new_dated_folders_and_outcome_counts_ignore_links_and_files(self) -> None:
+        base = self.folder(["a", "b"])
+        evidence = os.path.join(os.path.realpath(tempfile.mkdtemp(prefix="pc-list-")), "ev")
+        os.makedirs(os.path.join(evidence, "rerun-old"))
+        before = os.listdir(evidence)
+        os.makedirs(os.path.join(evidence, "rerun-new"))
+        os.makedirs(os.path.join(evidence, "other-new"))
+        os.symlink(base, os.path.join(evidence, "rerun-link"))
+        with open(os.path.join(evidence, "rerun-file"), "x", encoding="utf-8") as handle:
+            handle.write("x\n")
+        self.assertEqual(pc_cleanclone.new_dated_folders(evidence, before), ["rerun-new"])
+        self.assertEqual(pc_cleanclone.outcome_folders(base), 2)
+        self.assertEqual(pc_cleanclone.outcome_folders(None), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

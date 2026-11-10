@@ -532,7 +532,7 @@ def _count_calls(path: str) -> int:
         count = 0
         with open(path, "rb") as handle:
             for raw in handle:
-                if _CALL_LINE.match(raw.decode("utf-8", "replace")) is not None:
+                if _CALL_LINE.match(raw.decode("utf-8", "replace").rstrip("\r\n")) is not None:
                     count += 1
         return count
     except OSError:
