@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Known issues disclosed in README.md (2026-10-22): row 7 (destination handling passed, evidence
   integrity failed), rows 1, 2, 3c and 4b carried forward on the earlier digests, the shipped
   skill digest that no matrix row ran, and the NUL `-z` status form that never executed.
+- Automated evidence harness in `tests/harness/` (see its README.md) and a new full-matrix
+  baseline, `tests/evidence/rerun-2026-11-11-claude-sonnet-5-5/`, with the measured cost; a Codex
+  review of the baseline is recorded in its `codex-review.md`, and each outcome folder's README
+  closes with the one-line verdict taken from that review.
 
 ### Changed
 
