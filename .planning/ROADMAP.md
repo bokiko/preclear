@@ -152,7 +152,7 @@ Plans:
   4. A new dated evidence folder holds a per-row digest table, the measured cost per row and a label that the run is a new baseline on the pinned model. It also holds the comparer's per-row differences against `tests/evidence/publication-2026-10-20/`, and every file passed the leak gate. Codex's per-row verdicts, from a review in a visible Herdr tab, are recorded in it before any acceptance claim is made. (RERUN-03, RERUN-04)
   5. `tests/harness/README.md` states the prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), the measured cost, the supported platforms and what a pass proves. `tests/acceptance.md` and `CHANGELOG.md` both point to it. (RERUN-05)
 
-**Plans:** 19/21 plans executed
+**Plans:** 20/21 plans executed
 
 Plans:
 **Wave 1**
@@ -213,7 +213,7 @@ Plans:
 - [x] 04-19-PLAN.md — The clean-clone bootstrap: a never-used folder, a scrubbed environment, pre- and post-assertions that the private helper was unreachable, copy-back through the leak gate, also after a budget stop, where the finished rows are filed as a baseline labelled partial (RERUN-02)
 
 **Wave 20** *(blocked on Wave 19 completion)*
-- [ ] 04-20-PLAN.md — The full matrix once from a clean clone, paid, on bokiko's word: push the Phase 4 code, run all 21 chains, file the baseline folder (labelled partial if the budget ends the run first) and report the cost per row (RERUN-02, RERUN-03)
+- [x] 04-20-PLAN.md — The full matrix once from a clean clone, paid, on bokiko's word: push the Phase 4 code, run all 21 chains, file the baseline folder (labelled partial if the budget ends the run first) and report the cost per row (RERUN-02, RERUN-03)
 
 **Wave 21** *(blocked on Wave 20 completion)*
 - [ ] 04-21-PLAN.md — README for a stranger with a cost block tied to the evidence, acceptance and changelog pointers, the Codex review in a visible Herdr tab filed as bokiko pasted it, verdict lines on his word, and the reference swap only on his word (RERUN-04, RERUN-05)
@@ -245,4 +245,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
 | 3. Walking Skeleton (Row 1) | 12/12 | Complete    | 2026-10-29 |
-| 4. Full Matrix, Row 7 and Review | 19/21 | In Progress | - |
+| 4. Full Matrix, Row 7 and Review | 20/21 | In Progress | - |
