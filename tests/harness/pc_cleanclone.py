@@ -17,7 +17,8 @@ What it does, in order (the free steps first, nothing is deleted, reused or over
   1. creates one never-used folder D under the caller's runs root with three siblings: repo (the clone), runs (the
      clone's own runs root) and home (an empty throwaway home), then clones the source into repo under git hygiene
      variables and prints the clone's head, the main tree's head and whether they are equal;
-  2. builds the child environment from an empty dict with exactly the names of ALLOWED_NAMES, and asserts before any
+  2. builds the child environment from an empty dict with exactly the names of ALLOWED_NAMES (plus USER under
+     --real-home only, see build_child_env), and asserts before any
      spend, as counts, that no checkpoint helper is reachable (exit 11 on any non-zero count);
   3. runs the clone's own scripts as child processes under that environment: the self-test (optional), the dry run of
      the whole matrix with the same budget, the stub check and the strict preflight, then the matrix itself;
@@ -74,8 +75,8 @@ MESSAGE_FACTS = "ERROR: the clone facts could not be written in the fixed schema
 MESSAGE_NOTHING_FILED = "nothing was filed in the clone, so there is nothing to finalize or copy back"
 MESSAGE_KEPT = "the clone folder keeps whatever was filed; nothing was copied back"
 MESSAGE_REAL_HOME = (
-    "WARNING: --real-home gives the child this account's real home folder; this differs from the minimal "
-    "environment and is recorded as home kind real"
+    "WARNING: --real-home gives the child this account's real home folder and, when the caller has one, the name "
+    "USER (the Keychain login needs both); this differs from the minimal environment and is recorded as home kind real"
 )
 
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -88,6 +89,10 @@ ALLOWED_NAMES = (
     "TERM",
     "LANG",
 )
+# Under --real-home only, the child also carries these names, copied from the caller. The macOS Keychain login lookup of
+# the pinned build needs the real HOME and the account name USER together: without USER the build reports not logged in
+# even with the real home. LOGNAME alone does not help, and USER with the throwaway home does not either.
+REAL_HOME_EXTRA_NAMES = ("USER",)
 DEFAULT_TERM = "xterm-256color"
 DEFAULT_LANG = "en_US.UTF-8"
 LAYOUT_NAMES = ("repo", "runs", "home")
@@ -102,6 +107,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__
 _HTTPS_SOURCE = re.compile(r"https://[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?/[A-Za-z0-9._~/-]+\Z")
 _TERM_TEXT = re.compile(r"[A-Za-z0-9._+-]{1,64}\Z")
 _LANG_TEXT = re.compile(r"[A-Za-z0-9._@-]{1,64}\Z")
+_ACCOUNT_TEXT = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 _ID_TEXT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}\Z")
 _CALL_LINE = re.compile(r"[^\s]+ CALL(?: |\Z)")
 _STUB_DIGEST_LINE = re.compile(r"(?P<sha>[0-9a-f]{64}|UNCONFIRMED)  tests/harness/checkpoint_stub\.py\Z")
@@ -224,6 +230,11 @@ def build_child_env(
     folders plus the folder of the pinned build. PRECLEAR_HARNESS_HOME is the caller's harness home (so the owner's
     login folder and spend ledger are reused, D-13b). PRECLEAR_RUNS_ROOT is D/runs. TERM and LANG are copied from the
     caller when they are plain words, else fixed. Only the names are ever recorded.
+
+    Only with real_home the result also holds the names of REAL_HOME_EXTRA_NAMES: USER, copied from the caller (else
+    from its LOGNAME) when it is a plain account-name token, otherwise left out. The Keychain login lookup of the
+    pinned build needs the real HOME and USER together. The value is a login name and is never printed or written;
+    only the name is. Without real_home the result holds exactly the names of ALLOWED_NAMES.
     """
     if os.pathsep in claude_dir or os.pathsep in folder or os.pathsep in harness_home:
         raise ValueError("a folder name holds the path separator")
@@ -233,7 +244,7 @@ def build_child_env(
     parts = SYSTEM_PATH.split(os.pathsep)
     if claude_dir and claude_dir not in parts:
         parts.append(claude_dir)
-    return {
+    env = {
         "HOME": home,
         "PATH": os.pathsep.join(parts),
         "PRECLEAR_HARNESS_HOME": harness_home,
@@ -242,6 +253,11 @@ def build_child_env(
         "TERM": _text_or(caller_env.get("TERM"), _TERM_TEXT, DEFAULT_TERM),
         "LANG": _text_or(caller_env.get("LANG"), _LANG_TEXT, DEFAULT_LANG),
     }
+    if real_home:
+        account = _text_or(caller_env.get("USER") or caller_env.get("LOGNAME"), _ACCOUNT_TEXT, "")
+        if account:
+            env[REAL_HOME_EXTRA_NAMES[0]] = account
+    return env
 
 
 def child_env_names(env: Mapping[str, str]) -> List[str]:

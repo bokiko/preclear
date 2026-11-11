@@ -306,6 +306,10 @@ class CloneLayoutTests(unittest.TestCase):
         self.assertIsNone(pc_cleanclone.default_source(bare, git, pc_cleanclone._bare_git_env()))
 
 
+# A stand-in login name for the real-home tests; it must never be printed or written anywhere.
+ACCOUNT_VALUE = "pcacct-q7x9k2"
+
+
 class ChildEnvTests(unittest.TestCase):
     def build(self, world, real_home=False):
         folder = os.path.join(world.base, "D")
@@ -355,6 +359,46 @@ class ChildEnvTests(unittest.TestCase):
         env, folder = self.build(world, real_home=True)
         self.assertEqual(env["HOME"], world.home)
         self.assertEqual(sorted(env), sorted(pc_cleanclone.ALLOWED_NAMES))
+
+    def test_the_real_home_adds_the_user_name_from_the_caller_and_only_then(self) -> None:
+        world = World()
+        world.env["USER"] = ACCOUNT_VALUE
+        plain, _folder = self.build(world, real_home=False)
+        self.assertEqual(sorted(plain), sorted(pc_cleanclone.ALLOWED_NAMES))
+        self.assertNotIn("USER", plain)
+        real, _folder = self.build(world, real_home=True)
+        self.assertEqual(pc_cleanclone.REAL_HOME_EXTRA_NAMES, ("USER",))
+        self.assertEqual(sorted(real), sorted(pc_cleanclone.ALLOWED_NAMES + pc_cleanclone.REAL_HOME_EXTRA_NAMES))
+        self.assertEqual(len(real), 8)
+        self.assertEqual(real["USER"], ACCOUNT_VALUE)
+        self.assertEqual(real["HOME"], world.home)
+        self.assertEqual(pc_cleanclone.child_env_names(real)[-1], "USER")
+
+    def test_the_user_name_falls_back_to_logname_and_is_absent_when_the_caller_has_neither(self) -> None:
+        world = World()
+        world.env["LOGNAME"] = ACCOUNT_VALUE
+        real, _folder = self.build(world, real_home=True)
+        self.assertEqual(real["USER"], ACCOUNT_VALUE)
+        self.assertNotIn("LOGNAME", real)
+        world.env["USER"] = ACCOUNT_VALUE + "-first"
+        real, _folder = self.build(world, real_home=True)
+        self.assertEqual(real["USER"], ACCOUNT_VALUE + "-first")
+        for name in ("USER", "LOGNAME"):
+            world.env.pop(name, None)
+        real, _folder = self.build(world, real_home=True)
+        self.assertEqual(sorted(real), sorted(pc_cleanclone.ALLOWED_NAMES))
+
+    def test_an_account_name_that_is_not_a_plain_token_is_omitted(self) -> None:
+        for bad in ("", "has space", "semi;colon", "new\nline", "a/b", "x" * 65, "caf\u00e9"):
+            world = World()
+            world.env["USER"] = bad
+            real, _folder = self.build(world, real_home=True)
+            self.assertNotIn("USER", real, repr(bad))
+            self.assertEqual(sorted(real), sorted(pc_cleanclone.ALLOWED_NAMES), repr(bad))
+        world = World()
+        world.env["USER"] = "x" * 64
+        real, _folder = self.build(world, real_home=True)
+        self.assertEqual(real["USER"], "x" * 64)
 
     def test_a_term_or_lang_that_is_not_a_plain_word_is_replaced_by_the_fixed_default(self) -> None:
         world = World()
@@ -1218,6 +1262,32 @@ class RealHomeTests(unittest.TestCase):
         self.assertEqual(facts["home_kind"], "real")
         self.assertEqual(facts["env_names"], sorted(pc_cleanclone.ALLOWED_NAMES))
         self.assertEqual(path_text_hits(run.out + run.err, run.world), [])
+
+    def test_a_full_run_with_the_flag_and_a_caller_user_records_the_eighth_name_and_never_the_value(self) -> None:
+        import contextlib
+
+        def give_user(world):
+            world.env["USER"] = ACCOUNT_VALUE
+            return contextlib.nullcontext()
+
+        run = Run(clean_stages(), ["--budget", "25.00", "--real-home"], patch=give_user)
+        self.assertEqual(run.code, pc_exitcodes.OK, run.out + run.err)
+        expected = sorted(pc_cleanclone.ALLOWED_NAMES + pc_cleanclone.REAL_HOME_EXTRA_NAMES)
+        (names_line,) = [line for line in run.out.splitlines() if line.startswith("child environment names: ")]
+        self.assertEqual(names_line, "child environment names: " + ", ".join(expected))
+        self.assertIn(pc_cleanclone.MESSAGE_REAL_HOME, run.out)
+        self.assertEqual(facts_of(run)["env_names"], expected)
+        texts = [run.out, run.err]
+        for folder in (run.clone_folder, run.dated()):
+            for name in sorted(os.listdir(folder)):
+                path = os.path.join(folder, name)
+                if os.path.isfile(path) and not os.path.islink(path):
+                    texts.append(read_text(path))
+        readme = read_text(os.path.join(run.dated(), "README.md"))
+        self.assertIn("(8, also in `environment-names.txt`)", readme)
+        self.assertIn("USER", read_text(os.path.join(run.dated(), "environment-names.txt")).splitlines())
+        for text in texts:
+            self.assertNotIn(ACCOUNT_VALUE, text)
 
     def test_a_full_run_without_the_flag_records_home_kind_throwaway(self) -> None:
         self.assertEqual(facts_of(budget_run())["home_kind"], "throwaway")

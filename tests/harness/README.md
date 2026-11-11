@@ -956,12 +956,16 @@ clone), `runs` (the clone's own runs root) and `home` (an empty throwaway home).
 D, the clone and every folder the run makes are created exclusively; nothing is deleted, renamed, reused or overwritten, and a
 second start in the same second is refused with exit 16.
 
-The environment. Every child process is built from an empty environment holding exactly seven names: `HOME` (the throwaway
+The environment. Every child process is built from an empty environment holding exactly seven names (eight under `--real-home`, see below): `HOME` (the throwaway
 folder), `PATH` (the fixed system folders plus the folder of the pinned build), `PRECLEAR_HARNESS_HOME` (the caller's harness
 home, so the logged-in config folder and the spend ledger are reused), `PRECLEAR_RUNS_ROOT` (the clone's runs folder),
 `DISABLE_AUTOUPDATER`, `TERM` and `LANG`. A cloud key, a git author, `CLAUDE_CONFIG_DIR` or an agent socket of the caller never
 arrives. Only the names are recorded, in `environment-names.txt` of the filed folder, never a value. The one wording difference
-from the first plan is that the harness home is handed over, not a config folder.
+from the first plan is that the harness home is handed over, not a config folder. The one exception is `--real-home`: the child then
+also carries an eighth name, `USER`, copied from the caller (else from `LOGNAME`, and left out when neither is set or the value is not
+a plain account-name token), because the macOS Keychain login lookup of the pinned build needs the real `HOME` and `USER` together.
+The printed name list, the warning, `environment-names.txt` and the baseline README then show eight names; the value of `USER` is a
+login name and is never printed or written.
 
 The order. Free first, paid last: the optional `--selftest` runs the clone's own suite (no model calls), then the dry run of the
 whole matrix with the same budget, then the stub check and strict preflight, then the matrix. `--preflight-only` stops after the
