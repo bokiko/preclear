@@ -656,6 +656,8 @@ def row7_attempts(folder: str) -> List[pc_review.Attempt]:
 
     Read from the filed files only: a filed attempt's do-not-redo-candidates.md (absent or unreadable is recorded as
     such, not skipped), a stopped or skipped attempt's reason line. Ordering is left to pc_review (by attempt number).
+    A filed attempt whose candidate file says it printed no checkpoint is also read for a checkpoint printed outside a
+    fenced block, from its two filed s2 traces (plan 04-22); an absent, oversized or damaged trace is recorded as unreadable.
     """
     found: List[pc_review.Attempt] = []
     for item in read_items(folder):
@@ -664,6 +666,8 @@ def row7_attempts(folder: str) -> List[pc_review.Attempt]:
         parsed: Optional[Dict[str, Any]] = None
         problem = ""
         reason = ""
+        unfenced: Optional[Dict[str, Any]] = None
+        unfenced_problem = ""
         if item.state == STATE_FILED:
             text = _read_text(os.path.join(folder, item.folder, pc_review.CANDIDATE_FILE))
             if text is None:
@@ -673,10 +677,21 @@ def row7_attempts(folder: str) -> List[pc_review.Attempt]:
                     parsed = pc_review.parse_candidates(text)
                 except pc_review.ReviewError:
                     problem = pc_review.PROBLEM_UNREADABLE
+            if parsed is not None and parsed["marker"] == pc_review.MARKER_NO_CHECKPOINT:
+                short = _read_text(os.path.join(folder, item.folder, pc_review.SHORT_TRACE_FILE))
+                full = _read_text(os.path.join(folder, item.folder, pc_review.FULL_TRACE_FILE))
+                try:
+                    if short is None or full is None:
+                        raise pc_review.ReviewError("a filed trace is absent")
+                    unfenced = pc_review.unfenced_reading(short, full)
+                except pc_review.ReviewError:
+                    unfenced_problem = pc_review.PROBLEM_UNREADABLE
         else:
             reason = item.reason if item.reason != NO_REASON else ""
         found.append(
-            pc_review.Attempt(item.folder, item.attempt, _REVIEW_STATES[item.state], reason, parsed, problem)
+            pc_review.Attempt(
+                item.folder, item.attempt, _REVIEW_STATES[item.state], reason, parsed, problem, unfenced, unfenced_problem
+            )
         )
     return found
 

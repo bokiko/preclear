@@ -14,6 +14,16 @@ does the mechanical part and never judges:
   * render_candidates and parse_candidates   the fixed, line-oriented file filed with each row 7 chain
   * render_row7_review    the side-by-side table of the attempts, built from parsed candidate files only
 
+One more reading serves an attempt that printed its checkpoint as plain markdown (plan 04-22; RERUN-01):
+
+  * outside_fences (pc_row1), parse_full_trace and unfenced_reading   for a filed attempt whose chain marker says it
+                          printed no checkpoint, the final reply of the filed short trace is read for the two checkpoint
+                          headings outside every fenced block, and the entries of its Do-not-redo section are paired with
+                          the calls of the filed full trace by the same whole-token rule. It is a source of lower
+                          confidence (no closing fence marks where the section ends) and it is labelled unfenced; a fenced
+                          block that holds both headings always wins. The filed trace holds Read, Glob and Grep results by
+                          length only, so those results are not searched, and the count of them is stated.
+
 Lists, counts and the word UNSUPPORTED (an empty candidate list) are the whole output. Nothing here judges a pairing;
 Codex and bokiko confirm or reject each pairing in the review file of the triple.
 
@@ -85,6 +95,21 @@ STATE_SKIPPED = "skipped"
 PROBLEM_ABSENT = "absent"
 PROBLEM_UNREADABLE = "unreadable"
 MARKER_NO_CHECKPOINT = "NO-PRINTED-CHECKPOINT"
+
+HEADING_FINAL_REPLY = "## Final reply"
+SHORT_TRACE_FILE = "s2-preclear-trace.md"
+FULL_TRACE_FILE = "s2-preclear-full-trace.md"
+MAX_TRACE_CALLS = 512
+MAX_TRACE_CHARS = 1024 * 1024
+UNFENCED_FOUND = "found"
+UNFENCED_NONE = "none"
+UNFENCED_FENCED = "fenced"
+# The placeholders the sanitizer writes into a filed trace, as the paths of the calls (the three values pc_row1.caller_map maps).
+FILED_PATHS: Mapping[str, Optional[str]] = {
+    "run_root": "<run>",
+    "project": "<run>/project",
+    "auto_memory": "<auto-memory-root>",
+}
 
 _CALL_KEYS: Tuple[str, ...] = ("command", "file_path", "path", "pattern", "old_string", "new_string")
 _EXCERPT_KEYS: Tuple[str, ...] = _CALL_KEYS
@@ -609,6 +634,195 @@ def parse_candidates(text: Any) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------------------------
+# The unfenced reading: a checkpoint printed as plain markdown (plan 04-22; D-06)
+# ---------------------------------------------------------------------------------------------
+
+_TRACE_TITLE_END = ": complete sanitized tool calls and results"
+_TRACE_CALLS_LINE = re.compile(r"Calls (?P<n>[0-9]{1,9}); results flagged as refusal/denial: [0-9]{1,9}\.\Z")
+_TRACE_SPLIT = re.compile(r"### (?P<n>[0-9]+)\.")
+_TRACE_FLAGS = r"(?P<flags>(?:  ERROR)?(?:  REFUSAL/DENIAL)?)\Z"
+_TRACE_BLOCK_HEADING = re.compile(
+    r"### (?P<n>[0-9]{1,9})\. (?P<name>[A-Za-z0-9_.-]{1,64}) \((?P<id>[A-Za-z0-9_-]{1,64})\)" + _TRACE_FLAGS
+)
+_TRACE_ONE_LINE_HEADING = re.compile(
+    r"### (?P<n>[0-9]{1,9})\. (?P<name>[A-Za-z0-9_.-]{1,64}) \((?P<id>[A-Za-z0-9_-]{1,64})\): `(?P<arg>.*)` -> result "
+    r"(?P<size>[0-9]{1,9}) chars" + _TRACE_FLAGS
+)
+_TRACE_CONTENT_MARK = "--- content ---"
+_TRACE_FENCE = "```"
+_TRACE_RESULT = "result:"
+_MESSAGE_TRACE = "the filed trace is not in the fixed format"
+
+
+def _trace_json_object(text: str) -> Dict[str, Any]:
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        raise ReviewError(_MESSAGE_TRACE)
+    if not isinstance(value, dict):
+        raise ReviewError(_MESSAGE_TRACE)
+    return value
+
+
+def _trace_part(lines: Sequence[str]) -> Tuple[str, str, Dict[str, Any], str, bool]:
+    """One call of a full trace as (id, name, input, result, flagged); lines[0] is its heading line."""
+    head = lines[0]
+    one = _TRACE_ONE_LINE_HEADING.match(head)
+    if one is not None and one.group("name") in pc_evidence.ONE_LINE_TOOLS:
+        if len(lines) != 1:
+            raise ReviewError(_MESSAGE_TRACE)
+        key = "file_path" if one.group("name") == "Read" else "pattern"
+        return one.group("id"), one.group("name"), {key: one.group("arg")}, "", "  ERROR" in one.group("flags")
+    block = _TRACE_BLOCK_HEADING.match(head)
+    if block is None or block.group("name") in pc_evidence.ONE_LINE_TOOLS:
+        raise ReviewError(_MESSAGE_TRACE)
+    name = block.group("name")
+    if len(lines) < 6 or lines[1] != _TRACE_FENCE or lines[-1] != _TRACE_FENCE:
+        raise ReviewError(_MESSAGE_TRACE)
+    end = -1
+    for index in range(3, len(lines) - 4):
+        if lines[index] == _TRACE_FENCE and lines[index + 1] == _TRACE_RESULT and lines[index + 2] == _TRACE_FENCE:
+            end = index
+            break
+    if end < 0:
+        raise ReviewError(_MESSAGE_TRACE)
+    body = "\n".join(lines[2:end])
+    result = "\n".join(lines[end + 3:-1])
+    tool_input: Dict[str, Any]
+    if name == "Bash":
+        tool_input = {"command": body}
+    elif name == "Write":
+        pieces = body.split("\n", 2)
+        if len(pieces) != 3 or pieces[1] != _TRACE_CONTENT_MARK:
+            raise ReviewError(_MESSAGE_TRACE)
+        tool_input = _trace_json_object(pieces[0])
+        tool_input["content"] = pieces[2]
+    else:
+        tool_input = _trace_json_object(body)
+    return block.group("id"), name, tool_input, result, "  ERROR" in block.group("flags")
+
+
+def parse_full_trace(text: Any) -> List[Dict[str, Any]]:
+    """The calls of a filed full trace as stream events (an assistant tool_use event and a user tool_result event per call).
+
+    Reads the shape pc_evidence.render_full_trace writes and nothing looser: the title line, one `Calls N` line, then the
+    calls numbered 1, 2, 3 and so on, whose count is N and at most MAX_TRACE_CALLS. Model text sits inside the calls, so
+    a forged call heading in it changes the count or the numbering and the whole file is refused: model text adds no
+    structure. A Read, Glob or Grep result is not in the file (its length only), so its result text is empty. A
+    Write keeps its content under content, which only is_assembly_call reads. Any other shape raises ReviewError with a
+    fixed message that echoes nothing of the file.
+    """
+    if not isinstance(text, str) or len(text) > MAX_TRACE_CHARS:
+        raise ReviewError(_MESSAGE_TRACE)
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    starts = [index for index, line in enumerate(lines) if _TRACE_SPLIT.match(line)]
+    preamble = lines[: starts[0]] if starts else lines
+    if not preamble or not preamble[0].startswith("# ") or not preamble[0].endswith(_TRACE_TITLE_END):
+        raise ReviewError(_MESSAGE_TRACE)
+    declared = [_TRACE_CALLS_LINE.match(line) for line in preamble[1:]]
+    declared = [found for found in declared if found is not None]
+    if len(declared) != 1:
+        raise ReviewError(_MESSAGE_TRACE)
+    count = int(declared[0].group("n"))
+    if count > MAX_TRACE_CALLS or len(starts) != count:
+        raise ReviewError(_MESSAGE_TRACE)
+    if not starts and any(line.strip() for line in lines[len(preamble):]):
+        raise ReviewError(_MESSAGE_TRACE)
+    events: List[Dict[str, Any]] = []
+    ends = starts[1:] + [len(lines)]
+    for number, (begin, end) in enumerate(zip(starts, ends), 1):
+        found = _TRACE_SPLIT.match(lines[begin])
+        if found is None or len(found.group("n")) > 9 or int(found.group("n")) != number:
+            raise ReviewError(_MESSAGE_TRACE)
+        tool_id, name, tool_input, result, flagged = _trace_part(lines[begin:end])
+        events.append(
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}]}}
+        )
+        events.append(
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tool_id, "content": result, "is_error": flagged}]}}
+        )
+    return events
+
+
+def _final_reply(short_trace_text: Any) -> str:
+    """The text after the first final-reply heading of a filed short trace, or the empty string when it has none.
+
+    The lines before the heading are one-line call bullets, so no model text can stand in front of the genuine heading.
+    """
+    if not isinstance(short_trace_text, str):
+        raise ReviewError(_MESSAGE_TRACE)
+    lines = short_trace_text.split("\n")
+    for index, line in enumerate(lines):
+        if line.rstrip("\r") == HEADING_FINAL_REPLY:
+            return "\n".join(lines[index + 1:])
+    return ""
+
+
+def _unfenced_empty(status: str) -> Dict[str, Any]:
+    return {"status": status, "entries": 0, "more_entries": 0, "records": [], "calls": 0, "unsearched": 0, "assembly": 0}
+
+
+def unfenced_reading(short_trace_text: Any, full_trace_text: Any) -> Dict[str, Any]:
+    """Read a checkpoint printed as plain markdown from the filed final reply, and pair its entries with the filed calls.
+
+    A fenced block that holds both checkpoint headings (or one that breaks a bound) always wins: the status is fenced
+    and nothing is read. Otherwise the reply outside every closed fence must hold both heading lines, else the status is
+    none; the entries are those of its Do-not-redo section, none again giving none. Only then is the full trace parsed (a
+    ReviewError propagates) and the unchanged candidate rule run over its calls with FILED_PATHS. The result is a dict
+    with status, entries (the shown count), more_entries, records (the shape parse_candidates returns), calls,
+    unsearched (calls named Read, Glob or Grep, whose results the filed trace holds by length only) and assembly.
+    The harness prints candidates and counts, never a verdict (D-06).
+    """
+    import pc_row1  # imported late: pc_row1 imports this module's siblings
+
+    reply = _final_reply(short_trace_text)
+    if pc_row1.printed_checkpoint(reply)[1] != pc_row1.REASON_CHECKPOINT_NONE:
+        return _unfenced_empty(UNFENCED_FENCED)
+    outside = pc_row1.outside_fences(reply)
+    heading_lines = set(line.rstrip() for line in outside.split("\n"))
+    if not all(heading in heading_lines for heading in pc_row1.CHECKPOINT_HEADINGS):
+        return _unfenced_empty(UNFENCED_NONE)
+    entries = do_not_redo_entries(outside)
+    if not entries:
+        return _unfenced_empty(UNFENCED_NONE)
+    events = parse_full_trace(full_trace_text)
+    shown = entries[:MAX_ENTRIES]
+    found = candidates(shown, events, FILED_PATHS)
+    calls = pc_stream.tool_calls(events)
+    records: List[Dict[str, Any]] = []
+    for index, (entry, listed) in enumerate(zip(shown, found), 1):
+        records.append(
+            {
+                "index": index,
+                "text": one_line(entry, MAX_ENTRY_CHARS) or "(empty)",
+                "count": len(listed),
+                "unsupported": len(listed) == 0,
+                "candidates": [
+                    {
+                        "id": _safe(item.tool_id, _SAFE_ID),
+                        "tool": _safe(item.tool, _SAFE_TOOL),
+                        "excerpt": one_line(item.excerpt or "(none)", MAX_EXCERPT_CHARS) or "(empty)",
+                    }
+                    for item in listed[:MAX_CANDIDATES]
+                ],
+                "more": max(0, len(listed) - MAX_CANDIDATES),
+            }
+        )
+    return {
+        "status": UNFENCED_FOUND,
+        "entries": len(shown),
+        "more_entries": len(entries) - len(shown),
+        "records": records,
+        "calls": len(calls),
+        "unsearched": sum(1 for _id, name, _input in calls if name in pc_evidence.ONE_LINE_TOOLS),
+        "assembly": sum(1 for _id, _name, tool_input in calls if is_assembly_call(tool_input)),
+    }
+
+
+# ---------------------------------------------------------------------------------------------
 # The review table
 # ---------------------------------------------------------------------------------------------
 
@@ -622,6 +836,8 @@ class Attempt(NamedTuple):
     reason: str  # the stop or skip reason line, or the empty string
     parsed: Optional[Dict[str, Any]]  # parse_candidates of the filed candidate file, or None
     problem: str  # "" when parsed, else PROBLEM_ABSENT or PROBLEM_UNREADABLE
+    unfenced: Optional[Dict[str, Any]] = None  # unfenced_reading of a NO-PRINTED-CHECKPOINT attempt, or None
+    unfenced_problem: str = ""  # PROBLEM_UNREADABLE when its filed traces could not be read, else ""
 
 
 _STATE_RANK = {STATE_FILED: 0, STATE_STOPPED: 1, STATE_SKIPPED: 2}
@@ -638,6 +854,65 @@ REVIEW_INTRO: Tuple[str, ...] = (
     "Every line that starts with `> ` is text quoted from the model, on one line and capped; it is never structure.",
     "Stopped and skipped attempts are kept, with their reasons.",
 )
+
+
+UNFENCED_NOT_READ_FENCED = "unfenced checkpoint: not read, a fenced block holds the checkpoint headings"
+UNFENCED_NOT_READ_TRACES = "unfenced checkpoint: not read, the filed traces are absent or damaged"
+
+
+def _count(reading: Mapping[str, Any], key: str) -> int:
+    value = reading.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _unfenced_lines(attempt: Attempt) -> List[str]:
+    """The unfenced lines of an attempt section: fixed words, counts, ids that matched a strict pattern, quoted model text."""
+    reading = attempt.unfenced
+    if reading is None:
+        return [UNFENCED_NOT_READ_TRACES] if attempt.unfenced_problem else []
+    if reading.get("status") == UNFENCED_FENCED:
+        return [UNFENCED_NOT_READ_FENCED]
+    if reading.get("status") != UNFENCED_FOUND:
+        return ["unfenced checkpoint: none"]
+    lines = [
+        "unfenced checkpoint: found",
+        "unfenced source: the final reply in %s outside any fenced block, and the calls in %s" % (SHORT_TRACE_FILE, FULL_TRACE_FILE),
+        "unfenced confidence: lower than a fenced block, which has a closing fence; text after the last bullet of an "
+        "unfenced section joins its last entry",
+        "unfenced match rule: whole tokens as for a fenced entry, so a bare name in an entry is not the same token as a "
+        "longer path in a call",
+        "unfenced entries: %d" % _count(reading, "entries"),
+    ]
+    if _count(reading, "more_entries"):
+        lines.append("unfenced more entries: %d" % _count(reading, "more_entries"))
+    lines.extend(
+        [
+            "unfenced calls read: %d" % _count(reading, "calls"),
+            "unfenced results not searched: %d (the filed trace holds Read, Glob and Grep results by length only)"
+            % _count(reading, "unsearched"),
+            "unfenced assembly calls: %d" % _count(reading, "assembly"),
+        ]
+    )
+    records = list(reading.get("records") or [])
+    if records:
+        lines.extend(["", "| Unfenced entry | Candidates | Status |", "| --- | --- | --- |"])
+        for record in records:
+            lines.append(
+                "| %d | %d | %s |" % (_count(record, "index"), _count(record, "count"), UNSUPPORTED if record.get("unsupported") else "listed")
+            )
+        for record in records:
+            index = _count(record, "index")
+            lines.extend(["", "unfenced entry %d:" % index, quote_line(record.get("text"), MAX_ENTRY_CHARS)])
+            lines.append("candidates %d: %d" % (index, _count(record, "count")))
+            if record.get("unsupported"):
+                lines.append(UNSUPPORTED)
+                continue
+            for item in list(record.get("candidates") or [])[:MAX_CANDIDATES]:
+                lines.append("candidate %s %s" % (_safe(item.get("id"), _SAFE_ID), _safe(item.get("tool"), _SAFE_TOOL)))
+                lines.append(quote_line(item.get("excerpt") or "(none)", MAX_EXCERPT_CHARS))
+            if _count(record, "more"):
+                lines.append("more candidates: %d" % _count(record, "more"))
+    return lines
 
 
 def _attempt_lines(attempt: Attempt) -> List[str]:
@@ -662,6 +937,8 @@ def _attempt_lines(attempt: Attempt) -> List[str]:
     facts = parsed["facts"]
     lines.append("facts: " + " ".join("%s=%d" % (label, facts[key]) for key, label in _FACT_KEYS))
     lines.append("assembly calls: %d" % parsed["assembly"])
+    if parsed["marker"] == MARKER_NO_CHECKPOINT:
+        lines.extend(_unfenced_lines(attempt))
     records = parsed["records"]
     if records:
         lines.extend(["", "| Entry | Candidates | Status |", "| --- | --- | --- |"])

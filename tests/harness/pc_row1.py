@@ -940,6 +940,32 @@ def fenced_blocks(text: str) -> List[str]:
     return blocks
 
 
+def outside_fences(text: str) -> str:
+    """The lines of a text that lie outside every fence, joined with newlines, with the same fence rule as fenced_blocks.
+
+    A closed fence (its opening line, its body and its closing line) is dropped. A fence that is never closed is a code
+    block to the end, so it is dropped from its opening line to the end of the text. The review reads a checkpoint that
+    was printed as plain markdown from these lines (plan 04-22); an unclosed fence is therefore never read as plain.
+    """
+    kept: List[str] = []
+    lines = text.split("\n")
+    index = 0
+    while index < len(lines):
+        opened = _FENCE_OPEN.match(lines[index].rstrip("\r"))
+        if opened is None:
+            kept.append(lines[index])
+            index += 1
+            continue
+        index += 1
+        length = len(opened.group(1))
+        while index < len(lines):
+            found = _FENCE_CLOSE.match(lines[index].rstrip("\r"))
+            index += 1
+            if found is not None and len(found.group(1)) >= length:
+                break
+    return "\n".join(kept)
+
+
 def printed_checkpoint(result_text: Any) -> Tuple[str, str]:
     """The printed checkpoint of an s2 reply and the reason there is none: (text, reason).
 
