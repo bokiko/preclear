@@ -13,6 +13,10 @@ Manual checklist. There is no test runner.
 Conflict, collision and denial cases use fixture copies. Never provoke them in a
 live session.
 
+There is also an automated route that runs the same publication matrix through the
+harness. It starts with a free self-test and spends nothing until a paid row is
+asked for; the steps and the measured cost are in `tests/harness/README.md`.
+
 ## Harness rules
 
 - Record the Claude Code version, the enabled setting sources, the installed

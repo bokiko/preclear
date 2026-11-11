@@ -13,7 +13,10 @@ and code cannot drift:
   * the layout names every file in the folder once and no file that is missing, except the files
     in PENDING_SPIKE_FILES (created by the spike plan, which asserts they exist);
   * data is the only subfolder, and the README holds no absolute path, home path, host name,
-    temporary path, email address, cost figure or package-manager command.
+    temporary path, email address or package-manager command;
+  * the README holds no cost figure except inside the one block between the cost markers, and that
+    block quotes exactly the one-row figure of the first baseline's usage file and the matrix total
+    of the new baseline's digest table, both read in place from the filed folders (RERUN-05, D-17).
 
 Forbidden-path needles are assembled from fragments at run time; the machine's host name is read
 at run time and compared only through boolean checks with fixed messages.
@@ -61,6 +64,15 @@ SWITCH_NAMES = (
 FLAG_MARKERS = ("<!-- flag-table:begin -->", "<!-- flag-table:end -->")
 EXIT_MARKERS = ("<!-- exit-codes:begin -->", "<!-- exit-codes:end -->")
 SWITCH_MARKERS = ("<!-- switches:begin -->", "<!-- switches:end -->")
+COST_MARKERS = ("<!-- cost:begin -->", "<!-- cost:end -->")
+
+REPO_DIR = os.path.dirname(os.path.dirname(HARNESS_DIR))
+EVIDENCE_DIR = os.path.join(REPO_DIR, "tests", "evidence")
+FIRST_BASELINE = "rerun-2026-10-29-claude-sonnet-5-5"
+NEW_BASELINE = "rerun-2026-11-11-claude-sonnet-5-5"
+FIRST_USAGE = os.path.join(EVIDENCE_DIR, FIRST_BASELINE, "row1-wrong-binding", "usage.txt")
+NEW_DIGEST_TABLE = os.path.join(EVIDENCE_DIR, NEW_BASELINE, "digest-table.md")
+TESTED_BUILD = "2.1.310"
 
 
 def exit_code_constants() -> List[Tuple[str, int]]:
@@ -254,12 +266,132 @@ class StatementTests(unittest.TestCase):
         self.assertIn("Total spend line", text)
         self.assertNotRegex(text, r"\d")
 
-    def test_the_readme_gives_no_cost_figure_and_no_package_manager_command(self) -> None:
+    def test_the_readme_gives_no_cost_figure_outside_the_cost_block_and_no_package_manager_command(self) -> None:
         text = read_readme()
+        begin, end = COST_MARKERS
+        self.assertEqual(text.count(begin), 1, "the cost block must open exactly once")
+        self.assertEqual(text.count(end), 1, "the cost block must close exactly once")
+        text = text[: text.index(begin)] + text[text.index(end) + len(end) :]
         self.assertNotIn("USD", text)
         self.assertIsNone(re.search(r"\$\s?\d", text), "a cost figure appears in the README")
         for command in ("pip install", "pip3 install", "npm install", "cargo add", "cargo install", "brew install"):
             self.assertNotIn(command, text)
+
+
+def read_filed(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def first_baseline_row_figure() -> str:
+    """Return the one-row figure exactly as the first baseline's usage file prints it."""
+    found = re.findall(r"^row total: (\S+)$", read_filed(FIRST_USAGE), re.MULTILINE)
+    assert len(found) == 1, "the usage file must print one row total"
+    return found[0]
+
+
+def new_baseline_matrix_total() -> str:
+    """Return the matrix total exactly as the new baseline's digest table prints it (the last total line)."""
+    found = re.findall(r"^total: (\S+) USD from ", read_filed(NEW_DIGEST_TABLE), re.MULTILINE)
+    assert found, "the digest table must print a total line"
+    return found[-1]
+
+
+class CostBlockTests(unittest.TestCase):
+    def test_there_is_exactly_one_cost_block(self) -> None:
+        text = read_readme()
+        self.assertEqual(text.count(COST_MARKERS[0]), 1)
+        self.assertEqual(text.count(COST_MARKERS[1]), 1)
+        self.assertIsNotNone(between(text, COST_MARKERS))
+
+    def test_the_block_quotes_the_one_row_figure_of_the_first_baseline(self) -> None:
+        block = between(read_readme(), COST_MARKERS)
+        assert block is not None
+        self.assertIn(first_baseline_row_figure(), block)
+
+    def test_the_block_quotes_the_matrix_total_of_the_new_baseline(self) -> None:
+        block = between(read_readme(), COST_MARKERS)
+        assert block is not None
+        self.assertIn(new_baseline_matrix_total(), block)
+
+    def test_the_block_holds_no_other_decimal_figure(self) -> None:
+        block = between(read_readme(), COST_MARKERS)
+        assert block is not None
+        allowed = {first_baseline_row_figure(), new_baseline_matrix_total()}
+        stray = sorted(set(re.findall(r"\d+\.\d+", block)) - allowed)
+        self.assertEqual(stray, [], "a figure in the cost block is not one of the two filed figures")
+
+    def test_a_changed_digit_in_the_block_would_fail_the_check(self) -> None:
+        block = between(read_readme(), COST_MARKERS)
+        assert block is not None
+        figure = new_baseline_matrix_total()
+        altered = block.replace(figure, figure[:-1] + str((int(figure[-1]) + 1) % 10))
+        self.assertNotIn(figure, altered)
+
+    def test_the_block_names_the_two_sources_by_file_and_folder(self) -> None:
+        block = between(read_readme(), COST_MARKERS)
+        assert block is not None
+        self.assertIn("usage.txt", block)
+        self.assertIn("digest-table.md", block)
+        self.assertIn(FIRST_BASELINE, block)
+        self.assertIn(NEW_BASELINE, block)
+
+
+class Rerun05Tests(unittest.TestCase):
+    def reproducing(self) -> str:
+        text = section(read_readme(), "Reproducing the matrix")
+        self.assertNotEqual(text, "", "the section 'Reproducing the matrix' is missing")
+        return text
+
+    def test_the_section_sits_between_running_one_row_and_the_replacement_tokens(self) -> None:
+        text = read_readme()
+        order = [text.index("\n## %s\n" % heading) for heading in ("Running one row", "Reproducing the matrix", "Replacement tokens")]
+        self.assertEqual(order, sorted(order))
+
+    def test_the_prerequisites_are_named(self) -> None:
+        text = self.reproducing()
+        for needle in ("Python 3.9", "git", TESTED_BUILD, "--claude", "Isolation and the one-time login", "origin"):
+            self.assertIn(needle, text)
+
+    def test_the_four_steps_come_in_order_with_their_commands(self) -> None:
+        text = self.reproducing()
+        needles = (
+            "tests/harness/selftest",
+            "pc_matrix.py --dry-run --all",
+            "pc_matrix.py --row row1-wrong-binding --budget",
+            "pc_cleanclone.py --preflight-only --claude",
+            "pc_cleanclone.py --budget",
+        )
+        positions = []
+        for needle in needles:
+            self.assertIn(needle, text)
+            positions.append(text.index(needle))
+        self.assertEqual(positions, sorted(positions))
+
+    def test_the_free_and_paid_steps_are_marked(self) -> None:
+        text = self.reproducing()
+        self.assertIn("free", text)
+        self.assertIn("paid", text)
+        self.assertLess(text.index("free"), text.index("paid"))
+
+    def test_the_platforms_are_stated(self) -> None:
+        text = self.reproducing()
+        self.assertIn("macOS", text)
+        self.assertIn("verified", text)
+        self.assertIn("Linux", text)
+        self.assertIn("unverified", text)
+
+    def test_what_a_green_run_proves_and_does_not_prove_is_stated(self) -> None:
+        text = self.reproducing()
+        self.assertIn("proves", text)
+        self.assertIn("does not prove", text)
+        self.assertIn("acceptance", text)
+
+    def test_the_section_holds_the_cost_block(self) -> None:
+        text = read_readme()
+        start = text.index("\n## Reproducing the matrix\n")
+        stop = text.index("\n## Replacement tokens\n")
+        self.assertTrue(start < text.index(COST_MARKERS[0]) < text.index(COST_MARKERS[1]) < stop)
 
 
 class LayoutTests(unittest.TestCase):

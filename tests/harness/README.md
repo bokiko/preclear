@@ -996,6 +996,78 @@ run before any model starts, with nothing filed.
 
 Linux is unverified for the bootstrap; it targets macOS.
 
+## Reproducing the matrix
+
+This is the route for a stranger who has a clone of the repository and wants to run the acceptance matrix again. Every step
+below is described in full under Running one row and The clean clone; this section only gives the order.
+
+Prerequisites:
+
+- Claude Code at the tested build, 2.1.310, passed by its absolute path with `--claude PATH` (every real run and the preflight
+  need it; the self-test and the dry run do not). The flags the harness pins were confirmed on that build only.
+- git, and Python 3.9 or newer, standard library only.
+- A one-time login that you run yourself, in your own terminal, for the harness-owned config folder. The command and its
+  caveats are under Isolation and the one-time login; the harness never reads, writes or copies a credential.
+- Network access to the repository's origin for the clean clone. The bootstrap clones the origin, so only code that has been
+  pushed is in the run; `--source` names another address or an existing folder instead.
+
+The order, free first and paid last:
+
+1. The self-test (free; no model, no network, works with `claude` absent):
+
+   ```sh
+   tests/harness/selftest
+   ```
+
+2. The dry run of the whole matrix (free; starts no process, creates no folder, prints each row's worst case):
+
+   ```sh
+   python3 -E -s -B tests/harness/pc_matrix.py --dry-run --all
+   ```
+
+3. One paid row, to see a real run end to end before anything larger (the budget is the most you allow the invocation to
+   cost; it must cover the largest single worst case the dry run printed):
+
+   ```sh
+   python3 -E -s -B tests/harness/pc_matrix.py --row row1-wrong-binding --budget 2.00 --claude PATH
+   ```
+
+4. The matrix through the bootstrap, a fresh clone that proves a stranger's checkout is self-sufficient. First the free
+   probe, which clones, asserts, runs the stub check and the strict preflight under the scrubbed environment, and starts no row
+   and no model (it also shows whether the login survives an empty throwaway home):
+
+   ```sh
+   python3 -E -s -B tests/harness/pc_cleanclone.py --preflight-only --claude PATH
+   ```
+
+   Then the paid run, with a budget of your choosing (at most 25.00, and above the largest single worst case):
+
+   ```sh
+   python3 -E -s -B tests/harness/pc_cleanclone.py --budget AMOUNT --claude PATH
+   ```
+
+Steps 1 and 2 and the probe of step 4 are free; step 3 and the last command are paid. The harness refuses a real run without a
+budget before any process starts, and stops before a row that would take the invocation over it.
+
+What the runs cost, as the filed evidence prints it. The figures are not typed by hand: a test reads both files in place and
+fails if a digit differs.
+
+<!-- cost:begin -->
+- One row (`row1-wrong-binding`), row total 0.27231170000000002, from `usage.txt` of that row in the first baseline folder,
+  `tests/evidence/rerun-2026-10-29-claude-sonnet-5-5`.
+- The whole matrix of 21 entries, total 5.746692699999999770 USD, from `digest-table.md` of the new baseline folder,
+  `tests/evidence/rerun-2026-11-11-claude-sonnet-5-5`. Costs are in US dollars as the stream reported them.
+<!-- cost:end -->
+
+Platforms: macOS is verified; Linux is unverified (see Platforms below).
+
+What a green run proves: the rows ran under the pinned flags in the isolated config, one run on one build, and the filed
+folder holds the measured counts, digests and costs of that run, with the clean-clone assertions printed as counts.
+
+What a green run does not prove: that the skill is correct, that another build or another run would give the same result,
+or that the baseline is accepted. The harness prints facts and no verdict; acceptance is a separate review of the filed
+evidence.
+
 ## Replacement tokens
 
 Evidence that becomes public is sanitized with these tokens, always lower case in angle brackets:
