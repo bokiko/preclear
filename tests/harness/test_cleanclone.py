@@ -725,15 +725,13 @@ class Run(object):
         return sorted(os.listdir(os.path.join(self.world.main, "tests", "evidence")))
 
     def dated(self) -> str:
-        (name,) = [entry for entry in self.main_evidence() if entry.startswith("rerun-") and "wave" not in entry
-                   and not entry.endswith("claude-sonnet-5-5-triple")
-                   and entry not in COMMITTED_RERUNS]
+        # The dated folder is the one the run copied back: a rerun- name the scratch source did not already hold.
+        # (The real repository's own evidence listing is not consulted: a committed baseline filed on the same
+        # UTC day as the test run carries the very name the scratch run produces, and excluding it hid the folder.)
+        source_evidence = os.path.join(self.world.source, "tests", "evidence")
+        held = set(os.listdir(source_evidence)) if os.path.isdir(source_evidence) else set()
+        (name,) = [entry for entry in self.main_evidence() if entry.startswith("rerun-") and entry not in held]
         return os.path.join(self.world.main, "tests", "evidence", name)
-
-
-COMMITTED_RERUNS = frozenset(
-    name for name in os.listdir(os.path.join(ROOT, "tests", "evidence")) if name.startswith("rerun-")
-)
 _RUNS = {}
 
 
