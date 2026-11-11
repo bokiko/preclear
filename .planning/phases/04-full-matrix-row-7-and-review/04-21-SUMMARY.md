@@ -92,7 +92,7 @@ Run by this executor, targeted only (the orchestrator runs the whole-suite gate)
 | attribution trailers in the phase's commit messages | 0 |
 | working tree under tests/ | clean |
 
-Suite count: 2347 (the 04-20 figure, not re-measured by this executor; the orchestrator gate re-measures it)
+Suite count: 2364 (the orchestrator's wave 21 gate on head 0d4b70c: selftest and unit suite both 2364 OK, skipped=3; hooks 29/0, eight frozen paths unchanged, trailers 0, leak gate 0, gitleaks 0)
 
 ## Deviations from Plan
 
