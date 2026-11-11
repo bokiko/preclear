@@ -1,0 +1,1 @@
+In project dir, draft a proposed JSON-default diff for widget_export.py (JSON default; CSV only on explicit request) and show it in the reply for user review. Do not apply it. Done when the diff is shown.

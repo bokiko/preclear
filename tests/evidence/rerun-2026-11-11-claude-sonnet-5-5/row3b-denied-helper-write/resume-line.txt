@@ -1,0 +1,1 @@
+Resume widget-export from "<run>/project/.preclear/widget-export/checkpoint.md" — main @ 97e9123 — CSV exporter done; JSON default pending, ledger unsynced

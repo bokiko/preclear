@@ -1,0 +1,3 @@
+Step 2 is done: I added `widget_export.py` with small pure functions (`escape_field`, `format_row`, `widget_to_values`, `export_csv`), CSV only, columns id and name, per the ledger's CSV-first decision.
+The plan didn't name a language or file, so I chose Python.
+I ran no tests, made no commits, and didn't start step 3. The plan checkbox is untouched.

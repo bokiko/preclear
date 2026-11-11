@@ -1,0 +1,10 @@
+usage for row1-wrong-binding
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 84a440b8-9fe2-4ce3-a3dd-40323967aeb1, subtype success, turns 5, input 8, cache creation 9560, cache read 76060, output 982, cost 0.055681999999999995, cumulative 0.055681999999999995, wall 9.2 seconds
+stage s2: session 84a440b8-9fe2-4ce3-a3dd-40323967aeb1, subtype success, turns 14, input 20, cache creation 16892, cache read 332520, output 5412, cost 0.15498, cumulative 0.21066199999999996, wall 41.6 seconds
+stage s3: session acf1f513-79b8-4ad6-8ff2-2330aef1062e, subtype success, turns 6, input 6, cache creation 8441, cache read 56637, output 1808, cost 0.0575197, cumulative 0.0575197, wall 13.9 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.26818169999999996
+run total: 0.26818169999999996

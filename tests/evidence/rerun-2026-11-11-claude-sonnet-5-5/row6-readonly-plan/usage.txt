@@ -1,0 +1,8 @@
+usage for row6-readonly-plan
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session f43fe444-2783-4b09-9774-bbda070d6560, subtype success, turns 4, input 6, cache creation 8396, cache read 53300, output 827, cost 0.047196, cumulative 0.047196, wall 8.0 seconds
+stage s2: session f43fe444-2783-4b09-9774-bbda070d6560, subtype success, turns 15, input 20, cache creation 14746, cache read 308379, output 6122, cost 0.15108190000000002, cumulative 0.1982779, wall 44.6 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.1982779
+run total: 0.1982779

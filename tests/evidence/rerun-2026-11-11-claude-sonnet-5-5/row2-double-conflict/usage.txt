@@ -1,0 +1,8 @@
+usage for row2-double-conflict
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session a62931a8-0694-4737-920d-e8e9aa32f026, subtype success, turns 5, input 8, cache creation 9607, cache read 76026, output 1026, cost 0.0563066, cumulative 0.0563066, wall 10.1 seconds
+stage s2: session a62931a8-0694-4737-920d-e8e9aa32f026, subtype success, turns 38, input 46, cache creation 32078, cache read 963283, output 14632, cost 0.37105229999999995, cumulative 0.42735889999999993, wall 106.0 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.42735889999999993
+run total: 0.42735889999999993

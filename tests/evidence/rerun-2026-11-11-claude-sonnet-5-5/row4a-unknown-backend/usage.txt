@@ -1,0 +1,8 @@
+usage for row4a-unknown-backend
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 3f99f947-f802-49e5-8095-81f4a4cfe813, subtype success, turns 5, input 8, cache creation 9533, cache read 75932, output 977, cost 0.05551120000000001, cumulative 0.05551120000000001, wall 9.2 seconds
+stage s2: session 3f99f947-f802-49e5-8095-81f4a4cfe813, subtype success, turns 16, input 22, cache creation 17793, cache read 380246, output 6334, cost 0.1725806, cumulative 0.2280918, wall 46.2 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.2280918
+run total: 0.2280918

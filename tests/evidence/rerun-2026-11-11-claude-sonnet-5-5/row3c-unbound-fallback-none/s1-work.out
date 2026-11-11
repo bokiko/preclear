@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `src/widgetExport.js`, as small pure functions (`escapeField`, `toRow`, `toCsv`) over the id and name columns. The repo had no existing code, so I chose JavaScript as the language.
+I didn't run tests, commit, start step 3, or tick the plan checkbox or touch the ledger.
+CSV only, per the ledger decision.

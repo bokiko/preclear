@@ -1,0 +1,1 @@
+Resume widget-export from "<run>/project/.preclear/widget-export/checkpoint.md" — main @ eb56094 — CSV done; draft JSON-default diff (reply only); ledger unsynced

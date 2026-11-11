@@ -1,0 +1,1 @@
+Resume widget-export from "<run>/project/.preclear/widget-export/checkpoint.md" — main @ 7800ae8 — CSV exporter done; draft JSON-default diff in reply, unapplied

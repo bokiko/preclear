@@ -1,0 +1,8 @@
+ M thoughts/plans/2026-10-15-widget-export.md
+?? .claude/skills/preclear/SKILL.md
+?? .claude/skills/preclear/references/checkpoint-v1.md
+?? .claude/skills/preclear/references/configuration.md
+?? .claude/skills/preclear/references/status-sidecar.md
+?? .preclear/widget-export/checkpoint-20261111T070840Z-k7q3.md
+?? .preclear/widget-export/checkpoint.md
+?? src/widget-export.js

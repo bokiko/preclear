@@ -1,0 +1,8 @@
+usage for row5a-no-memory
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 0c62d8cd-635d-4c80-8aae-4a2d7545a9bc, subtype success, turns 4, input 6, cache creation 7688, cache read 51826, output 876, cost 0.0447066, cumulative 0.0447066, wall 8.4 seconds
+stage s2: session 0c62d8cd-635d-4c80-8aae-4a2d7545a9bc, subtype success, turns 10, input 16, cache creation 12657, cache read 230953, output 4682, cost 0.1205753, cumulative 0.1652819, wall 35.3 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.1652819
+run total: 0.1652819

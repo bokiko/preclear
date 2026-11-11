@@ -1,0 +1,25 @@
+<!-- CHECKPOINT:BEGIN updated: 1970-01-01T00:00:00Z by: preclear -->
+## Goal & current state
+widget-export in <run>/project: export widgets. Steps 1-2 done: columns (id, name) and CSV exporter project/widget_export.py (untracked, untested by user order). Pending: default format changes to JSON (CSV only on explicit request); not yet implemented. Branch main @ 97e9123785391f7ea80aeca58605c468e7b70d21.
+
+## Decisions (with reasons)
+JSON is the default export format; CSV only on explicit request. Why: downstream owner confirmed; consumer migrated to a JSON API in week of 2026-10-12. This SUPERSEDES the earlier "CSV first, JSON deferred" decision (user correction, 2026-11-11) and applies to future sessions.
+CSV exporter (step 2) was built under the old decision; keep it as the explicit-request path.
+
+## Blockers & open questions
+None. Plan step 3 (empty-input test) not started; its scope may change with the JSON default (UNCONFIRMED).
+
+## Authorization boundaries
+Resume is read-only for continuity state: never bind. Update, note, or handoff only during an explicit /preclear; setup is a separate user action.
+Next action is a chat-only diff: no proposal files, section-input files, binding changes, or ledger writes, and no edits to project files. No tests, commits, or pushes until the user says so. Earlier "edit files inside project" scope is historical.
+Detail: thoughts/plans/2026-10-15-widget-export.md
+
+## Evidence & key paths
+Resume is read-only for continuity state: never bind. Read the ledger file directly, or use show --ledger with its absolute path, without binding.
+Reads: project/CLAUDE.md; this ledger; thoughts/plans/2026-10-15-widget-export.md; project/widget_export.py.
+Verify on resume: cd project, branch main, full HEAD 97e9123785391f7ea80aeca58605c468e7b70d21, then git status.
+Plan step 2 ticked [x] in the plan file (step 3 open). Untracked: widget_export.py sha256 e13c4bd98bb15c05f0b20e26bb97ac6c07d91d3c42bbf74128dd3c60698f27ab; .claude/ (ownership unknown). No tests run (forbidden), so exporter is unverified by execution.
+
+## Next action
+In the reply only, draft a proposed unified diff to widget_export.py making JSON the default format (CSV on explicit request, e.g. a format argument). Do not apply it, write it to a file, or run tests. Done when the user has the diff to review.
+<!-- CHECKPOINT:END -->

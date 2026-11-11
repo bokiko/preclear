@@ -1,0 +1,3 @@
+Step 2 is done: `widget_export.js` has pure `escapeField`, `toRow` and `toCsv` functions. It exports CSV only, per the memory decision.
+Step 1 left no columns in the repo, so I assumed `['id', 'name']` as `COLUMNS`. Please check that against your step 1 definition.
+I didn't run tests, commit or start step 3, and I left the PLAN.md checkbox unchecked.

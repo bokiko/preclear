@@ -1,0 +1,10 @@
+usage for row11-concurrent-change
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session e10a1c4f-0f35-4fc2-bc4a-be3dc39f4b39, subtype success, turns 5, input 8, cache creation 8668, cache read 74387, output 936, cost 0.0514867, cumulative 0.0514867, wall 9.4 seconds
+stage s2: session e10a1c4f-0f35-4fc2-bc4a-be3dc39f4b39, subtype success, turns 18, input 24, cache creation 15649, cache read 372370, output 7666, cost 0.176541, cumulative 0.22802770000000003, wall 55.7 seconds
+stage s3: session 63413984-fd7a-4e95-ab68-4f22a7aca3b6, subtype success, turns 5, input 6, cache creation 8653, cache read 57304, output 1550, cost 0.0558544, cumulative 0.0558544, wall 12.3 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.28388210000000003
+run total: 0.28388210000000003

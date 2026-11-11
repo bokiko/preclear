@@ -1,0 +1,3 @@
+Step 2 is done: I added `src/widget-export.js`, a CSV-only exporter with small pure functions (`escapeField`, `toRow`, `exportWidgetsCsv`). It writes the id and name columns from step 1 with a header row and RFC 4180 quoting, and JSON is left out per the plan's decision.
+The project had no existing source, so I chose plain JavaScript (CommonJS), and I didn't run tests.
+I left the plan checkbox unchecked for checkpointing, and step 3 is untouched.

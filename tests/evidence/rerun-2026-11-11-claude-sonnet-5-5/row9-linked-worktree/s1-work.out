@@ -1,0 +1,3 @@
+Step 2 is done: I added `src/widget-export.js`, a CSV-only exporter (per the plan's CSV decision) with small pure functions `escapeField`, `toRow` and `toCsv`. The header and columns are `id,name`.
+The repo had no source files or language convention, so I picked plain CommonJS JavaScript; say if you want a different language or location.
+I didn't run tests, commit, or start step 3, and I left the plan checkbox unchecked.

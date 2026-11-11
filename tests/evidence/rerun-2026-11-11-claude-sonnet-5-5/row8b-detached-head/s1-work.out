@@ -1,0 +1,2 @@
+Step 2 is done: I added the CSV exporter in `src/widget-export.js`. It exports `toCsv(widgets)`, which writes an `id,name` header row and quotes fields containing commas, quotes or newlines. The functions are small and pure, and the plan has no JSON path, per its CSV-first decision.
+I didn't run tests, commit or start step 3, and the plan checkbox for step 2 is still unchecked. The repo had no existing source, so I picked plain CommonJS JavaScript, which you may want to change.

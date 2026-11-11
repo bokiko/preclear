@@ -1,0 +1,3 @@
+Step 2 is done: I added `widget_export.py` with small pure functions, and `export_csv(widgets)` writes a header plus `id,name` rows as CSV.
+The CSV format follows the ledger's decision (CSV first, JSON deferred). I picked Python because the repo had no existing source to match.
+I didn't run tests, commit, or start step 3, and I left the plan checkbox unchecked for checkpointing.

@@ -1,0 +1,2 @@
+2026-11-11 user correction, supersedes "CSV first, JSON deferred": JSON is the default export format; CSV only on explicit request. Why: downstream owner confirmed the consumer migrated to a JSON API in the week of 2026-10-12. Applies to future sessions.
+Do not redo: CSV exporter is written (widget_export.py sha256 1661f3bc65a69c034c6fc5172570c9f89ab83b3995ed8c57286988968f9ef477); invalid if that file changes.

@@ -1,0 +1,10 @@
+usage for row8c-unborn-branch
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 52fa3032-6149-423a-a0d5-7ff597f1d0bb, subtype success, turns 4, input 6, cache creation 8167, cache read 53051, output 875, cost 0.0467351, cumulative 0.0467351, wall 8.3 seconds
+stage s2: session 52fa3032-6149-423a-a0d5-7ff597f1d0bb, subtype success, turns 17, input 16, cache creation 15162, cache read 236561, output 6911, cost 0.15344609999999997, cumulative 0.2001812, wall 47.9 seconds
+stage s3: session e1128fe7-d1f5-404b-898c-82c554cf24ba, subtype success, turns 8, input 6, cache creation 8452, cache read 56453, output 1646, cost 0.055925300000000004, cumulative 0.055925300000000004, wall 12.5 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.256106500000000004
+run total: 0.256106500000000004

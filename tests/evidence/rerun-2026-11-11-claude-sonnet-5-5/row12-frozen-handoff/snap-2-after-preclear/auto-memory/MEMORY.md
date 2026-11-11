@@ -1,0 +1,1 @@
+- [widget-export JSON default](widget-export-json-default.md) — JSON is default export, CSV on explicit request only (supersedes CSV-first, 2026-11-11)

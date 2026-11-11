@@ -1,0 +1,123 @@
+usage by row, part 1
+every row folder present at the moment this part was written is listed; costs are in US dollars, kept as text
+rows: 21
+
+plain-memory (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0527334, cumulative 0.0527334
+  stage s2: subtype success, turns 11, cost 0.12074100000000001, cumulative 0.1734744
+  stage s3: subtype success, turns 3, cost 0.046545100000000006, cumulative 0.046545100000000006
+  row total: 0.220019500000000006
+
+hub-memory (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.057078, cumulative 0.057078
+  stage s2: subtype success, turns 17, cost 0.15339049999999999, cumulative 0.21046849999999998
+  stage s3: subtype success, turns 3, cost 0.0486762, cumulative 0.0486762
+  row total: 0.25914469999999998
+
+bound-ledger (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0536723, cumulative 0.0536723
+  stage s2: subtype success, turns 33, cost 0.3158604, cumulative 0.3695326999999999
+  stage s3: subtype success, turns 3, cost 0.0548391, cumulative 0.0548391
+  row total: 0.4243717999999999
+
+row1-wrong-binding (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.055681999999999995, cumulative 0.055681999999999995
+  stage s2: subtype success, turns 14, cost 0.15498, cumulative 0.21066199999999996
+  stage s3: subtype success, turns 6, cost 0.0575197, cumulative 0.0575197
+  row total: 0.26818169999999996
+
+row2-double-conflict (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0563066, cumulative 0.0563066
+  stage s2: subtype success, turns 38, cost 0.37105229999999995, cumulative 0.42735889999999993
+  row total: 0.42735889999999993
+
+row3a-missing-executable (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0532885, cumulative 0.0532885
+  stage s2: subtype success, turns 21, cost 0.17293050000000001, cumulative 0.226219
+  row total: 0.226219
+
+row3b-denied-helper-write (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.05333989999999999, cumulative 0.05333989999999999
+  stage s2: subtype success, turns 27, cost 0.2614746, cumulative 0.3148145
+  row total: 0.3148145
+
+row3c-unbound-fallback-none (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0535509, cumulative 0.0535509
+  stage s2: subtype success, turns 10, cost 0.13442510000000002, cumulative 0.187976
+  row total: 0.187976
+
+row4a-unknown-backend (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.05551120000000001, cumulative 0.05551120000000001
+  stage s2: subtype success, turns 16, cost 0.1725806, cumulative 0.2280918
+  row total: 0.2280918
+
+row4b-conflicting-blocks (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.057496599999999995, cumulative 0.057496599999999995
+  stage s2: subtype success, turns 9, cost 0.1713585, cumulative 0.22885509999999998
+  row total: 0.22885509999999998
+
+row5a-no-memory (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0447066, cumulative 0.0447066
+  stage s2: subtype success, turns 10, cost 0.1205753, cumulative 0.1652819
+  row total: 0.1652819
+
+row5b-disabled-memory (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0416388, cumulative 0.0416388
+  stage s2: subtype success, turns 16, cost 0.1538407, cumulative 0.19547949999999997
+  row total: 0.19547949999999997
+
+row6-readonly-plan (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.047196, cumulative 0.047196
+  stage s2: subtype success, turns 15, cost 0.15108190000000002, cumulative 0.1982779
+  row total: 0.1982779
+
+row7-all-destinations-denied (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.047807499999999996, cumulative 0.047807499999999996
+  stage s2: subtype success, turns 11, cost 0.11986020000000001, cumulative 0.16766769999999998
+  stage s3: subtype success, turns 4, cost 0.0547392, cumulative 0.0547392
+  row total: 0.22240689999999998
+
+row8a-non-git (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.04387099999999999, cumulative 0.04387099999999999
+  stage s2: subtype success, turns 17, cost 0.16562359999999998, cumulative 0.20949459999999998
+  stage s3: subtype success, turns 7, cost 0.05506880000000001, cumulative 0.05506880000000001
+  row total: 0.26456339999999999
+
+row8b-detached-head (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.04762999999999999, cumulative 0.04762999999999999
+  stage s2: subtype success, turns 14, cost 0.1426712, cumulative 0.1903012
+  stage s3: subtype success, turns 6, cost 0.08207729999999999, cumulative 0.08207729999999999
+  row total: 0.27237849999999999
+
+row8c-unborn-branch (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.0467351, cumulative 0.0467351
+  stage s2: subtype success, turns 17, cost 0.15344609999999997, cumulative 0.2001812
+  stage s3: subtype success, turns 8, cost 0.055925300000000004, cumulative 0.055925300000000004
+  row total: 0.256106500000000004
+
+row9-linked-worktree (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.046497300000000005, cumulative 0.046497300000000005
+  stage s2: subtype success, turns 17, cost 0.15877019999999997, cumulative 0.2052675
+  stage s3: subtype success, turns 7, cost 0.0556018, cumulative 0.0556018
+  row total: 0.2608693
+
+row10-large-status (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0490269, cumulative 0.0490269
+  stage s2: subtype success, turns 21, cost 0.24821100000000004, cumulative 0.2972379
+  stage s3: subtype success, turns 6, cost 0.06967390000000001, cumulative 0.06967390000000001
+  row total: 0.36691180000000001
+
+row11-concurrent-change (filed, attempt 1)
+  stage s1: subtype success, turns 5, cost 0.0514867, cumulative 0.0514867
+  stage s2: subtype success, turns 18, cost 0.176541, cumulative 0.22802770000000003
+  stage s3: subtype success, turns 5, cost 0.0558544, cumulative 0.0558544
+  row total: 0.28388210000000003
+
+row12-frozen-handoff (filed, attempt 1)
+  stage s1: subtype success, turns 4, cost 0.048074200000000004, cumulative 0.048074200000000004
+  stage s2: subtype success, turns 21, cost 0.2166703, cumulative 0.2647445
+  stage s3: subtype success, turns 5, cost 0.06726470000000001, cumulative 0.06726470000000001
+  stage s4: subtype success, turns 13, cost 0.14349269999999997, cumulative 0.21075740000000004
+  row total: 0.47550190000000004
+
+total: 5.746692699999999770 USD from 21 cost value(s); 0 UNCONFIRMED

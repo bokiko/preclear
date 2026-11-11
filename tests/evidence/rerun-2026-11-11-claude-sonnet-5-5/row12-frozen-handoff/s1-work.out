@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `src/widget-export.js`, with small pure functions (`escapeField`, `toRow`, `exportWidgetsCsv`) over the `id,name` columns.
+It follows the plan's CSV-only decision, so there is no JSON. The repo had no existing code, so I picked CommonJS JavaScript myself.
+I didn't run tests, commit, or start step 3, and the step 2 checkbox in the plan is still unchecked for checkpointing.

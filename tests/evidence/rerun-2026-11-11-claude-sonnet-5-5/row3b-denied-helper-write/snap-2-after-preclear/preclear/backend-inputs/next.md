@@ -1,0 +1,1 @@
+In the reply only, draft a proposed unified diff to widget_export.py making JSON the default format (CSV on explicit request, e.g. a format argument). Do not apply it, write it to a file, or run tests. Done when the user has the diff to review.

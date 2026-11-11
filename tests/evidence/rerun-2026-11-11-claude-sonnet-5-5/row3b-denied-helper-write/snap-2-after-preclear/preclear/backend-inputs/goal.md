@@ -1,0 +1,1 @@
+widget-export in <run>/project: export widgets. Steps 1-2 done: columns (id, name) and CSV exporter project/widget_export.py (untracked, untested by user order). Pending: default format changes to JSON (CSV only on explicit request); not yet implemented. Branch main @ 97e9123785391f7ea80aeca58605c468e7b70d21.

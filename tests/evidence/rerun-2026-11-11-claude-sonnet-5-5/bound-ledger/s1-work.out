@@ -1,0 +1,3 @@
+Step 2 is done: I added the CSV exporter in `widget_export.py`. It has three small pure functions (`escape_field`, `widget_to_row`, `widgets_to_csv`) and writes the `id,name` columns.
+The repo had no existing code, so I picked Python. Say so if you wanted a different language.
+I did not run tests, commit, start step 3, or tick the plan checkbox, so checkpointing can reconcile it.

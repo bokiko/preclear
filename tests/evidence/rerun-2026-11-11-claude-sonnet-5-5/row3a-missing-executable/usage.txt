@@ -1,0 +1,8 @@
+usage for row3a-missing-executable
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 03a7a675-8bf0-46ef-a2f0-058e08bd7eee, subtype success, turns 5, input 6, cache creation 9530, cache read 54965, output 966, cost 0.0532885, cumulative 0.0532885, wall 8.8 seconds
+stage s2: session 03a7a675-8bf0-46ef-a2f0-058e08bd7eee, subtype success, turns 21, input 20, cache creation 18440, cache read 339505, output 6518, cost 0.17293050000000001, cumulative 0.226219, wall 46.7 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.226219
+run total: 0.226219

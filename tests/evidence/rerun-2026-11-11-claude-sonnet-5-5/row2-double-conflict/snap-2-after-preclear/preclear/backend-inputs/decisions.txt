@@ -1,0 +1,2 @@
+2026-11-11 (user, downstream owner confirmed): JSON is the default export format; CSV only on explicit request. Consumer migrated to a JSON API week of 2026-10-12. Supersedes "CSV first, JSON deferred" for future sessions. Existing CSV exporter stays as the explicit-request path.
+Do not redo: git status and HEAD eb56094 checked 2026-11-11; invalid if HEAD changes. CSV exporter written; do not rewrite it.

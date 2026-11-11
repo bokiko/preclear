@@ -1,0 +1,1 @@
+- [widget-export JSON default](widget-export-json-default.md) — JSON is default export format, CSV only on request; supersedes CSV-first plan decision

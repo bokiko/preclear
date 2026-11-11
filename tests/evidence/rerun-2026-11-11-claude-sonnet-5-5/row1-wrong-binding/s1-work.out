@@ -1,0 +1,2 @@
+Step 2 is done: I added `src/widgetExport.js`, a pure CSV exporter with `escapeField`, `toRow` and `exportWidgetsToCsv`. It uses the id and name columns from step 1 and follows the ledger's CSV-first decision.
+The project had no existing source files, so I picked CommonJS JavaScript. I didn't run tests, commit or start step 3, and the plan checkbox is unchecked for checkpointing to reconcile.

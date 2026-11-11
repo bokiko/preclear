@@ -1,0 +1,8 @@
+usage for row5b-disabled-memory
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session d2f780c6-6079-4e02-bb55-003dfd31b863, subtype success, turns 4, input 6, cache creation 6709, cache read 53008, output 949, cost 0.0416388, cumulative 0.0416388, wall 8.5 seconds
+stage s2: session d2f780c6-6079-4e02-bb55-003dfd31b863, subtype success, turns 16, input 24, cache creation 14682, cache read 368147, output 5825, cost 0.1538407, cumulative 0.19547949999999997, wall 43.9 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+row total: 0.19547949999999997
+run total: 0.19547949999999997

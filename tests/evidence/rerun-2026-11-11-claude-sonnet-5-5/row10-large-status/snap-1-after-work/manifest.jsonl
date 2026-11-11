@@ -1,0 +1,147 @@
+{"kind": "d", "path": "auto-memory", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "ckpt", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "ckpt/ledgers", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/  leading-space.txt", "sha256": "e54a497b513acf15f06f6d9161da54e4873564b5e9c1035ce1bf243fd15a01e0", "size": 15, "target": null}
+{"kind": "d", "path": "project/.claude", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/.claude/skills", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/.claude/skills/preclear", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/SKILL.md", "sha256": "86e5b14e64b17397e3876768de398f15ddb40d6e31a3e605227dafed984c5a06", "size": 11994, "target": null}
+{"kind": "d", "path": "project/.claude/skills/preclear/references", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/references/checkpoint-v1.md", "sha256": "eca134a3defce9f67f7ed05a60b7da32d589df5f5cdaacbbf97682c5ebdbe132", "size": 7360, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/references/configuration.md", "sha256": "1a85939bbef834f9d7f7f8ffaf6197e2404929d0d0d6c523209fcb7458bfbe74", "size": 3678, "target": null}
+{"kind": "f", "path": "project/.claude/skills/preclear/references/status-sidecar.md", "sha256": "8107f83c02382c7e0803fd93b824d5ed442051a78e89b72b0820f49f46afc0e3", "size": 1388, "target": null}
+{"kind": "f", "path": "project/CLAUDE.md", "sha256": "ed03447e9df43888b81861f9904690a7e23ea715f339f382aef3194511997cf1", "size": 103, "target": null}
+{"kind": "f", "path": "project/NOTES.md", "sha256": "b3f8c8e69121483a96f48796e2e8e57774ad351afd0051699fd94b0858e30f88", "size": 45, "target": null}
+{"kind": "d", "path": "project/data", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/data/raw files", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 1.csv", "sha256": "0cecf043cf171feb7bb98f45987f383202121e9c748500c9b74c785b403a449c", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 10.csv", "sha256": "e1dd275e6d349e5ed4d3d98346607e9fb7f55a1f403ab1004554bce01542c428", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 11.csv", "sha256": "7d6d9e4c0add83154a2b0183ca9cbc01f4ef3c12803096389151ceeed6845373", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 12.csv", "sha256": "ef2138dc0835ab7ef45ea0e0b98c269ce7bf27da244d5efae99ded46ec59f409", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 13.csv", "sha256": "9d5853d2b6d112075bc1a34cf8406bc8f2df663fecd3d14f718213e63be4ebf3", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 14.csv", "sha256": "23de30506c8900d1ac9dd52f35350be883dae77eeff5981ce73a1b32b740ba37", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 15.csv", "sha256": "4ea34a019e1b48e51f441eab624c2b89f9d4dbbd46acdb334992c3a9a516ebe0", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 16.csv", "sha256": "1167530cc7b22f2af01c85e4938012b31ce108a984014cfd3eb3599229d256a3", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 17.csv", "sha256": "3a5ba9c24e42fd830f3adcc13321950c3334e2de46c44f372633d35710240315", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 18.csv", "sha256": "d38e7484053d8e0c2db910519362836615ba610f4aa143a1125c7206808ade0d", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 19.csv", "sha256": "7d28010fe5f33c4181e7cf24891266202686c897c177e2ebdf1eaa69496efbee", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 2.csv", "sha256": "20ae8db59ba250d6e27a3dbb24719dcae85d90d6a59f178faa0c75123d9431b7", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 20.csv", "sha256": "83cb9062eeaaf6fa40a09ac5512d7e6dc02ea874b2fea0f8ed215c0e710887e1", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 21.csv", "sha256": "dbc69b490011f43638128db909b73eed82bca1e38d9b15f23ed3897ba84723be", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 22.csv", "sha256": "2bb574e19e409da0817efd0f7c201c71d594476339ebcd30bcbbe3b3adb9c89e", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 23.csv", "sha256": "94be489d1a83980b877670b2a5861999aa412f809911025a33f2813d9054c89e", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 24.csv", "sha256": "afa054145bde191a418aeb6695a490fdf4a38a86c037436ccb83dc82eb0bb92c", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 25.csv", "sha256": "b54aa4253d81aa761146449f49ae6e6d6d3b97901e5f29f725e7fe9fd3e7a3d5", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 26.csv", "sha256": "d75bfa1e03d4dab3e7f4b76e9f5a319a1d9e9406bdf9f36f2042bbcb4f692f23", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 27.csv", "sha256": "84034f94fc7ac7a4fad34965eeabd883d62213ab225c83be3f2515b025c456af", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 28.csv", "sha256": "8d2903fb9e6f6ba7943c3079d59d07fe9738aa037adff19e3f88fc12b158be03", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 29.csv", "sha256": "2180d0df9f5305d4da10d3407bf2545d33dfffc5e12a599630c6c7c29f3c0156", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 3.csv", "sha256": "251a67f87df9b48aefe4ec5648aa868d6c7872f682d5fdfdbb0584cbacc7720c", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 30.csv", "sha256": "4a983ebc4969f1f7ea4939e999c84bda448e006b75c34e4605ae1875318c178f", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 31.csv", "sha256": "0330ea4fad1042000a5712427cea5eefe03a4cbd3aaea45468aefee70a1c75ee", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 32.csv", "sha256": "9b10a9e8cb1b08a0131de42501acf3d29867f1a94bef41a890b0ba3565b9fa8f", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 33.csv", "sha256": "3bc838a712238ff641dec9714ab00f50aaeae8bab0e97d6cbb9328ace2a51be5", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 34.csv", "sha256": "4ddbbdd51db2727cb890b25eed902a5cf5f3ee768dd4fa4d7c745d9fd69686dd", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 35.csv", "sha256": "b390b122a7c81e7764e68472f51e559ea571fab1477870f4e3367cf11d1e2812", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 36.csv", "sha256": "4fb8eeea90d45749e1cf3a7823e1b43f169f569b8a1639cf3357aeb9c5406d12", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 37.csv", "sha256": "316378b46df051b72dd17137982aaaf1ad99b3b5e670d0b5fe0112ae9dc40d7c", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 38.csv", "sha256": "e439de15d17b1476bbe177f518d4b5b39d57df780fe8b3d12c44ad8fd5b02ba3", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 39.csv", "sha256": "9a6ae2ba1a998ecaf612135a105d36775c9a822b2581690f9556984a899dc14e", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 4.csv", "sha256": "c4bd1b7b67ae8f11b9ace9a3ebb729e915e9452700b89e20bc644be2bb61fa7e", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 40.csv", "sha256": "34ddd93551d8bcb273f33684de533272f1b95c581af33bb9bc7b5284cdf50099", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 41.csv", "sha256": "501596ad8c869da64f2f2d8ac528e31903571f713408bd6834f335e92b366bd4", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 42.csv", "sha256": "0b3b69da5b0f5b19e182f95fa5eb098e8e1428fc3eb1bfa1aa1a31bd39a6a59c", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 43.csv", "sha256": "a05e07effc745fd00c0a7d2c460bc0b262bdca9ec4291a407c8bcfec95de24d2", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 44.csv", "sha256": "f9038a7c7fb59b3eaa1de643c3cee0a1f6b34975d68acef3fcaab722f982c947", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 45.csv", "sha256": "4bda93e661f854cbf7e19fa869292c5d2b1f65c1da576011835882babe9029f8", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 46.csv", "sha256": "a68ef0b24d312d14047720ad8267260ea2620e40ae0cf437a06c9d982c2b3ca5", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 47.csv", "sha256": "c0829559d153647386f1f67c09702f6a4be8099f2b701f42d78838f3327c72eb", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 48.csv", "sha256": "7e33a7ec6bf467b0b496b16445ac0e16b082c1a05e76e6888b9a4130ba709e57", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 49.csv", "sha256": "a633e9739f5fbf6fc9ea78f60f3110cbb946b69a0995348dea48cc081ea9d6b0", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 5.csv", "sha256": "fc2f235b7dc7fe0a57e481d0e844bcb5d65bc87836b8b33b21f44bea3d0c0587", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 50.csv", "sha256": "b66096408b32f260660aedf26102af53c87feb66dec30ce3c6f7fe47c3099967", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 51.csv", "sha256": "9981cb88701e7d5d46f5cd37dd0f7cb6b3cba1251d2146ccb7e615e25ebebeaf", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 52.csv", "sha256": "9b9aaef3c7353a8ef365b1cb0d9d7727f1e42363e48221130abefcd8ff5b8513", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 53.csv", "sha256": "5f0e487df03617a31d59008674fe1150ba86c9fa5fc989fed4d147549223a7c1", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 54.csv", "sha256": "49cd1b76932383166a0f681a8c32c242f5d841e3668b8346ca81882c97854f96", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 55.csv", "sha256": "5e146cfe1cb283e62b781fb3cf0efef680a8b4e4ec311e0dfd9ee60b11baecfc", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 56.csv", "sha256": "a39fe64207feb227df1be379c2e3ce729d5b7fc364ae5d598bf496c319f2a7ec", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 57.csv", "sha256": "07353aa5afb932acbfe8f0491c429e66cabf9839873d96b758a374a17bd128d9", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 58.csv", "sha256": "6a6067bdf74b94eb7643423b011d1867a8870f14ecad0852647af13eb2c01959", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 59.csv", "sha256": "5e0dacd306ddd05645512423a918617f059bd767f6cdafd99545dfc07ae16863", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 6.csv", "sha256": "039e60a5e529515d3f10da667e3f51dad464bbfa78b130e5885c30b2411a34fa", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 60.csv", "sha256": "3294e919619b3aa74473e7127d1055b667435b20a313fba640ae0d9703684c81", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 61.csv", "sha256": "e3c79af41d030c092edfb82576628fd60ed163cf013c1c80e62840b81af53ab5", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 62.csv", "sha256": "89706cd1aa7e30d5c7d3acc2d5d78a5c08cda40cd90cc7e3bee1935b0e3e3e8c", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 63.csv", "sha256": "065662a8ce1b127d4234d499d208da88a5456a2930fdbe7ba78e71bb05384b28", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 64.csv", "sha256": "e573e18b184bd5eaf1c8463e375db39774656d12fcc237d519571abea19a9081", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 65.csv", "sha256": "f49844b41b938f893c1a375f7d187d968d68bc618e740980495573f52fb849ac", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 66.csv", "sha256": "d39555d8714faa05c636b7a5d9139551ee76e4a6e556b8472eb03d9f2e689970", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 67.csv", "sha256": "9dddcc2cd534d6eff381a6f113ea447c9d90ff125ec9b1dc6f05d772f448868b", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 68.csv", "sha256": "b10360f21be0d60bc7c5f65144cac574ce141ca2f8f9c3a3f238f3e80a550e75", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 69.csv", "sha256": "3e5153f756b10d054b9c98516ea8f6a061dadad5b701d052eefcb9922f58d60a", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 7.csv", "sha256": "60a178bfaa27ed040810f72d89d8fde90bf475e0a358c8de5d9362797ae18581", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 70.csv", "sha256": "97c92b53a6f24e909a1ed865ade1e52a7bf317de2661c32efd491cf705fac911", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 71.csv", "sha256": "0e999a6e08fc60d5744626f13f5934fbdb5a8d4f25056c4d7a095add0ddf03cb", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 72.csv", "sha256": "926161a5121d49bb30cbbb6308a8ee8da08e93b852e4d9be089564c3569da545", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 73.csv", "sha256": "6e412d793f331bf4d67543b3794cf29722f9a49dab51022d067f91f5e1ddf98a", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 74.csv", "sha256": "c3ca24c1d767f6ad5839028f6af2371e406419087cac0492efdb153ffbe305cf", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 75.csv", "sha256": "936c55e3e0e8398d3a0d65af3aa10f8abf92b3f8d54b81427672b0f4910a1c37", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 76.csv", "sha256": "2243178072c1e9030c90c527de41f4205ef92370df8da545f8c1588734e7936e", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 77.csv", "sha256": "843ac008b270322bbd595560945918c51402fb767bce81161f655e1a2ad70397", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 78.csv", "sha256": "a67cd92fcdaac8153f9900e482d26fd76146dae4322dc03fd1a5f02f8fb5b457", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 79.csv", "sha256": "e294efc92b8d523a779a72f63b7ec65f48ffb76d6a41123f071ee7f2f4f79f94", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 8.csv", "sha256": "c3eb90ffed697d5403864ffa72629c250379cb59a57f0ff6fae1fdf0676064fa", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 80.csv", "sha256": "ecfd840c537712f7579aeee19a2022db7a4d45d958a48bc61c77e645b845b58a", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 81.csv", "sha256": "9ff1e5328e22b7d87ca596860165119f1b08e5fff70554da736bf6c1fbabf78a", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 82.csv", "sha256": "5dfef05d1e2c2058cc017fbf12cc1774f66241299bddbfaac6596c845e579faf", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 83.csv", "sha256": "7669072eeb3a6b983983e6a76f2e4e99b4fb2a1b01d2bf5408df1b9629cd85b1", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 84.csv", "sha256": "239c6e894589000dad7fc9d6f48dfbf4911b6697ad141bbe7c8afe3d4bbf2fd5", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 85.csv", "sha256": "88c48c03a856f7d7a5b3c388e0c6792f1cf96e85e163a8f909c03774e6da04ac", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 86.csv", "sha256": "069f78f57eeae6304a40b19a228974d6a8d506048f55f3a97722facf6ebbe9bd", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 87.csv", "sha256": "3970d1354017831137cda6be1aaf63a02afa68431f83c92faa8760d98f0e7779", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 88.csv", "sha256": "03a3f1e2594f818523800f983fcc544e6446a2934e2d95f227ee59bf8ee797ae", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 89.csv", "sha256": "01f04e463f91506c7e34056e246f86b43f3b386daa9ad216244a8b3aaf195686", "size": 14, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 9.csv", "sha256": "e5012b152b6aae8d8e5271365c0710aa3ca83b7b41616bcb7af4952542eca6d2", "size": 13, "target": null}
+{"kind": "f", "path": "project/data/raw files/sample 90.csv", "sha256": "e3bf4a827619c02c8933c668df518e017dd3a4537aa3c06146bf3543fc578486", "size": 14, "target": null}
+{"kind": "f", "path": "project/odd\nname.txt", "sha256": "0f5e89ffa54370df4971cbab988705742831bcf60a536d93bb8588170bb93a40", "size": 15, "target": null}
+{"kind": "f", "path": "project/quote\"and\"tab\tname.md", "sha256": "d6ecad09f4eee4100c226f071ccfd3ad4158d31809ef11074b9a9b7e5c0be516", "size": 15, "target": null}
+{"kind": "d", "path": "project/src", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/src/widget-export.js", "sha256": "8bb1f05edf7d04e2beff367bd5f802001ab43ace2bec5a12d138d3e4b521cac8", "size": 460, "target": null}
+{"kind": "d", "path": "project/thoughts", "sha256": null, "size": null, "target": null}
+{"kind": "d", "path": "project/thoughts/plans", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/thoughts/plans/2026-10-15-widget-export.md", "sha256": "a4d70690252f755ea6b44d3c3362b345d5126962bb5b4bb40e99ed14a11adf0c", "size": 222, "target": null}
+{"kind": "d", "path": "project/\u0645\u0644\u0641\u0627\u062a", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 1.txt", "sha256": "7b844032168c75ddede0aef27ff6332e1816a2191d1f108ab23e53f4c4e656e7", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 10.txt", "sha256": "337e13dd39fbf1182bd96a4fc6ebc57d421accf15ab5bd0cd3e813fdb91ad6d1", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 11.txt", "sha256": "d00c6379138d41fd5c8526612dfba3717c49f6729468b25a03fab4e8621eea38", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 12.txt", "sha256": "e81e61504477760acf87628c150e73c67ae8812d71fc75b4eb06463002057465", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 13.txt", "sha256": "af79a296d0c67adaf97806b76c6e664633cb560ce87da2eb7a8a246118ae2f92", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 14.txt", "sha256": "dc5da55a01b5f27ffb17354d105e756c492c831a052c107ef30dbb177a9a6d5a", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 15.txt", "sha256": "5512a5018d82b70ae3c1e18c3a0e6c7c4e405d06b24cbd88bb520ad4d86031e4", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 2.txt", "sha256": "602610a49763de7f97dd8d4dae3a9d378c53e16de31b090bad74c43f4a528241", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 3.txt", "sha256": "5755be4b2cf3ffe93c7ead32456b26d2c90d111901fe45fe712b05979314ca87", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 4.txt", "sha256": "f0df610debcfae2593c0d90f7a3a98aa5a09b2d1e789befa06e9f49d368373d0", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 5.txt", "sha256": "e0ea4da099068298028286a51b3b601e36470e1b9750243abedfba96540cd537", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 6.txt", "sha256": "3cf22a3f487ef77856ff6ae402d01cd1276cce6fd6c98d5fcfbab85a4184a0db", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 7.txt", "sha256": "2a799431cd1a88e792356dbc630636c3316c4086a15f565391557f18414c0759", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 8.txt", "sha256": "db1d1b878fa1f4e16315a3a1f0ba4f9bfef1e1670c472c83d836b58296615916", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u0645\u0644\u0641\u0627\u062a/\u0645\u0644\u0641 9.txt", "sha256": "9c445a7e97c1f3a99d84c003f65bca0330ee9d2782ed47b776447c03470ca96c", "size": 15, "target": null}
+{"kind": "d", "path": "project/\u30c7\u30fc\u30bf", "sha256": null, "size": null, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 1.txt", "sha256": "0a272eede9cad6c8ae0e3af24abf536f7c67d650b33314df04521c2533df6f5c", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 10.txt", "sha256": "7c38859731e7b7905ef944ea9b58e58a22a6b9a71cc6d373127faadd27f9ff86", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 11.txt", "sha256": "037774b1c418eb52c7a397b5fd084cee2eb34dbec87371680f3275a11b0bc55c", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 12.txt", "sha256": "d826b20096c6697b858cc54de8974c4affe62a5b2682576bbd456d35d66eccdd", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 13.txt", "sha256": "3210f4ca427ceac19608c4450049002cbbcb78cd9fa91afeeab73ba74ea6a3ab", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 14.txt", "sha256": "8dd364e62636876982bcb51b52384b4662b654bae93bb57abda73f68ac3a1ba4", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 15.txt", "sha256": "fab8f778369c376d4809bdc1c13972e0af56e9f1cb27bc8e2263b7ebf50ee1ed", "size": 15, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 2.txt", "sha256": "65d75778d42b3404a4fabc154030cbdb5ef60253f300830975904c1dbc6af938", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 3.txt", "sha256": "4dae24cd2f565f2758b498a4d0c01f80bb1b93014b6bc2f2c3e519d551daef44", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 4.txt", "sha256": "471f081e64c22680b7198dfb7744bc5b0f2cd62e51fe9918a62c97ae7fa68cf6", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 5.txt", "sha256": "acdba0f233baa546d9eef179f77e82c9d38aeb75d408266aa2ca54a3636dd559", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 6.txt", "sha256": "24cd1448c2543d633f01314c1756d52c0b03251e244dcb87f2a04f919fbfcc52", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 7.txt", "sha256": "cbe7cefe45c58d8e998bf66a133daf175aceff2dfb7d5627573a87086b869d30", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 8.txt", "sha256": "535d94fe2333758f9ff335caab641e867897206d902d1295aea7340388bc4842", "size": 14, "target": null}
+{"kind": "f", "path": "project/\u30c7\u30fc\u30bf/\u30c6\u30b9\u30c8 9.txt", "sha256": "432d3851f7c65fa38e863913bbb6cab564b9c653e20892bc68d2de576e28f375", "size": 14, "target": null}
+{"kind": "f", "path": "settings.json", "sha256": "6ac2337b80d4e94b72f474c753c77ac747d0d58b42b7de4451d23e0b4ace7ceb", "size": 694, "target": null}

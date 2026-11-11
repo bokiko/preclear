@@ -1,0 +1,10 @@
+usage for row10-large-status
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 360ff92c-5213-4b02-bea0-88537c3ea862, subtype success, turns 5, input 8, cache creation 8131, cache read 73269, output 916, cost 0.0490269, cumulative 0.0490269, wall 9.3 seconds
+stage s2: session 360ff92c-5213-4b02-bea0-88537c3ea862, subtype success, turns 21, input 26, cache creation 23933, cache read 468770, output 10555, cost 0.24821100000000004, cumulative 0.2972379, wall 78.6 seconds
+stage s3: session 9648808c-c38c-4432-b0ee-6b9fd07e0e41, subtype success, turns 6, input 8, cache creation 8920, cache read 80579, output 2592, cost 0.06967390000000001, cumulative 0.06967390000000001, wall 19.0 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.36691180000000001
+run total: 0.36691180000000001

@@ -1,0 +1,8 @@
+## <run>/project/.preclear/widget-export/checkpoint.md
+total 2618/4096 bytes, sha256 11b83c94d34c0f67bd0575bbe737ea7f7b9df86fc9319e0b9ad9f5d89eea7792
+- Identity and state: 581/800
+- Boundaries and blockers: 443/600
+- Next action: 243/500
+- Resume reading: 592/600
+- Evidence and working changes: 578/1000
+- Do not redo: 181/596

@@ -1,0 +1,10 @@
+usage for row8a-non-git
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session fe615e8c-42e7-4326-9890-b2a64ef5d23d, subtype success, turns 4, input 6, cache creation 7691, cache read 52450, output 785, cost 0.04387099999999999, cumulative 0.04387099999999999, wall 8.1 seconds
+stage s2: session fe615e8c-42e7-4326-9890-b2a64ef5d23d, subtype success, turns 17, input 22, cache creation 15994, cache read 340236, output 6758, cost 0.16562359999999998, cumulative 0.20949459999999998, wall 49.8 seconds
+stage s3: session 08552d61-2128-4162-98a5-087076871cdf, subtype success, turns 7, input 6, cache creation 8302, cache read 56288, output 1622, cost 0.05506880000000001, cumulative 0.05506880000000001, wall 12.0 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+row total: 0.26456339999999999
+run total: 0.26456339999999999

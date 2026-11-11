@@ -1,0 +1,12 @@
+usage for row12-frozen-handoff
+costs are in US dollars as the stream reported them, kept as text
+stage s1: session 36ffc8c3-bb43-4a3f-87ca-00de30e41ca9, subtype success, turns 4, input 6, cache creation 8448, cache read 53302, output 894, cost 0.048074200000000004, cumulative 0.048074200000000004, wall 8.3 seconds
+stage s2: session 36ffc8c3-bb43-4a3f-87ca-00de30e41ca9, subtype success, turns 21, input 18, cache creation 19659, cache read 286483, output 10935, cost 0.2166703, cumulative 0.2647445, wall 77.7 seconds
+stage s3: session fcd43228-5751-47dd-b25a-d3d479ce37ef, subtype success, turns 5, input 6, cache creation 8399, cache read 57067, output 2795, cost 0.06726470000000001, cumulative 0.06726470000000001, wall 21.2 seconds
+stage s4: session fcd43228-5751-47dd-b25a-d3d479ce37ef, subtype success, turns 13, input 16, cache creation 14326, cache read 255467, output 6061, cost 0.14349269999999997, cumulative 0.21075740000000004, wall 45.5 seconds
+cumulative-consistent s1: yes
+cumulative-consistent s2: yes
+cumulative-consistent s3: yes
+cumulative-consistent s4: yes
+row total: 0.47550190000000004
+run total: 0.47550190000000004

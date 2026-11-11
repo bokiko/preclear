@@ -1,0 +1,1 @@
+In the project directory, draft in the reply only a proposed diff to widget_export.py making JSON the default export (CSV only on explicit request), keeping functions small and pure. Do not apply it. Done when the diff is shown for user review.

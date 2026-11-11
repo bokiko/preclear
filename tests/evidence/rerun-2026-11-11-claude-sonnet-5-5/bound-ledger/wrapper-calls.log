@@ -1,0 +1,22 @@
+2026-11-11T06:46:42Z CALL status
+2026-11-11T06:46:42Z EXIT 0
+2026-11-11T06:46:50Z CALL show --ledger <run>/ckpt/ledgers/CONTINUITY_CLAUDE-widget-export.md
+2026-11-11T06:46:50Z EXIT 0
+2026-11-11T06:47:36Z CALL validate --from <run>/project/.preclear/backend-inputs/block.md
+2026-11-11T06:47:36Z EXIT 0
+2026-11-11T06:47:39Z CALL update --section Goal\ \&\ current\ state --expect-section 360452b41e6ca16b1aab21b2cc4f72610c232d9dc83f8e4514a52f64334a8db1 --from <run>/project/.preclear/backend-inputs/goal.md
+2026-11-11T06:47:39Z EXIT 0
+2026-11-11T06:47:41Z CALL update --section Decisions\ \(with\ reasons\) --expect-section 2b0f84aac189b468066ae72aae01359d73b6c64b25e2de7f39406441014ce366 --from <run>/project/.preclear/backend-inputs/decisions.md
+2026-11-11T06:47:41Z EXIT 0
+2026-11-11T06:47:44Z CALL update --section Blockers\ \&\ open\ questions --expect-section 903ea500e7ccf842c1312b6c2f964e3e98ff146456cecec717e9a0e122bf735f --from <run>/project/.preclear/backend-inputs/blockers.md
+2026-11-11T06:47:44Z EXIT 0
+2026-11-11T06:47:47Z CALL update --section Authorization\ boundaries --expect-section b5fc945cee3c257f5b95046232eccfb1c67a5bdbbb61367596917a97bc9f9986 --from <run>/project/.preclear/backend-inputs/authorization.md
+2026-11-11T06:47:47Z EXIT 0
+2026-11-11T06:47:50Z CALL update --section Evidence\ \&\ key\ paths --expect-section 2caab006bb9d0bba2c4f412d9522c4181baf140aadef7e5a186025be7f06fb01 --from <run>/project/.preclear/backend-inputs/evidence.md
+2026-11-11T06:47:50Z EXIT 0
+2026-11-11T06:47:53Z CALL update --section Next\ action --expect-section ce26d74e1d4ccc3ec8ba4add6a30df523b974bf263b5d32b353d115e7744529e --from <run>/project/.preclear/backend-inputs/next.md
+2026-11-11T06:47:53Z EXIT 0
+2026-11-11T06:47:54Z CALL lint
+2026-11-11T06:47:54Z EXIT 0
+2026-11-11T06:47:55Z CALL status
+2026-11-11T06:47:55Z EXIT 0
