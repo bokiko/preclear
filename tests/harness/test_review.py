@@ -699,7 +699,9 @@ class ReviewTableTests(unittest.TestCase):
         self.assertEqual(sorted(set(second) - set(first)), ["row7-review-part-2.md"])
         for name, data in first.items():
             self.assertEqual(second[name], data, name + " is untouched")
-        self.assertEqual(second["row7-review-part-2.md"], first["row7-review.md"], "the same filed text gives the same table")
+        part_one, part_two = first["row7-review.md"].decode("utf-8"), second["row7-review-part-2.md"].decode("utf-8")
+        self.assertEqual(part_two[part_two.index("## Attempt "):], part_one[part_one.index("## Attempt "):],
+                         "the same filed text gives the same attempt sections")
         self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
         third = tree_snapshot(w.dated)
         self.assertEqual(sorted(set(third) - set(second)), ["row7-review-part-3.md"])
@@ -719,7 +721,9 @@ class ReviewTableTests(unittest.TestCase):
         import io
 
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        for name in ("rerun-2026-10-29-claude-sonnet-5-5", "publication-2026-10-20"):
+        for name in ("rerun-2026-10-29-claude-sonnet-5-5", "publication-2026-10-20", "rerun-2026-11-03-claude-sonnet-5-5-wave-a",
+                     "rerun-2026-11-05-claude-sonnet-5-5-wave-b", "rerun-2026-11-06-claude-sonnet-5-5-wave-c",
+                     "rerun-2026-11-07-claude-sonnet-5-5-wave-d"):
             folder = os.path.join(root, "tests", "evidence", name)
             before = tree_snapshot(folder)
             out, err = io.StringIO(), io.StringIO()
@@ -1672,6 +1676,277 @@ class UnfencedReadingTests(unittest.TestCase):
             second = sections_of(read_text(os.path.join(rig.repo, relative, "row7-review.md")))[1]
             self.assertEqual([line for line in second if line.startswith("unfenced")],
                              ["unfenced checkpoint: not read, the filed traces are absent or damaged"])
+
+
+# ---------------------------------------------------------------------------------------------
+# Review parts, the record note and the one narrow exception (plan 04-22)
+# ---------------------------------------------------------------------------------------------
+
+REVIEW_FILE = "row7-review.md"
+PART_2 = "row7-review-part-2.md"
+PART_3 = "row7-review-part-3.md"
+NOTE_REFUSED = (
+    "REFUSED: the note is not a plain text file of at most 4096 bytes and 12 lines outside the evidence tree; "
+    "nothing was filed"
+)
+
+
+def from_first_attempt(text: str) -> str:
+    return text[text.index("## Attempt "):]
+
+
+def write_note(rig, text, name="note.txt", binary=False):
+    os.makedirs(rig.outside, exist_ok=True)
+    path = os.path.join(rig.outside, name)
+    with open(path, "wb" if binary else "w", **({} if binary else {"encoding": "utf-8"})) as handle:
+        handle.write(text)
+    return path
+
+
+class ReviewPartTests(unittest.TestCase):
+    def test_a_first_table_has_no_preface_and_an_introduction_that_points_to_no_file_of_the_triple(self) -> None:
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        text = w.read(REVIEW_FILE)
+        self.assertFalse([line for line in text.splitlines() if line.startswith(("part: ", "earlier parts: "))])
+        self.assertNotIn("## Review record", text)
+        intro = text[: text.index("attempts: ")]
+        self.assertNotIn("Codex review file of th" + "e triple", " ".join(intro.split()))
+        self.assertNotIn("in the Codex review file", " ".join(intro.split()))
+        flat = " ".join(intro.split())
+        self.assertIn("a human judgement made by the reviewers outside the harness", flat)
+        self.assertIn("A Review record section, when a note was given, says where it is recorded.", flat)
+        self.assertIn("is also read for a checkpoint printed outside a fenced block", flat)
+        self.assertIn("under the word unfenced, with the same candidate rule, as a reading of lower confidence.", flat)
+
+    def test_a_later_part_has_a_preface_the_earlier_names_and_the_same_attempt_sections(self) -> None:
+        w = copy_of_world()
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        self.assertEqual(run_baseline(w.rig, ["row7-review", "--folder", w.relative()])[0], 0)
+        first, second, third = w.read(REVIEW_FILE), w.read(PART_2), w.read(PART_3)
+        lines = second.splitlines()
+        self.assertIn("part: 2", lines)
+        self.assertIn("earlier parts: row7-review.md", lines)
+        sentence = ("The earlier parts are unchanged by this part. This part is built again from the filed files, "
+                    "so the latest part is the complete table.")
+        self.assertIn(sentence, lines)
+        self.assertLess(lines.index("part: 2"), lines.index("attempts: 3"))
+        self.assertEqual(from_first_attempt(second), from_first_attempt(first), "the attempt sections are the same")
+        self.assertIn("part: 3", third.splitlines())
+        self.assertIn("earlier parts: row7-review.md, row7-review-part-2.md", third.splitlines())
+        self.assertEqual(from_first_attempt(third), from_first_attempt(first))
+        self.assertNotIn("part: ", first)
+
+    def test_the_part_functions_name_the_earlier_files_in_number_order(self) -> None:
+        r = review()
+        parsed = r.parse_candidates(candidate_text([], marker=NO_MARKER, size=0))
+        attempts = [r.Attempt(ROW7, 1, "filed", "", parsed, "")]
+        text = r.render_row7_review(attempts, 4, ["row7-review.md", "row7-review-part-2.md", "row7-review-part-3.md", "bad name\n## x"])
+        self.assertIn("earlier parts: row7-review.md, row7-review-part-2.md, row7-review-part-3.md, ?", text.splitlines())
+        self.assertEqual([line for line in text.splitlines() if line.startswith("## ")], ["## Attempt 1: " + ROW7])
+        self.assertNotIn("part: ", r.render_row7_review(attempts))
+
+
+class ReviewNoteTests(unittest.TestCase):
+    def run_with_note(self, text, lines_of=None):
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        note = write_note(rig, text)
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative, "--note", note])
+        return rig, relative, code, out, err
+
+    def test_the_note_lines_are_quoted_in_order_under_a_review_record_before_the_first_attempt(self) -> None:
+        rig, relative, code, out, err = self.run_with_note("First line   with  spaces.\n\n\nSecond line.\n   \nThird.\n")
+        self.assertEqual(code, 0, out + err)
+        text = read_text(os.path.join(rig.repo, relative, REVIEW_FILE))
+        lines = text.splitlines()
+        at = lines.index("## Review record")
+        self.assertEqual(lines[at + 1], "The lines below are quoted from a note given by the person who filed this part.")
+        self.assertEqual(lines[at + 2:at + 5], ["> First line with spaces.", "> Second line.", "> Third."])
+        self.assertLess(at, text.splitlines().index("## Attempt 1: " + BARE))
+
+    def test_without_the_flag_there_is_no_review_record(self) -> None:
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        self.assertEqual(run_baseline(rig, ["row7-review", "--folder", relative])[0], 0)
+        self.assertNotIn("## Review record", read_text(os.path.join(rig.repo, relative, REVIEW_FILE)).splitlines())
+
+    def test_a_hostile_note_line_adds_no_structure_and_the_word_scan_still_runs(self) -> None:
+        forbidden = "pa" + "ss and fa" + "il"
+        hostile = "## Attempt 9: x UNSUPPORTED candidate toolu_evil Bash " + "w" * 900
+        rig, relative, code, out, err = self.run_with_note(hostile + "\n" + forbidden + "\n## Heading\ncandidates 1: 99\n")
+        self.assertEqual(code, 0, out + err)
+        text = read_text(os.path.join(rig.repo, relative, REVIEW_FILE))
+        self.assertEqual(len([line for line in text.splitlines() if line.startswith("## Attempt ")]), 1)
+        self.assertEqual([line for line in text.splitlines() if line.startswith("## ")], ["## Review record", "## Attempt 1: " + BARE])
+        self.assertEqual([line for line in text.splitlines() if line == "UNSUPPORTED"], [])
+        quoted = [line for line in text.splitlines() if line.startswith("> ## Attempt 9")]
+        self.assertEqual(len(quoted), 1)
+        self.assertLessEqual(len(quoted[0]), 2 + review().MAX_ENTRY_CHARS)
+        code, out, err = run_baseline(rig, ["check-words", "--folder", relative])
+        self.assertEqual(code, 0, out + err)
+
+    def test_an_unusable_note_is_refused_with_2_one_fixed_line_and_nothing_written(self) -> None:
+        import shutil
+
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        folder = os.path.join(rig.repo, relative)
+        os.makedirs(rig.outside, exist_ok=True)
+        good = write_note(rig, "one line\n", "good.txt")
+        link = os.path.join(rig.outside, "link.txt")
+        os.symlink(good, link)
+        inside = os.path.join(folder, "inside-note.txt")
+        with open(inside, "w", encoding="utf-8") as handle:
+            handle.write("a note inside the evidence tree\n")
+        directory = os.path.join(rig.outside, "adir")
+        os.makedirs(directory)
+        cases = {
+            "missing": os.path.join(rig.outside, "missing.txt"),
+            "directory": directory,
+            "symlink": link,
+            "inside": inside,
+            "too big": write_note(rig, "x" * 4097, "big.txt"),
+            "too many lines": write_note(rig, "".join("line %d\n" % n for n in range(13)), "many.txt"),
+            "no text": write_note(rig, "  \n\n \t\n", "blank.txt"),
+            "empty": write_note(rig, "", "empty.txt"),
+            "nul": write_note(rig, "a\x00b\n", "nul.txt"),
+            "not utf-8": write_note(rig, b"caf\xe9 \xff\xfe\n", "bytes.txt", binary=True),
+        }
+        before = tree_snapshot(folder)
+        for label, path in cases.items():
+            code, out, err = run_baseline(rig, ["row7-review", "--folder", relative, "--note", path])
+            self.assertEqual(code, 2, label)
+            self.assertEqual(err.strip(), NOTE_REFUSED, label)
+            self.assertEqual(out, "", label)
+            self.assertEqual(tree_snapshot(folder), before, label + ": nothing was written")
+            self.assertEqual(os.listdir(rig.runs) if os.path.isdir(rig.runs) else [], [], label + ": no run root was made")
+        self.assertEqual(run_baseline(rig, ["row7-review", "--folder", relative, "--note", good])[0], 0, "twelve lines or fewer is fine")
+        twelve = write_note(rig, "".join("line %d\n" % n for n in range(12)), "twelve.txt")
+        self.assertEqual(run_baseline(rig, ["row7-review", "--folder", relative, "--note", twelve])[0], 0)
+        self.assertEqual(len(re.findall(r"(?m)^> line ", read_text(os.path.join(folder, PART_2)))), 12)
+        shutil.rmtree(directory)
+
+    def test_a_note_line_that_holds_a_path_is_refused_by_the_leak_gate_with_14_and_is_not_echoed(self) -> None:
+        seeded = pc_seeds.home_path("pcsynthhome") + "/data"
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        folder = os.path.join(rig.repo, relative)
+        note = write_note(rig, "a fine line\nthe folder %s was read\n" % seeded)
+        before = tree_snapshot(folder)
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative, "--note", note])
+        self.assertEqual(code, pc_exitcodes.LEAK_REFUSED, out + err)
+        self.assertEqual(tree_snapshot(folder), before)
+        self.assertNotIn(seeded, out + err)
+
+    def test_the_note_option_belongs_to_row7_review_only(self) -> None:
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        note = write_note(rig, "one line\n")
+        for command in ("close", "report", "check-words", "finalize"):
+            self.assertEqual(run_baseline(rig, [command, "--folder", relative, "--note", note])[0], 2, command)
+        self.assertIn("[--note FILE]", baseline().USAGE_LINE)
+
+    def test_read_note_collapses_blank_lines_and_whitespace_and_refuses_what_is_not_text(self) -> None:
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        b = baseline()
+        path = write_note(rig, "  a\t b  \n\n c\r\n")
+        self.assertEqual(b.read_note(path, rig.repo), ["a b", "c"])
+        self.assertIsNone(b.read_note(os.path.join(rig.outside, "none.txt"), rig.repo))
+        self.assertIsNone(b.read_note(None, rig.repo))
+        self.assertIsNone(b.read_note("", rig.repo))
+
+    def test_the_file_review_source_rules_and_message_are_unchanged(self) -> None:
+        rig, relative = scratch({BARE: {CANDIDATES: candidate_text([])}})
+        code, out, err = run_baseline(rig, ["file-review", "--folder", relative, "--from", os.path.join(rig.outside, "nope.txt")])
+        self.assertEqual(code, 2)
+        self.assertEqual(err.strip(), baseline().MESSAGE_REVIEW_SOURCE)
+        self.assertIn("200000 bytes", err)
+
+
+class FrozenReviewPartTests(unittest.TestCase):
+    FIRST = "# an earlier first table\nstays as it is\n"
+
+    def triple(self, with_first=True):
+        files = {
+            ROW7: {CANDIDATES: candidate_text([])},
+            ATTEMPT_2: {CANDIDATES: candidate_text([], marker=NO_MARKER, size=0), SHORT_TRACE: short_trace_of("No headings."),
+                        FULL_TRACE: full_trace_of([call("t1", "Read", {"file_path": "a.md"}, "x")])},
+        }
+        rig, relative = scratch(files, dated=TRIPLE_NAME)
+        folder = os.path.join(rig.repo, relative)
+        if with_first:
+            with open(os.path.join(folder, REVIEW_FILE), "x", encoding="utf-8") as handle:
+                handle.write(self.FIRST)
+        return rig, relative, folder
+
+    def test_the_exception_is_one_folder_name_inside_the_frozen_set(self) -> None:
+        b = baseline()
+        self.assertEqual(b.REVIEW_PART_FOLDERS, frozenset([TRIPLE_NAME]))
+        self.assertTrue(b.REVIEW_PART_FOLDERS <= b.FROZEN_FOLDERS)
+
+    def test_the_triple_takes_a_new_part_when_its_first_table_exists_and_every_other_file_stays(self) -> None:
+        rig, relative, folder = self.triple()
+        before = tree_snapshot(folder)
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("review: %s, row7-review-part-2.md, 2 attempt(s)" % TRIPLE_NAME, out)
+        after = tree_snapshot(folder)
+        self.assertEqual(sorted(set(after) - set(before)), [PART_2])
+        for name, data in before.items():
+            self.assertEqual(after[name], data, name)
+        self.assertIn("part: 2", read_text(os.path.join(folder, PART_2)).splitlines())
+
+    def test_the_triple_without_a_first_table_is_refused_with_2_and_nothing_is_written(self) -> None:
+        rig, relative, folder = self.triple(with_first=False)
+        before = tree_snapshot(folder)
+        code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+        self.assertEqual(code, 2, out + err)
+        self.assertIn(baseline().MESSAGE_FROZEN, err)
+        self.assertEqual(tree_snapshot(folder), before)
+        self.assertEqual(os.listdir(rig.runs) if os.path.isdir(rig.runs) else [], [])
+
+    def test_every_other_frozen_name_is_refused_even_with_a_first_table(self) -> None:
+        b = baseline()
+        others = sorted(b.FROZEN_FOLDERS - b.REVIEW_PART_FOLDERS)
+        self.assertEqual(len(others), 11)
+        for name in others:
+            rig, relative = scratch({ROW7: {CANDIDATES: candidate_text([]), }, }, dated=name)
+            folder = os.path.join(rig.repo, relative)
+            with open(os.path.join(folder, REVIEW_FILE), "x", encoding="utf-8") as handle:
+                handle.write(self.FIRST)
+            before = tree_snapshot(folder)
+            code, out, err = run_baseline(rig, ["row7-review", "--folder", relative])
+            self.assertEqual(code, 2, name + out + err)
+            self.assertEqual(tree_snapshot(folder), before, name)
+            self.assertEqual(os.listdir(rig.runs) if os.path.isdir(rig.runs) else [], [], name)
+
+    def test_close_finalize_and_file_review_still_refuse_the_triple(self) -> None:
+        rig, relative, folder = self.triple()
+        note = write_note(rig, "text of a review\n")
+        before = tree_snapshot(folder)
+        for args in (
+            ["close", "--folder", relative],
+            ["close", "--folder", relative, "--baseline"],
+            ["finalize", "--folder", relative],
+            ["file-review", "--folder", relative, "--from", note],
+        ):
+            code, out, err = run_baseline(rig, args)
+            self.assertEqual(code, 2, " ".join(args) + out + err)
+            self.assertIn(baseline().MESSAGE_FROZEN, err)
+            self.assertEqual(tree_snapshot(folder), before, " ".join(args))
+
+    def test_the_readme_describes_the_unfenced_reading_the_parts_the_note_and_the_exception(self) -> None:
+        text = " ".join(read_text(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")).split())
+        for phrase in (
+            "--note FILE",
+            "unfenced",
+            "lower confidence",
+            "Review record",
+            "earlier parts",
+            "4096 bytes",
+            "12 lines",
+            "Read, Glob and Grep results",
+        ):
+            self.assertIn(phrase, text)
+        self.assertGreaterEqual(text.lower().count("unfenced"), 3)
+        self.assertNotIn("the two frozen folders, are refused", text)
 
 
 if __name__ == "__main__":

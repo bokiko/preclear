@@ -68,7 +68,8 @@ PROG = "pc_baseline.py"
 RECORD_COMMAND = "record-" + "ver" + "dict"
 USAGE_LINE = (
     "usage: pc_baseline.py {close|report|check-words|row7-review|finalize|file-review} --folder FOLDER "
-    "[--baseline] [--clone-facts FILE] [--from FILE] | %s --readme PATH --text TEXT | evidence-readme --reference NAME"
+    "[--baseline] [--clone-facts FILE] [--from FILE] [--note FILE] | %s --readme PATH --text TEXT | "
+    "evidence-readme --reference NAME"
     % RECORD_COMMAND
 )
 MESSAGE_USAGE = "see the usage line"
@@ -83,6 +84,10 @@ MESSAGE_FACTS = "REFUSED: the clone-facts file does not match its schema; nothin
 MESSAGE_EXISTS = "REFUSED: a top-level file this step files already exists in the folder; nothing was filed"
 MESSAGE_REFERENCE = "REFUSED: the reference tree could not be read; nothing was filed"
 MESSAGE_REVIEW_SOURCE = "REFUSED: the review source is not a plain file of at most 200000 bytes outside the evidence tree; nothing was filed"
+MESSAGE_NOTE = (
+    "REFUSED: the note is not a plain text file of at most 4096 bytes and 12 lines outside the evidence tree; "
+    "nothing was filed"
+)
 MESSAGE_RECORD_REFUSED = "REFUSED: the target or the text is not allowed; no file was changed"
 MESSAGE_RECORD_FAILED = "ERROR: the closing line could not be confirmed after the write"
 MESSAGE_REFERENCE_NAME = "REFUSED: the reference is not a folder of the evidence tree; nothing was filed"
@@ -106,6 +111,9 @@ FROZEN_FOLDERS = frozenset(
         "rerun-2026-11-09-claude-sonnet-5-5-triple",
     ]
 )
+# These folders stay frozen for every writer except the review command, which only adds a new part file there and only
+# when the first table already exists (plan 04-22). close, finalize and file-review still refuse them.
+REVIEW_PART_FOLDERS = frozenset(["rerun-2026-11-09-claude-sonnet-5-5-triple"])
 EVIDENCE_PARTS = ("tests", "evidence")
 UNCONFIRMED = pc_evidence.UNCONFIRMED
 STATE_FILED = "filed"
@@ -542,6 +550,11 @@ def is_frozen(folder: str) -> bool:
     return os.path.basename(folder) in FROZEN_FOLDERS
 
 
+def takes_review_part(folder: str) -> bool:
+    """True for a folder in REVIEW_PART_FOLDERS that already holds its first review table: it may take a new part file."""
+    return os.path.basename(folder) in REVIEW_PART_FOLDERS and os.path.lexists(os.path.join(folder, REVIEW_FILE))
+
+
 # ---------------------------------------------------------------------------------------------
 # close, report, check-words
 # ---------------------------------------------------------------------------------------------
@@ -706,6 +719,62 @@ def review_part_name(folder: str) -> str:
     return "row7-review-part-%d.md" % number
 
 
+def review_part_number(name: str) -> int:
+    """1 for row7-review.md, N for row7-review-part-N.md."""
+    if name == REVIEW_FILE:
+        return 1
+    return int(name[len("row7-review-part-"):-len(".md")])
+
+
+def earlier_review_files(folder: str, number: int) -> List[str]:
+    """The review files below part `number` that are present in the folder, in number order."""
+    names = [REVIEW_FILE] + ["row7-review-part-%d.md" % earlier for earlier in range(2, number)]
+    return [name for name in names if os.path.lexists(os.path.join(folder, name))]
+
+
+def _read_source(source: Any, root: str, limit: int) -> Optional[bytes]:
+    """The bytes of a plain source file, or None.
+
+    The source must be a regular file (not a symlink) of at most `limit` bytes that does not lie in the evidence tree.
+    """
+    if not isinstance(source, str) or source == "" or "\x00" in source:
+        return None
+    evidence = os.path.realpath(os.path.join(root, *EVIDENCE_PARTS))
+    try:
+        path = os.path.abspath(source)
+        mode = os.lstat(path).st_mode
+        real = os.path.realpath(path)
+        if not stat.S_ISREG(mode) or real == evidence or real.startswith(evidence + os.sep):
+            return None
+        with open(path, "rb") as handle:
+            data = handle.read(limit + 1)
+    except OSError:
+        return None
+    return data if len(data) <= limit else None
+
+
+def read_note(path: Any, root: str) -> Optional[List[str]]:
+    """The lines of a review note, or None when the note is not usable.
+
+    A plain, non-symlink file outside the evidence tree of at most MAX_NOTE_BYTES bytes, strict UTF-8, no NUL byte. Blank
+    lines are dropped and whitespace is collapsed; there must be at least one and at most MAX_NOTE_LINES lines.
+    """
+    data = _read_source(path, root, pc_review.MAX_NOTE_BYTES)
+    if data is None:
+        return None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "\x00" in text:
+        return None
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    if not lines or len(lines) > pc_review.MAX_NOTE_LINES:
+        return None
+    return lines
+
+
 def review_folder(
     folder: str,
     root: str,
@@ -713,18 +782,31 @@ def review_folder(
     clock: Callable[[], datetime.datetime],
     out: TextIO,
     err: TextIO,
+    note_path: Optional[str] = None,
 ) -> int:
-    """Build row7-review from the filed attempts and add it as a new flat file; an earlier part is never touched."""
+    """Build row7-review from the filed attempts and add it as a new flat file; an earlier part is never touched.
+
+    A part numbered 2 or later carries a preface that names the earlier part files. A note, when given, is read first and
+    refused with 2 before anything is staged; its lines are quoted under a Review record heading.
+    """
     attempts = row7_attempts(folder)
     if not attempts:
         _write(err, MESSAGE_NO_ROW7 + "\n")
         return pc_exitcodes.USAGE
+    note: List[str] = []
+    if note_path is not None:
+        read = read_note(note_path, root)
+        if read is None:
+            _write(err, MESSAGE_NOTE + "\n")
+            return pc_exitcodes.USAGE
+        note = read
     name = review_part_name(folder)
+    number = review_part_number(name)
     stamp = clock().strftime("%Y%m%dT%H%M%SZ")
     suffix = "" if name == REVIEW_FILE else name[len("row7-review"):-len(".md")]
+    text = pc_review.render_row7_review(attempts, number, earlier_review_files(folder, number), note)
     code, _count = _add_flat_files(
-        folder, root, env, clock, {name: pc_review.render_row7_review(attempts).encode("utf-8")},
-        "review-%s%s" % (stamp, suffix or "-part-1"), out,
+        folder, root, env, clock, {name: text.encode("utf-8")}, "review-%s%s" % (stamp, suffix or "-part-1"), out,
     )
     if code != pc_exitcodes.OK:
         return code
@@ -1150,26 +1232,8 @@ def file_review(
     the file holds the reviewer's own words. An existing name is refused with 17, anything else with 2 or the gate's
     code; nothing is created in a refusal.
     """
-    evidence = os.path.realpath(os.path.join(root, *EVIDENCE_PARTS))
-    data = b""
-    problem = not isinstance(source, str) or source == "" or "\x00" in source
-    if not problem:
-        try:
-            path = os.path.abspath(source)
-            mode = os.lstat(path).st_mode
-            real = os.path.realpath(path)
-            problem = (
-                not stat.S_ISREG(mode)
-                or real == evidence
-                or real.startswith(evidence + os.sep)
-            )
-            if not problem:
-                with open(path, "rb") as handle:
-                    data = handle.read(MAX_REVIEW_BYTES + 1)
-                problem = len(data) > MAX_REVIEW_BYTES
-        except OSError:
-            problem = True
-    if problem:
+    data = _read_source(source, root, MAX_REVIEW_BYTES)
+    if data is None:
         _write(err, MESSAGE_REVIEW_SOURCE + "\n")
         return pc_exitcodes.USAGE
     if os.path.lexists(os.path.join(folder, REVIEW_NOTES_FILE)):
@@ -1466,6 +1530,8 @@ def build_parser(out: TextIO, err: TextIO, command: str) -> argparse.ArgumentPar
     parser.add_argument("--folder", required=True)
     if command == "file-review":
         parser.add_argument("--from", required=True, dest="source")
+    if command == "row7-review":
+        parser.add_argument("--note", default=None, dest="note")
     if command == "close":
         parser.add_argument("--baseline", action="store_true")
     if command == "finalize":
@@ -1516,8 +1582,9 @@ def main(
         _write(err, MESSAGE_FOLDER + "\n")
         return pc_exitcodes.USAGE
     if command in ("close", "row7-review", "finalize", "file-review") and is_frozen(folder):
-        _write(err, MESSAGE_FROZEN + "\n")
-        return pc_exitcodes.USAGE
+        if not (command == "row7-review" and takes_review_part(folder)):
+            _write(err, MESSAGE_FROZEN + "\n")
+            return pc_exitcodes.USAGE
     try:
         if command == "report":
             for line in report_lines(folder):
@@ -1528,7 +1595,7 @@ def main(
             _write(out, "check-words: %d file(s) scanned, %d hit(s)\n" % (scanned, hits))
             return pc_exitcodes.OK if hits == 0 else pc_exitcodes.PREFLIGHT_FAIL
         if command == "row7-review":
-            return review_folder(folder, root, source, clock or _utc_now, out, err)
+            return review_folder(folder, root, source, clock or _utc_now, out, err, args.note)
         if command == "file-review":
             return file_review(folder, args.source, root, source, clock or _utc_now, out, err)
         if command == "finalize":

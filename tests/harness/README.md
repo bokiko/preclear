@@ -844,14 +844,41 @@ sanitizer and capped (64 entries, 400 characters per entry, 160 per excerpt, 20 
 rest stated), so a heading, a record line or the word UNSUPPORTED inside model text adds no structure. The vocabulary scan
 skips exactly those quoted lines in this file and in the review files and scans every other line.
 
-`python3 -E -s -B tests/harness/pc_baseline.py row7-review --folder FOLDER` builds the side-by-side table of the row 7
-attempts of a dated folder from the filed candidate files and stop files only, never a run root. It has one section per
-attempt in attempt order (the bare folder is attempt 1); a stopped or skipped attempt is kept with its reason, an attempt
-with no printed checkpoint says so, and an attempt with zero entries has a section and no table body. A candidate file
-that is absent or damaged is listed as such. The table is staged, sanitized, gated and added exactly like the files of
-`close`, as `row7-review.md` or the first free `row7-review-part-N.md`, so an earlier file is never touched. A folder with
-no row 7 attempt, and the two frozen folders, are refused with exit 2. Each row 7 README points to `row7-review.md` at
-the top of the dated folder.
+`python3 -E -s -B tests/harness/pc_baseline.py row7-review --folder FOLDER [--note FILE]` builds the side-by-side table of
+the row 7 attempts of a dated folder from the filed candidate files, the filed s2 traces and stop files only, never a run
+root. It has one section per attempt in attempt order (the bare folder is attempt 1); a stopped or skipped attempt is kept
+with its reason, an attempt with no printed checkpoint says so, and an attempt with zero entries has a section and no table
+body. A candidate file that is absent or damaged is listed as such. The table is staged, sanitized, gated and added exactly
+like the files of `close`, as `row7-review.md` or the first free `row7-review-part-N.md`, so an earlier file is never
+touched. A folder with no row 7 attempt is refused with exit 2.
+
+An attempt whose candidate file says `NO-PRINTED-CHECKPOINT` is also read for a checkpoint that the model printed as plain
+markdown, outside a fenced block. The reply is taken from the filed short trace and the calls from the filed full trace,
+parsed in the strict shape the harness writes (a call heading forged inside model text changes the numbering or the
+declared call count, and the whole trace is then not read). The reply outside every closed fence (an unclosed fence runs to
+the end of the text and is not outside) must hold both `## Identity and state` and `## Do not redo`; a fenced block that
+holds both headings always wins, and then nothing unfenced is read. The entries of that section are paired with the calls by
+the same whole-token rule as a fenced entry, so a bare name in an entry is not the same token as a longer path in a call.
+The section says `unfenced` throughout and is a source of lower confidence: no closing fence marks where the section ends,
+so text after the last bullet joins the last entry. The filed full trace holds Read, Glob and Grep results by length only,
+so those results are not searched and the part states how many calls were not. The lines are `unfenced checkpoint: found`
+(or `none`, or not read when a fenced block holds the headings or the filed traces are absent or damaged), the source, the
+confidence and the match rule in fixed words, the counts of entries, calls read, results not searched and assembly calls,
+a table headed `Unfenced entry` and, for each entry, its quoted text with its candidates or UNSUPPORTED.
+
+A part numbered 2 or later starts, after the introduction, with `part: N`, the line `earlier parts:` that names the
+earlier files in number order and one fixed sentence saying that the earlier parts are unchanged and that the latest part is
+the complete table; from the first `## Attempt` line on it equals the first table when the filed files are the same.
+`--note FILE` adds a `## Review record` section before the attempts: the lines of a plain text file, quoted one per line
+(blank lines dropped, whitespace collapsed, 400 characters per line). The note must be a regular file, not a symlink,
+outside the evidence tree, valid UTF-8 without a NUL byte, of at most 4096 bytes and 12 lines with at least one line;
+anything else is refused with exit 2 before anything is staged. The leak gate still runs over the part, so a note line that
+holds a path is refused with exit 14. Without the flag there is no such section.
+
+`row7-review` refuses a frozen folder with exit 2 with one exception: the committed folder of the row 7 triple takes a new
+part, only when its first table `row7-review.md` already exists. The part is a new file created exclusively; no existing
+file is edited. `close`, `finalize` and `file-review` still refuse every frozen folder, that folder included. Each row 7
+README points to `row7-review.md` at the top of the dated folder.
 
 #### Finalizing a baseline folder
 

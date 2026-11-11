@@ -850,10 +850,22 @@ REVIEW_INTRO: Tuple[str, ...] = (
     "The harness lists candidates and counts only. For each entry of the `## Do not redo` section of a printed checkpoint it",
     "lists the tool calls of the same /preclear turn that share a whole token with the entry (a path, a backtick span or a hex",
     "run). The word %s means the list of candidates is empty and nothing more. Whether a listed candidate really backs its" % UNSUPPORTED,
-    "entry is a human judgement: Codex and the owner confirm or reject each pairing in the Codex review file of the triple.",
+    "entry is a human judgement made by the reviewers outside the harness. A Review record section, when a note was given,",
+    "says where it is recorded.",
     "Every line that starts with `> ` is text quoted from the model, on one line and capped; it is never structure.",
+    "An attempt whose chain marker is NO-PRINTED-CHECKPOINT is also read for a checkpoint printed outside a fenced block. Its entries are listed",
+    "under the word unfenced, with the same candidate rule, as a reading of lower confidence.",
     "Stopped and skipped attempts are kept, with their reasons.",
 )
+MAX_NOTE_LINES = 12
+MAX_NOTE_BYTES = 4096
+_REVIEW_NAME = re.compile(r"row7-review(?:-part-[0-9]{1,4})?\.md\Z")
+PART_SENTENCE = (
+    "The earlier parts are unchanged by this part. This part is built again from the filed files, so the latest part is "
+    "the complete table."
+)
+RECORD_HEADING = "## Review record"
+RECORD_SENTENCE = "The lines below are quoted from a note given by the person who filed this part."
 
 
 UNFENCED_NOT_READ_FENCED = "unfenced checkpoint: not read, a fenced block holds the checkpoint headings"
@@ -962,15 +974,29 @@ def _attempt_lines(attempt: Attempt) -> List[str]:
     return lines + [""]
 
 
-def render_row7_review(attempts: Sequence[Attempt]) -> str:
+def render_row7_review(
+    attempts: Sequence[Attempt], part: int = 1, earlier: Sequence[str] = (), note: Sequence[str] = ()
+) -> str:
     """The side-by-side table: one section per attempt in ascending attempt number, stopped attempts kept.
+
+    A part numbered 2 or more starts, after the introduction, with its number, the names of the earlier part files and a
+    fixed sentence that the earlier parts are unchanged and this one is the complete table. The lines of a note (a
+    record the person who files the part gave) follow under a Review record heading, each as one quoted line.
 
     Built from the records alone. The only model text in it is an entry or an excerpt that was read back from a filed
     candidate file, written behind the quote marker on one line; every other line comes from fixed words, counts, ids
     and folder names that matched a strict pattern.
     """
     ordered = sorted(attempts, key=lambda item: (item.number, _STATE_RANK.get(item.state, 3), item.folder))
-    lines = list(REVIEW_INTRO) + ["", "attempts: %d" % len(ordered), ""]
+    lines = list(REVIEW_INTRO) + [""]
+    if part >= 2:
+        names = ", ".join(name if _REVIEW_NAME.match(name) else "?" for name in earlier) or "none"
+        lines.extend(["part: %d" % part, "earlier parts: " + names, PART_SENTENCE, ""])
+    if note:
+        lines.extend([RECORD_HEADING, RECORD_SENTENCE])
+        lines.extend(quote_line(text, MAX_ENTRY_CHARS) for text in list(note)[:MAX_NOTE_LINES])
+        lines.append("")
+    lines.extend(["attempts: %d" % len(ordered), ""])
     for attempt in ordered:
         lines.extend(_attempt_lines(attempt))
     return "\n".join(lines).rstrip("\n") + "\n"
