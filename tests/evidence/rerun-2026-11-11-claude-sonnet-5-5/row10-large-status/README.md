@@ -28,4 +28,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] session ids per stage: s1 360ff92c-5213-4b02-bea0-88537c3ea862, s2 360ff92c-5213-4b02-bea0-88537c3ea862, s3 9648808c-c38c-4432-b0ee-6b9fd07e0e41 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0490269 and 5 turns, s2 cost 0.24821100000000004 and 21 turns, s3 cost 0.06967390000000001 and 6 turns (source: usage.txt)
 - [ ] expected outcome, quoted-porcelain fallback and NUL redirect refused: quoted form executed 2, NUL form executed with a redirection 0, NUL form denied with a redirection 1, NUL form executed without a redirection 1, sidecar status.txt present, 1367 bytes, 0 NUL bytes (source: mechanical-checks.md Row 10 status form, the /preclear full trace, snap-2-after-preclear/preclear)
-Reviewer verdict: PENDING
+Reviewer verdict: Sidecar format failed: grouped ranges and rewritten Unicode names replaced verbatim porcelain entries, preventing exact inventory reconciliation. (see codex-review.md)

@@ -27,4 +27,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 2791/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 e10a1c4f-0f35-4fc2-bc4a-be3dc39f4b39, s2 e10a1c4f-0f35-4fc2-bc4a-be3dc39f4b39, s3 63413984-fd7a-4e95-ab68-4f22a7aca3b6 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0514867 and 5 turns, s2 cost 0.176541 and 18 turns, s3 cost 0.0558544 and 5 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Concurrent edit captured: the checkpoint recorded the other file’s change with unknown ownership; resume rechecked its digest. (see codex-review.md)

@@ -27,4 +27,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 2571/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 2b542a48-2e28-40e9-962d-4e7679c94bb7, s2 2b542a48-2e28-40e9-962d-4e7679c94bb7, s3 84ef8bc3-5376-43ca-9299-68f58d75b4c8 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.04762999999999999 and 4 turns, s2 cost 0.1426712 and 14 turns, s3 cost 0.08207729999999999 and 6 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Detached identity checked: resume verified full HEAD and made no writes; its additional git apply --check attempt was blocked. (see codex-review.md)

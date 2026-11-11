@@ -29,7 +29,11 @@ EVIDENCE = os.path.join(ROOT, "tests", "evidence")
 # Folder name to the digest of the folder as frozen. Plan 04-21 adds the new baseline here.
 PINNED_BASELINES = {
     "rerun-2026-10-29-claude-sonnet-5-5": "f186124f797f320a18772dd44bc11144d773d34f8acf9c4ce7743fe383cd2477",
+    "rerun-2026-11-11-claude-sonnet-5-5": "1e4f68bbf7f87c8b57df31414e80d6f2bccc2bee3a336769a71f1efa993dc805",
 }
+# The first baseline keeps its pending verdict lines, so its tree digest equals its frozen digest. The new baseline holds
+# its filed reviewer lines and codex-review.md, so only its frozen digest equals the pin.
+TREE_PINNED = frozenset(["rerun-2026-10-29-claude-sonnet-5-5"])
 
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 PENDING = tb.VERDICT_LINE
@@ -78,17 +82,22 @@ def read_bytes(path):
 
 class PinnedTableTests(unittest.TestCase):
     def test_every_pinned_value_is_64_lower_case_hex_and_names_a_committed_folder(self):
-        self.assertEqual(sorted(PINNED_BASELINES), ["rerun-2026-10-29-claude-sonnet-5-5"], "the first baseline only, until plan 04-21")
+        self.assertEqual(
+            sorted(PINNED_BASELINES),
+            ["rerun-2026-10-29-claude-sonnet-5-5", "rerun-2026-11-11-claude-sonnet-5-5"],
+            "the first baseline and the new baseline",
+        )
         for name, value in PINNED_BASELINES.items():
             self.assertIsNotNone(HEX64.match(value), name)
             self.assertTrue(os.path.isdir(os.path.join(EVIDENCE, name)), name)
-            self.assertIn(name, tb.baseline().FROZEN_FOLDERS, name + " is frozen")
+        self.assertIn("rerun-2026-10-29-claude-sonnet-5-5", tb.baseline().FROZEN_FOLDERS, "the first baseline is frozen")
 
     def test_every_pinned_baseline_matches_through_the_tree_digest_and_the_frozen_digest(self):
         for name, value in PINNED_BASELINES.items():
             folder = os.path.join(EVIDENCE, name)
             before = tb.tree_snapshot(folder)
-            self.assertEqual(compare().tree_digest(folder), value, name + ": tree digest")
+            if name in TREE_PINNED:
+                self.assertEqual(compare().tree_digest(folder), value, name + ": tree digest")
             self.assertEqual(tb.baseline().frozen_digest(folder), value, name + ": frozen digest")
             self.assertEqual(tb.tree_snapshot(folder), before, name + " was only read")
 

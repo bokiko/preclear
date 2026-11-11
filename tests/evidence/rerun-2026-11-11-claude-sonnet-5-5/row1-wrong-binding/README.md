@@ -27,4 +27,4 @@ Setup: the configuration names ledger A (`CONTINUITY_CLAUDE-widget-export.md`); 
 - [ ] checkpoint bytes versus cap: 2665/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 84a440b8-9fe2-4ce3-a3dd-40323967aeb1, s2 84a440b8-9fe2-4ce3-a3dd-40323967aeb1, s3 acf1f513-79b8-4ad6-8ff2-2330aef1062e (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.055681999999999995 and 5 turns, s2 cost 0.15498 and 14 turns, s3 cost 0.0575197 and 6 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Safe fallback observed: other-task binding remained untouched, correction stayed in the checkpoint, and resume made no writes; full-HEAD verification was missing. (see codex-review.md)

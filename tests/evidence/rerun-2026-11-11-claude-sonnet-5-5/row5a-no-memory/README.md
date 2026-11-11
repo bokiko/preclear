@@ -25,4 +25,4 @@ Setup: a plain project with no configuration block and no memory mentioned anywh
 - [ ] checkpoint bytes versus cap: 2476/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 0c62d8cd-635d-4c80-8aae-4a2d7545a9bc, s2 0c62d8cd-635d-4c80-8aae-4a2d7545a9bc (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0447066 and 4 turns, s2 cost 0.1205753 and 10 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Final verification incomplete: memory was left alone, but the run expressly omitted post-write status verification and final measurement. (see codex-review.md)

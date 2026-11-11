@@ -27,4 +27,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 2830/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 fe615e8c-42e7-4326-9890-b2a64ef5d23d, s2 fe615e8c-42e7-4326-9890-b2a64ef5d23d, s3 08552d61-2128-4162-98a5-087076871cdf (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.04387099999999999 and 4 turns, s2 cost 0.16562359999999998 and 17 turns, s3 cost 0.05506880000000001 and 7 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Digest-based continuation observed: resume checked recorded file digests and produced only a chat draft. (see codex-review.md)

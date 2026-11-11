@@ -29,4 +29,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: UNCONFIRMED (source: measurements.txt)
 - [ ] session ids per stage: s1 bf313c82-a6c4-43de-9326-3c7f2c47f7a3, s2 bf313c82-a6c4-43de-9326-3c7f2c47f7a3, s3 10062b61-00cb-48d4-8e2a-1118c0a63520 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.047807499999999996 and 4 turns, s2 cost 0.11986020000000001 and 11 turns, s3 cost 0.0547392 and 4 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Safe denial response; evidence claim overstated: EACCES produced a printed checkpoint and no resume line, but “plan … read” in Do not redo lacks a corresponding same-turn read; the older table does not validate this run. (see codex-review.md)

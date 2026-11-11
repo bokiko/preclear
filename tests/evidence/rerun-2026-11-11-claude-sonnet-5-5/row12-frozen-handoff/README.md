@@ -29,4 +29,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 3239/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 36ffc8c3-bb43-4a3f-87ca-00de30e41ca9, s2 36ffc8c3-bb43-4a3f-87ca-00de30e41ca9, s3 fcd43228-5751-47dd-b25a-d3d479ce37ef, s4 fcd43228-5751-47dd-b25a-d3d479ce37ef (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.048074200000000004 and 4 turns, s2 cost 0.2166703 and 21 turns, s3 cost 0.06726470000000001 and 5 turns, s4 cost 0.14349269999999997 and 13 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Frozen copy preserved: refresh retained the frozen digest and detected the changed plan digest, explicitly leaving its cause unconfirmed. (see codex-review.md)

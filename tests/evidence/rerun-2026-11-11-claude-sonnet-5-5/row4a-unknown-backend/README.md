@@ -25,4 +25,4 @@ Setup: the configuration names `backend: checkpoint-v2`, which is not a known ba
 - [ ] checkpoint bytes versus cap: 2834/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 3f99f947-f802-49e5-8095-81f4a4cfe813, s2 3f99f947-f802-49e5-8095-81f4a4cfe813 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.05551120000000001 and 5 turns, s2 cost 0.1725806 and 16 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Backend rejected: no helper ran; authorized plain fallback preserved the pending correction. (see codex-review.md)

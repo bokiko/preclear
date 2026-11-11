@@ -25,4 +25,4 @@ Setup: one ledger, ledger A, named by the configuration, with the session bound 
 - [ ] checkpoint bytes versus cap: 2727/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 03a7a675-8bf0-46ef-a2f0-058e08bd7eee, s2 03a7a675-8bf0-46ef-a2f0-058e08bd7eee (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0532885 and 5 turns, s2 cost 0.17293050000000001 and 21 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Safe fallback observed: no helper ran; the checkpoint retained the correction and identified pending ledger synchronization. (see codex-review.md)

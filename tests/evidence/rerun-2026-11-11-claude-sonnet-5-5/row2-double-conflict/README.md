@@ -25,4 +25,4 @@ Setup: one ledger, ledger A (`CONTINUITY_CLAUDE-widget-export.md`), named by the
 - [ ] checkpoint bytes versus cap: 2769/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 a62931a8-0694-4737-920d-e8e9aa32f026, s2 a62931a8-0694-4737-920d-e8e9aa32f026 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0563066 and 5 turns, s2 cost 0.37105229999999995 and 38 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Conflict stop observed: two conflicts led to an UNSTABLE, unsynchronized fallback without forcing the ledger update. (see codex-review.md)

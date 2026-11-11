@@ -25,4 +25,4 @@ Setup: one ledger, ledger A, with the session bound to it through the checkpoint
 - [ ] checkpoint bytes versus cap: UNCONFIRMED (source: measurements.txt)
 - [ ] session ids per stage: s1 632b7b51-4b07-44d0-9e9c-6c0d0646814e, s2 632b7b51-4b07-44d0-9e9c-6c0d0646814e (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.057496599999999995 and 5 turns, s2 cost 0.1713585 and 9 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Ambiguity blocked persistence: no backend or file writes; printed checkpoint retained the decision, with size unconfirmed. (see codex-review.md)

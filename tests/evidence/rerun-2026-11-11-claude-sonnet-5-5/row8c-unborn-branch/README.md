@@ -27,4 +27,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 2679/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 52fa3032-6149-423a-a0d5-7ff597f1d0bb, s2 52fa3032-6149-423a-a0d5-7ff597f1d0bb, s3 e1128fe7-d1f5-404b-898c-82c554cf24ba (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0467351 and 4 turns, s2 cost 0.15344609999999997 and 17 turns, s3 cost 0.055925300000000004 and 8 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Unborn continuation observed: resume confirmed absent HEAD and matching digests; the canonical plan’s CSV-first decision remained stale. (see codex-review.md)

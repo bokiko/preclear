@@ -25,4 +25,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 2724/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 f43fe444-2783-4b09-9774-bbda070d6560, s2 f43fe444-2783-4b09-9774-bbda070d6560 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.047196 and 4 turns, s2 cost 0.15108190000000002 and 15 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Denial handling cannot be judged: both plan edits succeeded despite mode 444; the intended write-denial condition did not occur. (see codex-review.md)

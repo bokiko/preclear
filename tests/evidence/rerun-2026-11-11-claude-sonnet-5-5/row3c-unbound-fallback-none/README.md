@@ -25,4 +25,4 @@ Setup: one ledger, ledger A, named by the configuration, but the session is neve
 - [ ] checkpoint bytes versus cap: UNCONFIRMED (source: measurements.txt)
 - [ ] session ids per stage: s1 2cce4477-7eb5-4b29-bb1a-0ecf2426233c, s2 2cce4477-7eb5-4b29-bb1a-0ecf2426233c (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0535509 and 5 turns, s2 cost 0.13442510000000002 and 10 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Persistence blocked correctly: no binding or ledger changes; checkpoint printed without a resume line, but printed-checkpoint size remains unconfirmed. (see codex-review.md)

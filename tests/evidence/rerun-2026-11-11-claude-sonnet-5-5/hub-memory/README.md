@@ -27,4 +27,4 @@ Setup: the frozen hub-memory fixture project copied in place: its instruction fi
 - [ ] checkpoint bytes versus cap: 2834/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 d844a56e-2a16-4e27-9dc0-0bf156839bd8, s2 d844a56e-2a16-4e27-9dc0-0bf156839bd8, s3 574434b4-5f11-4d71-8408-660a74e0709b (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.057078 and 5 turns, s2 cost 0.15339049999999999 and 17 turns, s3 cost 0.0486762 and 3 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Resume verification incomplete: memory conventions were preserved, but resume claimed branch/HEAD agreement after only git diff and a source read. (see codex-review.md)

@@ -27,4 +27,4 @@ Setup: the row 1 setup with ledger A only: the configuration names ledger A (`CO
 - [ ] checkpoint bytes versus cap: UNCONFIRMED (source: measurements.txt)
 - [ ] session ids per stage: s1 db7c801d-3030-4285-954a-3e1d4fa28a40, s2 db7c801d-3030-4285-954a-3e1d4fa28a40, s3 3f6cc69f-b9bc-4d3a-861d-19c81858eeea (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0536723 and 5 turns, s2 cost 0.3158604 and 33 turns, s3 cost 0.0548391 and 3 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Helper path exercised; resume incomplete: helper updates and lint succeeded against the stub; resume omitted full identity verification. (see codex-review.md)

@@ -27,4 +27,4 @@ Setup: a plain project with memory enabled and pinned inside the run root, no he
 - [ ] checkpoint bytes versus cap: 2779/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 59e6c9eb-7cb7-43b4-90a4-d13595b5bf99, s2 59e6c9eb-7cb7-43b4-90a4-d13595b5bf99, s3 01644d7a-af31-4e8d-8468-115f18357829 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.046497300000000005 and 4 turns, s2 cost 0.15877019999999997 and 17 turns, s3 cost 0.0556018 and 7 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Worktree continuation observed: checkpoint identified the linked worktree; resume checked branch, full HEAD and digests without writing. (see codex-review.md)

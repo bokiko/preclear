@@ -27,4 +27,4 @@ Setup: the frozen plain-memory fixture project copied in place: its instruction 
 - [ ] checkpoint bytes versus cap: 2618/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 9324af7b-da8d-4a06-80a0-ad439c1109bd, s2 9324af7b-da8d-4a06-80a0-ad439c1109bd, s3 3c77c0dc-d3df-4f68-bf56-c341673190e7 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0527334 and 5 turns, s2 cost 0.12074100000000001 and 11 turns, s3 cost 0.046545100000000006 and 3 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Resume verification incomplete: draft stayed in chat, but the resume trace never checked the full HEAD despite claiming a match. (see codex-review.md)

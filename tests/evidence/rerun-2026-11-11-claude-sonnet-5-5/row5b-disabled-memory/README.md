@@ -25,4 +25,4 @@ Setup: as row 5a, plus the project instruction file says that memory is disabled
 - [ ] checkpoint bytes versus cap: 2692/4096 (source: measurements.txt)
 - [ ] session ids per stage: s1 d2f780c6-6079-4e02-bb55-003dfd31b863, s2 d2f780c6-6079-4e02-bb55-003dfd31b863 (source: session.id, session-resume.id, usage.txt)
 - [ ] cost and turns per stage: s1 cost 0.0416388 and 4 turns, s2 cost 0.1538407 and 16 turns (source: usage.txt)
-Reviewer verdict: PENDING
+Reviewer verdict: Disabled memory respected: decision and progress were saved through the plan/checkpoint without memory writes. (see codex-review.md)
