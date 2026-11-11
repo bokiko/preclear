@@ -170,7 +170,7 @@ Facts of the matrix chain, from `row7-all-destinations-denied/do-not-redo-candid
 
 Deletions in the evidence commit: 0.
 
-The orchestrator's gate runs the full unit suite and the selftest; this executor did not run them. Suite count: 2347 (the figure printed by the rehearsal suite and by the clone's own self-test on head 0bacd2b; the orchestrator's final gate re-measures it and its printed figure overrides this line if it differs).
+The orchestrator's gate runs the full unit suite and the selftest; this executor did not run them. Suite count: 2351 (the orchestrator's gate on head 5c09e61; the rehearsal suite and the clone's own self-test on head 0bacd2b printed 2347 before the four USER tests were added).
 
 ## Frozen digest of the baseline (for plan 04-21)
 
@@ -211,9 +211,15 @@ The publication folder's frozen digest by the same function, for comparison: 268
 **8. [Estimate] The plan's worst case printed differently**
 - The dry run printed a worst case of 38.40 USD, the plan text says 42.00 (21 chains at 2.00). Not a fault: the plan's text is the upper ceiling and the dry run is the harness's own sum.
 
+**9. [Rule 1 - Bug] The clean-clone tests hid a dated folder filed on the same day**
+- **Found during:** the orchestrator's post-wave gate (unit suite and selftest: 2351 tests, 9 errors, all in `test_cleanclone.py`).
+- **Issue:** the tests' `dated()` helper excluded every `rerun-` name present in the real repository; the committed baseline `rerun-2026-11-11-claude-sonnet-5-5` carries the very name a scratch run produces on 2026-11-11, so the helper found no folder. A same-day artefact of filing a baseline, not a harness fault.
+- **Fix:** the helper now excludes only the names the scratch source itself holds (commit `5c09e61`); `test_cleanclone.py` 103 OK alone, then the whole suite rerun by the gate.
+- **Files modified:** `tests/harness/test_cleanclone.py`.
+
 The dry-run folder date did not drift this time: the rehearsal and the run both fell on 2026-11-11.
 
-**Total deviations:** 8, one of which (3) changed code.
+**Total deviations:** 9, two of which (3, 9) changed code.
 
 ## Known Stubs
 None.
