@@ -139,6 +139,27 @@ created: "2026-11-11"
 | T-04-108 (04-21) | Repudiation | a rejection or a reservation by Codex hidden by filing only agreeable lines | high | mitigate | the whole pasted answer is filed in codex-review.md; each row line is his own choice of line, and a row he leaves out stays pending and is named in the summary; | closed |
 | T-04-109 (04-21) | Elevation of privilege | the swap made without his word or as part of filing | high | mitigate | the swap is its own commit after the verdicts and only for the word `file-and-swap`; `file-only` makes no commit 3; the publication folder is never edited and i | closed |
 | T-04-110 (04-21) | Tampering | the README cost block drifting from the evidence, or a currency figure appearing | medium | mitigate | one marked block whose figures are read by a test from the filed digest table and the first baseline's usage file; the currency ban holds outside it | closed |
+| T-04-SC (04-01) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-02) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-03) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-04) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-05) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-06) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-07) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-08) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-09) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-10) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-11) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-12) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library and bash only | closed (accepted risk) |
+| T-04-SC (04-13) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-14) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-15) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-16) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-17) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-18) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-19) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-20) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
+| T-04-SC (04-21) | Tampering | npm, pip and cargo installs | low | accept | this plan installs nothing; standard library only | closed (accepted risk) |
 
 *Status: open · closed · open — below high threshold (non-blocking)*
 *Severity: critical > high > medium > low — only open threats at or above workflow.security_block_on count toward threats_open*
@@ -234,6 +255,27 @@ None of these change a verdict or threats_open.
 | Risk ID | Threat Ref | Rationale | Accepted By | Date |
 |---------|------------|-----------|-------------|------|
 | AR-04-01 | T-04-22 (04-05) | the finalizer runs on every exit path of the row; only a killed process can leave one scratch file at mode 444 inside the run root, which the owner can change a | bokiko (plan 04-05 approved at planning) | 2026-11-01 |
+| AR-04-SC-01 | T-04-SC (04-01) | this plan installs nothing; standard library only | bokiko (plan 04-01 approved at planning) | 2026-11-01 |
+| AR-04-SC-02 | T-04-SC (04-02) | this plan installs nothing; standard library only | bokiko (plan 04-02 approved at planning) | 2026-11-01 |
+| AR-04-SC-03 | T-04-SC (04-03) | this plan installs nothing; standard library only | bokiko (plan 04-03 approved at planning) | 2026-11-01 |
+| AR-04-SC-04 | T-04-SC (04-04) | this plan installs nothing; standard library only | bokiko (plan 04-04 approved at planning) | 2026-11-01 |
+| AR-04-SC-05 | T-04-SC (04-05) | this plan installs nothing; standard library only | bokiko (plan 04-05 approved at planning) | 2026-11-01 |
+| AR-04-SC-06 | T-04-SC (04-06) | this plan installs nothing; standard library only | bokiko (plan 04-06 approved at planning) | 2026-11-01 |
+| AR-04-SC-07 | T-04-SC (04-07) | this plan installs nothing; standard library only | bokiko (plan 04-07 approved at planning) | 2026-11-01 |
+| AR-04-SC-08 | T-04-SC (04-08) | this plan installs nothing; standard library only | bokiko (plan 04-08 approved at planning) | 2026-11-01 |
+| AR-04-SC-09 | T-04-SC (04-09) | this plan installs nothing; standard library only | bokiko (plan 04-09 approved at planning) | 2026-11-01 |
+| AR-04-SC-10 | T-04-SC (04-10) | this plan installs nothing; standard library only | bokiko (plan 04-10 approved at planning) | 2026-11-01 |
+| AR-04-SC-11 | T-04-SC (04-11) | this plan installs nothing; standard library only | bokiko (plan 04-11 approved at planning) | 2026-11-01 |
+| AR-04-SC-12 | T-04-SC (04-12) | this plan installs nothing; standard library and bash only | bokiko (plan 04-12 approved at planning) | 2026-11-01 |
+| AR-04-SC-13 | T-04-SC (04-13) | this plan installs nothing; standard library only | bokiko (plan 04-13 approved at planning) | 2026-11-01 |
+| AR-04-SC-14 | T-04-SC (04-14) | this plan installs nothing; standard library only | bokiko (plan 04-14 approved at planning) | 2026-11-01 |
+| AR-04-SC-15 | T-04-SC (04-15) | this plan installs nothing; standard library only | bokiko (plan 04-15 approved at planning) | 2026-11-01 |
+| AR-04-SC-16 | T-04-SC (04-16) | this plan installs nothing; standard library only | bokiko (plan 04-16 approved at planning) | 2026-11-01 |
+| AR-04-SC-17 | T-04-SC (04-17) | this plan installs nothing; standard library only | bokiko (plan 04-17 approved at planning) | 2026-11-01 |
+| AR-04-SC-18 | T-04-SC (04-18) | this plan installs nothing; standard library only | bokiko (plan 04-18 approved at planning) | 2026-11-01 |
+| AR-04-SC-19 | T-04-SC (04-19) | this plan installs nothing; standard library only | bokiko (plan 04-19 approved at planning) | 2026-11-01 |
+| AR-04-SC-20 | T-04-SC (04-20) | this plan installs nothing; standard library only | bokiko (plan 04-20 approved at planning) | 2026-11-01 |
+| AR-04-SC-21 | T-04-SC (04-21) | this plan installs nothing; standard library only | bokiko (plan 04-21 approved at planning) | 2026-11-01 |
 
 *Accepted risks do not resurface in future audit runs.*
 
@@ -243,7 +285,7 @@ None of these change a verdict or threats_open.
 
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
-| 2026-11-11 | 110 | 110 | 0 | gsd-security-auditor (sonnet), verify-mitigations mode, register authored at plan time |
+| 2026-11-11 | 131 (110 registered plus 21 reserved T-04-SC supply-chain rows, all accepted) | 131 | 0 | gsd-security-auditor (sonnet), verify-mitigations mode, register authored at plan time |
 
 ---
 
