@@ -124,7 +124,7 @@ Single-file runs by this executor. The whole-suite count is the orchestrator's g
 | other frozen paths and tests/harness after the commits | clean |
 | attribution trailers in the three commits | 0 |
 
-Suite count: 2364 (the plan 04-21 gate figure, not re-measured by this executor; the orchestrator gate re-measures it)
+Suite count: 2405 (the orchestrator's wave 22 gate on head 47e3656: selftest and unit suite both 2405 OK, skipped=3; hooks 29/0, frozen paths unchanged apart from the one added part file, trailers 0, leak gate 0 after an untracked bytecode cache was removed, gitleaks 0)
 
 ## Deviations from Plan
 
