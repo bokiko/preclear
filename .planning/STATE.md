@@ -95,9 +95,9 @@ None yet.
 - [Phase 1]: The local deny list is empty, so the default-mode pre-flip gate fails its deny-list step until entries exist. `--rehearse` still passes.
 - [Phase 1]: Windows-style and `/root/` home paths are not covered by the home-path rule (review CR-03 fixed only the boundary).
 - [Phase 1]: Nine Info findings stay open in 01-REVIEW-DISPOSITION.md.
-- [Phase 1]: SECURITY.md was never produced for Phase 1. security_enforcement is on, so `/gsd-secure-phase 1` is pending.
+- [Phase 1]: `--rehearse` of scripts/prepublish-check.sh fails its owner-clone-config step in this checkout because `core.hooksPath` is stored as an absolute path while the script compares the literal `.githooks` (local config drift, hooks active; found by the 2026-11-12 security audit).
 - [Phase 2]: Stub fidelity is derived from `references/checkpoint-v1.md` and committed logs only. `handoff`, `note`, exit 5 and exit 6 have no committed run and stay UNCONFIRMED.
-- [Phase 2]: SECURITY.md was never produced for Phase 2 either; `/gsd-secure-phase 2` is pending alongside `/gsd-secure-phase 1`.
+- [Phase 2]: Security follow-up from the 2026-11-12 retroactive audit: T-02-15 is an accepted risk (AR-02-03), not a code fix: the `refuse_under` guard of `pc_manifest.tree_manifest` is never passed by the three `take_snapshot` call sites or the manifest CLI (review WR-11); wire it with tests. The shared runs root has no owner or mode check on a pre-existing level (02-08 flag `shared-folder-write`, review WR-07).
 - [Phase 3]: The Bash write-escape rule is a conservative classifier over command text, not a sandbox; accepted residuals (a script file written earlier and run later, interpreter code building its path at run time, values of leading `NAME=value` assignments) and the deferred warnings of 03-REVIEW-2..5 are Phase 4 hardening items; the backstop is the snapshot diff inside the run root and the realpath boundary on Write and Edit traces.
 - [Phase 3]: The filed baseline keeps `status-begins-with-session: no` under the earlier status rule and has no cumulative-consistency line; a fresh run files the new answers. `--dry-run --row row1-wrong-binding` exits 17 on 2026-10-29 because the dated destination exists (D-05).
 - [Phase 3]: SECURITY.md was never produced for Phase 3; `/gsd-secure-phase 3` is pending alongside phases 1 and 2.
