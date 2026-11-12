@@ -19,10 +19,10 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-26)
+See: .planning/PROJECT.md (updated 2026-11-12)
 
 **Core value:** A fresh session resumes from the checkpoint without guessing: every fact it reads was verified when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
-**Current focus:** Phase 04 — Full Matrix, Row 7 and Review
+**Current focus:** Milestone complete; next `/gsd-complete-milestone`, with `/gsd-secure-phase 1`, `2`, `3` as housekeeping
 
 ## Current Position
 
@@ -31,7 +31,7 @@ Plan: Not started
 Status: All phases complete
 Last activity: 2026-11-12 — Phase 04 complete
 
-Progress: [████████████████████] 4/4 plans ([██████████] 100%)
+Progress: [████████████████████] 47/47 plans (100%)
 
 ## Performance Metrics
 
@@ -83,6 +83,7 @@ Recent decisions affecting current work:
 - [Phase 02]: Pinned build is Claude Code 2.1.310 with claude-sonnet-5-5; `TESTED_VERSIONS` is seeded with that one build; the login lives in the harness-owned config directory and only the boolean loggedIn is ever read
 - [Phase 02]: Gap plan 02-09 closed CR-01 and CR-02 (login after a JSON escape; home path before an escape or delimiter) in the sanitizer, the gate and the `.gitleaks.toml` twin; 21 warning and info findings deferred to Phase 3 hardening
 - [Phase 03]: Row 1 ran once on Claude Code 2.1.310 with claude-sonnet-5-5 on bokiko's own `go`, exit 0, filed as `tests/evidence/rerun-2026-10-29-claude-sonnet-5-5` (new baseline, verdict PENDING); the measured cost of one row is 0.2723 USD, confirmed cumulative by the code review, and Phase 4's spend is projected from it
+- [Phase 04]: Every paid wave ran on bokiko's own go word by the main conversation; the clean-clone matrix filed 21/21 chains at 5.7467 USD (Phase 4 total 11.74 USD); the Codex review is filed `file-only` with 21 verdict lines and no reference swap; the row 7 pairings are rejected and attempt 3's unfenced entries are listed in part 2; verification passed 5/5 after gap plan 04-22
 - [Phase 03]: Six gap-closure plans (03-07 to 03-12) hardened the harness after five review passes: open-world Bash write-escape rule with a corpus test over every committed trace, hardened and pinned git calls with a nested-repository refusal, run-root record guard, chain-complete refile rule, deny entries required at the root, in-memory setup pin; the closing pass found no critical
 
 ### Pending Todos
@@ -100,8 +101,9 @@ None yet.
 - [Phase 3]: The Bash write-escape rule is a conservative classifier over command text, not a sandbox; accepted residuals (a script file written earlier and run later, interpreter code building its path at run time, values of leading `NAME=value` assignments) and the deferred warnings of 03-REVIEW-2..5 are Phase 4 hardening items; the backstop is the snapshot diff inside the run root and the realpath boundary on Write and Edit traces.
 - [Phase 3]: The filed baseline keeps `status-begins-with-session: no` under the earlier status rule and has no cumulative-consistency line; a fresh run files the new answers. `--dry-run --row row1-wrong-binding` exits 17 on 2026-10-29 because the dated destination exists (D-05).
 - [Phase 3]: SECURITY.md was never produced for Phase 3; `/gsd-secure-phase 3` is pending alongside phases 1 and 2.
-- [Phase 4]: The matrix baseline model is claude-sonnet-5-5 on build 2.1.310; one row measured 0.2723 USD, so the twelve rows plus three layouts and three row 7 runs project to about 5 USD before caps; Phase 4 stops for bokiko's budget word before multi-run spend.
-- [Phase 4]: Row 7 needs a working `chmod` denial (ineffective as root or on permissive mounts). The NUL `-z` form has never executed headless; the quoted-porcelain fallback is the expected row 10 outcome.
+- [Phase 4]: Open review warnings WR-01 to WR-05 (04-REVIEW-DISPOSITION.md, README line 5 says no network while the clean clone uses https) and eight info items; the 04-22 gap-closure code has had no independent code review.
+- [Phase 4]: Codex flagged the filed baseline on row 6 (plan edits succeeded despite mode 444), row 10 (grouped sidecar, not verbatim porcelain) and row 7 (evidence claim overstated); attempt 3 of the row 7 triple has no third stage. These are measured defects of the skill or fixtures, not of the harness, and need a paid rerun to retest.
+- [Phase 4]: The Claude Code auto-updater prunes build 2.1.310; reinstall it before any paid run. `--real-home` must carry HOME and USER for the Keychain login.
 
 ## Deferred Items
 
@@ -113,6 +115,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-01T12:06:33.934Z
-Stopped at: Phase 04 complete — all phases complete
-Resume file: .planning/phases/04-full-matrix-row-7-and-review/04-CONTEXT.md
+Last session: 2026-11-12T06:30:00Z
+Stopped at: Phase 04 complete, milestone complete; secure-phase 1, 2, 3 pending
+Resume file: None

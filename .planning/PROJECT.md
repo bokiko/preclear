@@ -33,11 +33,12 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 - ✓ The harness refuses to reuse a run root (exit 16), carries no deletion primitive outside its test utilities, sanitizes and leak-gates every capture before it lands under the repository, and the spikes decided the pinned flags (Claude Code 2.1.310, claude-sonnet-5-5) and the isolation mode with run roots outside every home folder — Phase 2 (HARN-03, HARN-04, HARN-06, HARN-08, HARN-14, EVID-01 to EVID-03, EVID-07; 753 zero-token tests; 0.26 USD of the 5 USD spike cap)
 - ✓ Row 1 runs end to end through the real `claude -p` against the stub from one command on the pinned build and model, is filed as sanitized mechanical evidence with a reviewer checklist and no verdict in a new dated folder, compares read-only with the committed row, and the cost of one row is measured at 0.2723 USD; the runner passes the deny entries to `promote` and `promote` refuses without them; Bash writes outside the approved roots, planted git configuration and refiling an unclean or incomplete run are breaches or refusals — Phase 3 (HARN-01, 02, 05, 07, 09, 13, EVID-04 to 06; 1305 zero-token tests; 0.27 USD of the 2 USD row cap; five review passes)
 
+- ✓ The full matrix (three layouts plus every publication row, 21 chains) runs from a clean clone of the public repository on the pinned build and model through one command, with the stub helper only; filed as the new dated baseline `tests/evidence/rerun-2026-11-11-claude-sonnet-5-5` (21/21 chains, every stage success, 5.7467 USD), leak-gated, compared row for row with the committed evidence, and reviewed by Codex in a visible Herdr tab with 21 per-row verdict lines recorded before any acceptance claim — Phase 4 (HARN-10 to HARN-12, RERUN-01 to RERUN-05; 2405 zero-token tests; Phase 4 paid total 11.74 USD)
+- ✓ Row 7 was rerun three times in one folder and once more in the matrix; every Do-not-redo entry of every printed checkpoint, fenced or unfenced, is listed with its same-turn candidates in `row7-review.md` and `row7-review-part-2.md`, so the defect is visible in a review table rather than hidden — Phase 4 (RERUN-01; Codex row 7 verdict: safe denial response, evidence claim overstated)
+
 ### Active
 
-- [ ] A stranger with Claude Code can clone the repo and rerun the full acceptance matrix (three layouts plus twelve publication rows) from the committed harness, without the owner's private checkpoint helper
-- [ ] Row 7 has a clean rerun whose printed checkpoint carries no unsupported Do-not-redo entry
-- [ ] A rerun produces evidence in the committed evidence format (sanitized traces, full traces, snapshots, measurements) so results can be compared row for row with the existing evidence
+- [ ] Row 7 has a clean rerun whose printed checkpoint carries no unsupported Do-not-redo entry — not yet achieved: the 2026-11-09 triple and the matrix run still show entries without a same-turn supporting call, and attempt 3 printed its checkpoint unfenced; the defect is now measured, not fixed
 
 ### Out of Scope
 
@@ -52,6 +53,7 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 - The skill, three layouts and the twelve-row publication matrix are accepted after Codex review (consultations 8 and 9). Verdicts and disclosed exceptions are in `tests/evidence/publication-2026-10-20/README.md`.
 - The harness that produced that evidence (`pub-lib.sh`, `pub-row.sh`, `pub-plain.sh`, `pub-env.sh`, `pub-file.py`, `pub-measure.py`) lives only in the gitignored `runs/` folder on the owner's machine. It drives headless Claude Code (`claude -p` with project and local setting sources, a pinned allowlist, stream-json output) and isolates the helper with `CKPT_HOME`, a logging wrapper and a counting conflict wrapper. Known harness limits: snapshot manifests split newline filenames before the `-print0` fix; the allowlist never matched the skill's exact status command until rows 10 and 11 were rerun.
 - Known open defects from the matrix: row 7's printed checkpoint claims a workspace registry check no tool call supports (Codex: FAIL for evidence integrity on that row); the NUL `-z` status form has never executed under headless policy; rows 1, 2, 3c and 4b carry forward on the pre-fix skill digest.
+- The 2026-11-11 clean-clone baseline and its Codex review (`codex-review.md`) are filed; Codex flagged row 6 (the 444 plan was still edited, so denial handling was not exercised), row 10 (grouped sidecar instead of verbatim porcelain) and row 7 (overstated evidence claim). Open review warnings WR-01 to WR-05 of 04-REVIEW.md, the README's "no network" opening line, and the unreviewed 04-22 code carry into the next milestone.
 - A private audit record (2026-10-20) found no credentials, keys, IP addresses, hostnames or real name anywhere in history or the tree. One medium finding: ten evidence lines with home-folder paths in commit d437af2, sanitized in the next commit.
 - `.planning/` is committed to this repo, so planning artifacts become public with it.
 
@@ -71,13 +73,13 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 |----------|-----------|---------|
 | Publish first, harness after | Repo is audited and ready; harness work can land as public commits | Good — Phase 1 published 2026-10-24 |
 | Ship a test-only stub helper for backend rows | Lets strangers run the full matrix without the private helper; real helper stays private | Done — Phase 2, 15 of 15 recorded calls replay |
-| Done means a full matrix rerun from a clean clone | Committed scripts alone would not prove reproducibility | — Pending |
+| Done means a full matrix rerun from a clean clone | Committed scripts alone would not prove reproducibility | Done — Phase 4, 21/21 chains from a clean clone on 2026-11-11 |
 | No CI this milestone | API-key secret and per-run token cost; local reproducibility first | — Pending |
 | No history rewrite (2026-10-21) | The d437af2 commit adds eleven home-folder path lines across ten files (measured 2026-10-21; earlier text said ten lines); they reveal only a folder name and SHA citations stay valid; the scan accepts exactly those 15 fingerprints through `.gitleaksignore`, and a new finding halts the phase and goes to bokiko | Decided 2026-10-21 |
 | `bokiko <bokiko@gmail.com>` is the public identity (2026-10-21) | The address is already the public GitHub identity; all 14 pre-phase commits carry it as the only author and committer; each clone pins it with `user.useConfigOnly` and `preclear.pinnedIdentity` | Decided 2026-10-21 |
 | Row 7 ships as a disclosed known issue, rerun three times in this milestone (2026-10-21) | A single clean run cannot show a stochastic defect is fixed | Decided 2026-10-21 |
-| Row 10 keeps the quoted-porcelain fallback; no policy exception for the NUL form (2026-10-21) | The fallback is documented behaviour; widening headless policy for one row proves less than it costs | — Pending |
-| Rerun pins one full model id and is labelled a new baseline (2026-10-21) | The 2026-10-20 evidence never recorded its model, so replication is impossible to claim | — Pending |
+| Row 10 keeps the quoted-porcelain fallback; no policy exception for the NUL form (2026-10-21) | The fallback is documented behaviour; widening headless policy for one row proves less than it costs | Kept — Codex 2026-11-11 flags the filed row 10 sidecar as grouped rather than verbatim; open item for the next milestone |
+| Rerun pins one full model id and is labelled a new baseline (2026-10-21) | The 2026-10-20 evidence never recorded its model, so replication is impossible to claim | Done — `rerun-2026-11-11-claude-sonnet-5-5` on Claude Code 2.1.310 |
 | Conflict injection and logging composed outside the stub (2026-10-21) | Three of four research files agree; the conflict row then proves the real hash guard | Done — Phase 2 wrapper, exit sequence 0,0,0,3,0,3,0,0 reproduced |
 | Visibility flip on bokiko's own go-word (2026-10-24) | bokiko gave the exact go-word in his own message; the main conversation ran the flip, never a subagent; flip tip 9a794e7, read-back 55835ad, secret scanning and push protection enabled | Decided 2026-10-24 |
 | gitleaks stays on 8.30.0 (2026-10-24) | The pre-flip scan and the hooks were proven on this version; no reason to move it at the checkpoint | Decided 2026-10-24 |
@@ -94,6 +96,11 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 | `total_cost_usd` on a resumed call is cumulative (2026-10-29) | The committed fixtures and the real s2 per-model token counts both show s1 plus s2; the harness subtracts the previous total and the row figure of 0.2723 USD stands | Decided 2026-10-29 |
 | The Bash write-escape rule is open-world and conservative (2026-10-29) | Every executed part whose program is not on a short read-only list is write-capable; a corpus test replays all 348 committed Bash calls with zero escapes; a false positive costs a run, a false negative files bad evidence, so the rule errs to exit 11; residual shapes are Phase 4 items, the backstop is the snapshot and realpath boundary | Decided 2026-10-29 |
 | The filed 2026-10-29 baseline is frozen as filed (2026-10-29) | Later rule changes (status line, consistency line) are not back-filled; a fresh run files the new answers; evidence is never repaired | Decided 2026-10-29 |
+| Paid waves run only on bokiko's own go word, by the main conversation (2026-11-03 to 2026-11-11) | Executors refuse a relayed go; wave A 0.79, B 1.43, C 0.75, D 2.37, row 7 triple 0.65, clean-clone matrix 5.75 USD, Phase 4 total 11.74 USD | Done |
+| The clean-clone run carries the real HOME and `USER` into the child (2026-11-11) | `claude auth status` reads the macOS Keychain and reports loggedIn only with both; the harness still reads only the boolean | Done — 0bacd2b |
+| Codex review filed `file-only`; the default comparison reference is not swapped to the new baseline (2026-11-11) | Codex gave no acceptance; its 21 verdict lines are recorded in `codex-review.md` with the model read from the Herdr pane (GPT-6-Astra, Codex CLI 0.167.0) | Decided 2026-11-11 |
+| The row 7 pairings of the triple are rejected; attempt 3's unfenced entries are read at lower confidence (2026-11-11) | Codex: the older table does not validate the run; gap plan 04-22 added unfenced reading and `row7-review-part-2.md` | Decided 2026-11-11 |
+| Frozen evidence is never edited after filing; the only later additions are verdict lines and review parts (2026-11-11) | Evidence integrity; `test_frozen_baseline.py` pins both baselines by digest | Done |
 
 ## Evolution
 
@@ -113,4 +120,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-29 after Phase 3*
+*Last updated: 2026-11-12 after Phase 4*
