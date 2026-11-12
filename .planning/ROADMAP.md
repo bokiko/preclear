@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Publication Gate** - Decisions recorded, identity and leak gates live, history scanned, repository public on bokiko's word (completed 2026-10-24)
 - [x] **Phase 2: Model-Free Foundation and Stub** - Spikes decided, test-only stub helper, sanitizer, leak gate and a zero-token self-test suite (completed 2026-10-26)
 - [x] **Phase 3: Walking Skeleton (Row 1)** - One row run end to end from one command, filed as sanitized evidence, compared with the committed row (completed 2026-10-29)
-- [ ] **Phase 4: Full Matrix, Row 7 and Review** - Row waves, row 7 three times, the full matrix from a clean clone as a new baseline, Codex review, docs
+- [x] **Phase 4: Full Matrix, Row 7 and Review** - Row waves, row 7 three times, the full matrix from a clean clone as a new baseline, Codex review, docs (completed 2026-11-12)
 
 ## Phase Details
 
@@ -152,7 +152,7 @@ Plans:
   4. A new dated evidence folder holds a per-row digest table, the measured cost per row and a label that the run is a new baseline on the pinned model. It also holds the comparer's per-row differences against `tests/evidence/publication-2026-10-20/`, and every file passed the leak gate. Codex's per-row verdicts, from a review in a visible Herdr tab, are recorded in it before any acceptance claim is made. (RERUN-03, RERUN-04)
   5. `tests/harness/README.md` states the prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), the measured cost, the supported platforms and what a pass proves. `tests/acceptance.md` and `CHANGELOG.md` both point to it. (RERUN-05)
 
-**Plans:** 22/22 plans executed
+**Plans:** 22/22 plans complete
 
 Plans:
 - [x] 04-22-PLAN.md
@@ -247,4 +247,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Publication Gate | 4/4 | Complete    | 2026-10-24 |
 | 2. Model-Free Foundation and Stub | 9/9 | Complete    | 2026-10-26 |
 | 3. Walking Skeleton (Row 1) | 12/12 | Complete    | 2026-10-29 |
-| 4. Full Matrix, Row 7 and Review | 22/22 | In Progress | - |
+| 4. Full Matrix, Row 7 and Review | 22/22 | Complete    | 2026-11-12 |

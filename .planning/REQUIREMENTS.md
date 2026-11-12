@@ -31,9 +31,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **HARN-07**: The `system/init` manifest (skills, permission mode, memory paths) is asserted every run, and the isolation mode in force (default or strict) is recorded per row after spike S1 decides which the matrix claims
 - [x] **HARN-08**: Snapshots and manifests are filename-safe (newline and non-Latin names survive) and are taken before and after every stage
 - [x] **HARN-09**: Write-boundary and git-read-only assertions are mechanical: zero writes outside approved roots, no git mutation, derived from snapshots and traces rather than the model's claims
-- [ ] **HARN-10**: Row 10 keeps the documented quoted-porcelain fallback as its expected outcome; no policy exception is added for the NUL `-z` form
-- [ ] **HARN-11**: Row 11's injector triggers on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls, and wrapper log lines are correlated with `tool_use` ids
-- [ ] **HARN-12**: Row 7's preflight proves the `chmod` denial is effective or marks the row SKIPPED
+- [x] **HARN-10**: Row 10 keeps the documented quoted-porcelain fallback as its expected outcome; no policy exception is added for the NUL `-z` form
+- [x] **HARN-11**: Row 11's injector triggers on the n-th model-initiated call matching an exact argv, never on Claude Code's own startup calls, and wrapper log lines are correlated with `tool_use` ids
+- [x] **HARN-12**: Row 7's preflight proves the `chmod` denial is effective or marks the row SKIPPED
 - [x] **HARN-13**: Everything new lives under `tests/harness/`; `SKILL.md`, `references/` and `tests/fixtures/` are unchanged unless a rerun exposes a defect, and `SKILL.md` stays at or under 12,000 bytes
 - [x] **HARN-14**: The harness needs no install beyond Claude Code, git and Python 3 (standard library only); shell is limited to bash 3.2-compatible entry shims and the model-facing wrapper
 
@@ -59,11 +59,11 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Rerun
 
-- [ ] **RERUN-01**: Row 7 reruns three times on the pinned model; mechanical invariants hold in all three and a review table pairs every Do-not-redo entry with the tool calls that support it
-- [ ] **RERUN-02**: The full matrix (three layouts plus twelve rows) runs from a fresh clone in a never-trusted path with a minimal environment, no `runs/` folder and the private helper unreachable; wrapper logs prove every helper call hit the stub
-- [ ] **RERUN-03**: The rerun is filed as a new dated evidence folder with a per-row digest table, measured cost per row, and is labelled a new baseline on the pinned model
-- [ ] **RERUN-04**: Codex reviews the rerun in a visible Herdr tab before any acceptance claim; its verdicts are recorded per row
-- [ ] **RERUN-05**: `tests/harness/README.md` states prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), measured cost, supported platforms and what a pass proves; `tests/acceptance.md` and CHANGELOG point to it
+- [x] **RERUN-01**: Row 7 reruns three times on the pinned model; mechanical invariants hold in all three and a review table pairs every Do-not-redo entry with the tool calls that support it
+- [x] **RERUN-02**: The full matrix (three layouts plus twelve rows) runs from a fresh clone in a never-trusted path with a minimal environment, no `runs/` folder and the private helper unreachable; wrapper logs prove every helper call hit the stub
+- [x] **RERUN-03**: The rerun is filed as a new dated evidence folder with a per-row digest table, measured cost per row, and is labelled a new baseline on the pinned model
+- [x] **RERUN-04**: Codex reviews the rerun in a visible Herdr tab before any acceptance claim; its verdicts are recorded per row
+- [x] **RERUN-05**: `tests/harness/README.md` states prerequisites, the free-then-paid order (self-test, dry run, one row, matrix), measured cost, supported platforms and what a pass proves; `tests/acceptance.md` and CHANGELOG point to it
 
 ## v2 Requirements
 
@@ -116,9 +116,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HARN-07 | Phase 3 | Complete |
 | HARN-08 | Phase 2 | Complete |
 | HARN-09 | Phase 3 | Complete |
-| HARN-10 | Phase 4 | Pending |
-| HARN-11 | Phase 4 | Pending |
-| HARN-12 | Phase 4 | Pending |
+| HARN-10 | Phase 4 | Complete |
+| HARN-11 | Phase 4 | Complete |
+| HARN-12 | Phase 4 | Complete |
 | HARN-13 | Phase 3 | Complete |
 | HARN-14 | Phase 2 | Complete |
 | STUB-01 | Phase 2 | Complete |
@@ -135,11 +135,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVID-05 | Phase 3 | Complete |
 | EVID-06 | Phase 3 | Complete |
 | EVID-07 | Phase 2 | Complete |
-| RERUN-01 | Phase 4 | Pending |
-| RERUN-02 | Phase 4 | Pending |
-| RERUN-03 | Phase 4 | Pending |
-| RERUN-04 | Phase 4 | Pending |
-| RERUN-05 | Phase 4 | Pending |
+| RERUN-01 | Phase 4 | Complete |
+| RERUN-02 | Phase 4 | Complete |
+| RERUN-03 | Phase 4 | Complete |
+| RERUN-04 | Phase 4 | Complete |
+| RERUN-05 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 40 total
