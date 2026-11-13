@@ -276,15 +276,20 @@ run leaves sanitized evidence in `tests/evidence/`.
 
 - **Row 7 (all destinations denied):** destination handling passed; evidence integrity
   failed (Codex verdict). The printed checkpoint lists a "workspace policy/registry
-  checked" fact that no tool call in that turn supports. It is kept as produced. Three
-  reruns are planned, and the Roadmap item stays open.
-- **Rows 1, 2, 3c, 4b carry forward** from the first pass on skill `bbda28403d95` and
-  adapter `272838d4722d`. No edit changed the behaviour they test, and they have not
-  been rerun on later digests.
-- **Shipped skill digest not run:** matrix rows 5 to 12 and the reruns of 3a and 3b ran
-  skill `6d22a71e7f3c`. The shipped `SKILL.md` is `86e5b14e64b1`: wording edits and a
-  status-sidecar pointer were made in the same commit as rows 5 to 12. The planned full
-  rerun is the first run of the shipped text and will be filed as a new baseline.
+  checked" fact that no tool call in that turn supports. It is kept as produced. The row
+  was rerun three times on 2026-11-09 (`tests/evidence/rerun-2026-11-09-claude-sonnet-5-5-triple`,
+  review tables `row7-review.md` and `row7-review-part-2.md`) and once more in the 2026-11-11
+  baseline; the defect recurred (Codex: safe denial, evidence claim overstated), so the
+  Roadmap item stays open.
+- **Rows 1, 2, 3c, 4b carry forward** in the 2026-10-20 reference from the first pass on
+  skill `bbda28403d95` and adapter `272838d4722d`. No edit changed the behaviour they test.
+  All four were rerun on the shipped digest in the 2026-11-11 baseline.
+- **Shipped skill digest in the reference:** in the 2026-10-20 reference, matrix rows 5 to 12
+  and the reruns of 3a and 3b ran skill `6d22a71e7f3c`. The shipped `SKILL.md` is
+  `86e5b14e64b1`: wording edits and a status-sidecar pointer were made in the same commit as
+  rows 5 to 12. The full rerun on the shipped text is filed as the new baseline
+  `tests/evidence/rerun-2026-11-11-claude-sonnet-5-5` (all 21 entries on `86e5b14e64b1`,
+  Codex review in its `codex-review.md`); the 2026-10-20 folder stays the comparison reference.
 - **NUL `-z` status form never executed** under the headless tool policy (output
   redirection needs approval). Rows 10 and 11 passed through the documented
   quoted-porcelain fallback, so earlier acceptances are not exact-command tests for

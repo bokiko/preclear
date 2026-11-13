@@ -14,6 +14,24 @@ re-deriving state after every clear.
 A fresh session resumes from the checkpoint without guessing: every fact it reads was verified
 when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 
+## Current State
+
+**Shipped:** v1.0 Public and Reproducible on 2026-11-13 (4 phases, 47 plans, 79 tasks). The
+repository is public, the harness under `tests/harness/` runs 2,405 zero-token tests green, and
+the matrix baseline `tests/evidence/rerun-2026-11-11-claude-sonnet-5-5` (21 of 21 chains,
+5.7467 USD) is filed and Codex-reviewed. Paid model spend for the milestone: 12.27 USD. The
+planning archive is `.planning/milestones/` (v1.0 roadmap, requirements and phase folders).
+
+## Next Milestone Goals
+
+Not yet defined; `/gsd-new-milestone` starts the questioning. Candidates carried out of v1.0:
+
+- Row 7: a clean rerun whose printed checkpoint carries no unsupported Do-not-redo entry
+- Codex flags on the baseline: row 6 (plan edits succeeded despite mode 444) and row 10 (grouped sidecar, not verbatim porcelain)
+- Security follow-up T-02-15: pass `refuse_under` at the three `take_snapshot` call sites and the manifest CLI, with tests
+- Phase 4 review warnings WR-01 to WR-05, the harness README's "no network" opening line, an independent review of the 04-22 code
+- CI: decide whether a live matrix on GitHub Actions is worth an API-key secret and per-run spend
+
 ## Requirements
 
 ### Validated
@@ -55,7 +73,7 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 - Known open defects from the matrix: row 7's printed checkpoint claims a workspace registry check no tool call supports (Codex: FAIL for evidence integrity on that row); the NUL `-z` status form has never executed under headless policy; rows 1, 2, 3c and 4b carry forward on the pre-fix skill digest.
 - The 2026-11-11 clean-clone baseline and its Codex review (`codex-review.md`) are filed; Codex flagged row 6 (the 444 plan was still edited, so denial handling was not exercised), row 10 (grouped sidecar instead of verbatim porcelain) and row 7 (overstated evidence claim). Open review warnings WR-01 to WR-05 of 04-REVIEW.md, the README's "no network" opening line, and the unreviewed 04-22 code carry into the next milestone.
 - A private audit record (2026-10-20) found no credentials, keys, IP addresses, hostnames or real name anywhere in history or the tree. One medium finding: ten evidence lines with home-folder paths in commit d437af2, sanitized in the next commit.
-- `.planning/` is committed to this repo, so planning artifacts become public with it.
+- `.planning/` is committed to this repo, so planning artifacts become public with it. v1.0 was archived on 2026-11-13: its roadmap, requirements and the four phase folders live under `.planning/milestones/`, and `REQUIREMENTS.md` is recreated by the next milestone.
 
 ## Constraints
 
@@ -74,7 +92,7 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 | Publish first, harness after | Repo is audited and ready; harness work can land as public commits | Good — Phase 1 published 2026-10-24 |
 | Ship a test-only stub helper for backend rows | Lets strangers run the full matrix without the private helper; real helper stays private | Done — Phase 2, 15 of 15 recorded calls replay |
 | Done means a full matrix rerun from a clean clone | Committed scripts alone would not prove reproducibility | Done — Phase 4, 21/21 chains from a clean clone on 2026-11-11 |
-| No CI this milestone | API-key secret and per-run token cost; local reproducibility first | — Pending |
+| No CI this milestone | API-key secret and per-run token cost; local reproducibility first | Held — v1.0 shipped without CI; decide in the next milestone |
 | No history rewrite (2026-10-21) | The d437af2 commit adds eleven home-folder path lines across ten files (measured 2026-10-21; earlier text said ten lines); they reveal only a folder name and SHA citations stay valid; the scan accepts exactly those 15 fingerprints through `.gitleaksignore`, and a new finding halts the phase and goes to bokiko | Decided 2026-10-21 |
 | `bokiko <bokiko@gmail.com>` is the public identity (2026-10-21) | The address is already the public GitHub identity; all 14 pre-phase commits carry it as the only author and committer; each clone pins it with `user.useConfigOnly` and `preclear.pinnedIdentity` | Decided 2026-10-21 |
 | Row 7 ships as a disclosed known issue, rerun three times in this milestone (2026-10-21) | A single clean run cannot show a stochastic defect is fixed | Decided 2026-10-21 |
@@ -101,6 +119,7 @@ when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
 | Codex review filed `file-only`; the default comparison reference is not swapped to the new baseline (2026-11-11) | Codex gave no acceptance; its 21 verdict lines are recorded in `codex-review.md` with the model read from the Herdr pane (GPT-6-Astra, Codex CLI 0.167.0) | Decided 2026-11-11 |
 | The row 7 pairings of the triple are rejected; attempt 3's unfenced entries are read at lower confidence (2026-11-11) | Codex: the older table does not validate the run; gap plan 04-22 added unfenced reading and `row7-review-part-2.md` | Decided 2026-11-11 |
 | Frozen evidence is never edited after filing; the only later additions are verdict lines and review parts (2026-11-11) | Evidence integrity; `test_frozen_baseline.py` pins both baselines by digest | Done |
+| Phases 1 to 3 re-verified at milestone close instead of an override closeout (2026-11-13) | Later phases changed their covered files, so the earlier reports read stale; fresh verifiers passed 5/5, 6/6 and 6/6 on the current tree | Done — v1.0 closed as verified_closeout |
 
 ## Evolution
 
@@ -120,4 +139,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-12 after Phase 4*
+*Last updated: 2026-11-13 after v1.0 milestone*

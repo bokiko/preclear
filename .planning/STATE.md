@@ -1,37 +1,35 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 04
-status: completed
+status: Awaiting next milestone
 stopped_at: Phase 04 complete — all phases complete
-last_updated: "2026-11-12T06:14:55.884Z"
-last_activity: 2026-11-12
-last_activity_desc: Phase 04 complete
-state_head: 7eb626a1182c9a472a9e0d231583c623c22399f6
+last_updated: "2026-11-13T12:23:34.241Z"
+last_activity: 2026-11-13
+last_activity_desc: Milestone v1.0 completed and archived
+state_head: 29af45ed15774c7f5bcd612578568945e52ccc0b
 progress:
   total_phases: 4
   completed_phases: 4
   total_plans: 47
   completed_plans: 47
   percent: 100
+current_phase: 04
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-11-12)
+See: .planning/PROJECT.md (updated 2026-11-13)
 
 **Core value:** A fresh session resumes from the checkpoint without guessing: every fact it reads was verified when written, and anything unknown is marked `UNCONFIRMED` rather than invented.
-**Current focus:** Milestone complete; next `/gsd-complete-milestone`, with `/gsd-secure-phase 1`, `2`, `3` as housekeeping
+**Current focus:** v1.0 Public and Reproducible shipped and archived 2026-11-13 (tag v1.0); next `/gsd-new-milestone`
 
 ## Current Position
 
-Phase: 04
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-11-12 — Phase 04 complete
-
-Progress: [████████████████████] 47/47 plans (100%)
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-11-13 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
@@ -70,6 +68,7 @@ Progress: [████████████████████] 47/47 p
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [Milestone v1.0]: Closed 2026-11-13 as verified_closeout: Phases 1 to 3 re-verified on the current tree (5/5, 6/6, 6/6), Phase 4 5/5; archive under `.planning/milestones/`; the v1.0 decision log is PROJECT.md Key Decisions. The bullets below are the v1.0 history kept for the next milestone's context.
 - [Roadmap]: Four phases at coarse granularity: publication gate, model-free foundation plus stub, walking skeleton (row 1), full matrix plus row 7 plus review. The research's seven phases were folded.
 - [Roadmap]: Visibility flip (PUB-07), any history rewrite and any deletion happen only on bokiko's explicit word in the conversation, never in an autonomous run.
 - [Roadmap]: Conflict injection and call logging live in a wrapper outside the stub (STUB-04); row 11's injector is a Phase 4 item (HARN-11).
@@ -115,6 +114,10 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T06:30:00Z
-Stopped at: Phase 04 complete, milestone complete; secure-phase 1, 2, 3 pending
+Last session: 2026-11-13T12:30:00Z
+Stopped at: Milestone v1.0 archived and tagged; awaiting /gsd-new-milestone
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
